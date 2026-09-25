@@ -1,0 +1,313 @@
+import { useEffect, useMemo, useState } from "react";
+import type { AgentInfo } from "../pty/api";
+import { AccountSwitcher } from "./AccountSwitcher";
+import {
+  agentSessions,
+  approx,
+  formatElapsed,
+  formatRelative,
+  formatTokens,
+  formatUsd,
+  statusLabel,
+  totalTokens,
+  type AgentSessions as Data,
+  type SessionSummary,
+  type Totals,
+} from "../agents/api";
+
+interface Props {
+  agent: AgentInfo | null;
+  workspace: string;
+  /** Bumped by the workspace watcher and by `agents://changed`. */
+  refreshToken: number;
+  /** An account switch invalidates everything below it: the sessions and
+   *  limits on screen belong to the account we just left. */
+  onAccountChanged(): void;
+  onClose(): void;
+}
+
+const EMPTY: Totals = {
+  input: 0,
+  output: 0,
+  thinking: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  costUsd: 0,
+  exact: true,
+};
+
+function sum(sessions: SessionSummary[]): Totals {
+  return sessions.reduce<Totals>(
+    (a, s) => ({
+      input: a.input + s.totals.input,
+      output: a.output + s.totals.output,
+      thinking: a.thinking + s.totals.thinking,
+      cacheRead: a.cacheRead + s.totals.cacheRead,
+      cacheWrite: a.cacheWrite + s.totals.cacheWrite,
+      costUsd: a.costUsd + s.totals.costUsd,
+      // One derived session makes the whole rollup a lower bound.
+      exact: a.exact && s.totals.exact,
+    }),
+    EMPTY,
+  );
+}
+
+function startOfToday(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+/** A utilization bar. Colour is the warning, the number is the detail. */
+function Meter({ label, pct, resetsAt }: { label: string; pct: number; resetsAt: string | null }) {
+  const level = pct >= 90 ? "high" : pct >= 75 ? "warn" : "ok";
+  const resets = resetsAt ? new Date(resetsAt) : null;
+  return (
+    <div className="meter" title={resets ? `Resets ${resets.toLocaleString()}` : undefined}>
+      <div className="meter-line">
+        <span className="meter-label">{label}</span>
+        <span className="meter-pct">{Math.round(pct)}%</span>
+      </div>
+      <div className="meter-track">
+        <div
+          className="meter-fill"
+          data-level={level}
+          style={{ width: `${Math.min(100, Math.max(0, pct))}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function Row({ session, open, onToggle }: { session: SessionSummary; open: boolean; onToggle(): void }) {
+  const { totals, live } = session;
+  return (
+    <div className="isession" data-live={live !== null}>
+      <button className="isession-head" onClick={onToggle} aria-expanded={open}>
+        <span className="tree-chevron">{open ? "▾" : "▸"}</span>
+        {live && <span className="isession-dot" aria-hidden />}
+        <span className="isession-title">
+          {session.title ?? session.id.slice(0, 8)}
+        </span>
+        <span className="isession-cost">
+          {approx(totals)}
+          {formatUsd(totals.costUsd)}
+        </span>
+      </button>
+
+      <div className="isession-sub">
+        <span>{live ? statusLabel(live) : formatRelative(session.lastAt)}</span>
+        <span className="isession-sep">·</span>
+        <span>{formatTokens(totalTokens(totals))} tok</span>
+        <span className="isession-sep">·</span>
+        <span>
+          {session.turns} turn{session.turns === 1 ? "" : "s"}
+        </span>
+        {session.branch && (
+          <>
+            <span className="isession-sep">·</span>
+            <span className="isession-branch" title="Branch">
+              {session.branch}
+            </span>
+          </>
+        )}
+      </div>
+
+      {open && (
+        <div className="isession-detail">
+          {session.models.map((m) => (
+            <div className="imodel" key={m.model}>
+              <div className="imodel-head">
+                <span className="viewer-badge">{m.model}</span>
+                <span className="imodel-cost">{formatUsd(m.costUsd)}</span>
+              </div>
+              <dl className="imodel-grid">
+                <dt>in</dt>
+                <dd>{formatTokens(m.input)}</dd>
+                <dt>out</dt>
+                <dd>{formatTokens(m.output)}</dd>
+                {m.thinking > 0 && (
+                  <>
+                    <dt>thinking</dt>
+                    <dd>{formatTokens(m.thinking)}</dd>
+                  </>
+                )}
+                <dt>cache read</dt>
+                <dd>{formatTokens(m.cacheRead)}</dd>
+                <dt>cache write</dt>
+                <dd>{formatTokens(m.cacheWrite)}</dd>
+              </dl>
+            </div>
+          ))}
+          <div className="isession-started">
+            Started {formatRelative(session.startedAt)}
+            {session.live && ` · running ${formatElapsed(session.startedAt)}`}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * What the coding agent has been doing in this project: its sessions, which one
+ * is live, and what they cost.
+ *
+ * Everything shown is read off the agent's own files -- nothing here calls an
+ * API or spends anything, which is why it can refresh as freely as the tree.
+ */
+export function AgentSessions({
+  agent,
+  workspace,
+  refreshToken,
+  onAccountChanged,
+  onClose,
+}: Props) {
+  const [data, setData] = useState<Data | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState<Set<string>>(new Set());
+
+  const agentId = agent?.id ?? null;
+
+  useEffect(() => {
+    if (!agentId) return;
+    let stale = false;
+    agentSessions(agentId)
+      .then((d) => {
+        if (stale) return;
+        setData(d);
+        setError(null);
+      })
+      .catch((e) => !stale && setError(String(e)));
+    return () => {
+      stale = true;
+    };
+  }, [agentId, workspace, refreshToken]);
+
+  const sessions = data?.sessions ?? [];
+  const live = useMemo(() => sessions.filter((s) => s.live), [sessions]);
+  const project = useMemo(() => sum(sessions), [sessions]);
+  const today = useMemo(() => {
+    const since = startOfToday();
+    return sum(sessions.filter((s) => s.lastAt >= since));
+  }, [sessions]);
+
+  const toggle = (id: string) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  return (
+    <div className="insight-inner">
+      <div className="insight-bar">
+        <span className="insight-heading">{agent?.label ?? "Agent"}</span>
+        <button className="insight-close" onClick={onClose} title="Hide panel">
+          ✕
+        </button>
+      </div>
+
+      {error && <div className="tree-error">{error}</div>}
+
+      {agent?.id === "claude" && (
+        <AccountSwitcher refreshToken={refreshToken} onChanged={onAccountChanged} />
+      )}
+
+      {data && !data.supported && (
+        <div className="insight-empty">
+          Session data isn’t available for {agent?.label ?? "this agent"} yet.
+        </div>
+      )}
+
+      {data?.supported && (
+        <>
+          {live.length > 0 && (
+            <div className="insight-now">
+              {live.map((s) => (
+                <div className="now-row" key={s.id}>
+                  <span className="isession-dot" aria-hidden />
+                  <span className="now-name">
+                    {s.live?.name ?? s.title ?? s.id.slice(0, 8)}
+                  </span>
+                  <span className="now-status">{statusLabel(s.live!)}</span>
+                  <span className="now-elapsed">{formatElapsed(s.startedAt)}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {data.limits && (
+            <div className="insight-section">
+              <div className="changes-header" role="heading" aria-level={2}>
+                Limits
+              </div>
+              <Meter
+                label="5 hours"
+                pct={data.limits.fiveHourPct}
+                resetsAt={data.limits.fiveHourResetsAt}
+              />
+              <Meter
+                label="7 days"
+                pct={data.limits.sevenDayPct}
+                resetsAt={data.limits.sevenDayResetsAt}
+              />
+              <div className="insight-note">
+                Account-wide · as of{" "}
+                {data.limits.fetchedAtMs
+                  ? formatRelative(data.limits.fetchedAtMs)
+                  : "unknown"}
+              </div>
+            </div>
+          )}
+
+          <div className="insight-section">
+            <div className="changes-header" role="heading" aria-level={2}>
+              Sessions
+              <span className="changes-count">{sessions.length}</span>
+            </div>
+            {sessions.length === 0 ? (
+              <div className="insight-empty">
+                No sessions recorded for this project.
+              </div>
+            ) : (
+              sessions.map((s) => (
+                <Row
+                  key={s.id}
+                  session={s}
+                  open={open.has(s.id)}
+                  onToggle={() => toggle(s.id)}
+                />
+              ))
+            )}
+          </div>
+
+          {sessions.length > 0 && (
+            <div className="insight-rollup">
+              <div className="rollup-row">
+                <span>Today</span>
+                <span>{formatTokens(totalTokens(today))} tok</span>
+                <span className="rollup-cost">
+                  {approx(today)}
+                  {formatUsd(today.costUsd)}
+                </span>
+              </div>
+              <div className="rollup-row rollup-total">
+                <span>All time</span>
+                <span>{formatTokens(totalTokens(project))} tok</span>
+                <span className="rollup-cost">
+                  {approx(project)}
+                  {formatUsd(project.costUsd)}
+                </span>
+              </div>
+              <div className="insight-note">
+                API-equivalent estimate. A “≈” marks a figure the agent did not
+                record itself, which reads low.
+              </div>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}

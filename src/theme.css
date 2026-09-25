@@ -1,0 +1,1291 @@
+/* One dark token set, shared by the app chrome and the xterm palette in
+   TerminalPane.tsx. Keep the two in step when either changes. */
+:root {
+  --bg: #14161a;
+  --bg-raised: #1a1d23;
+  --border: #262a33;
+  --fg: #d7dae0;
+  --fg-dim: #7c8495;
+  --accent: #7aa2f7;
+  --danger: #f7768e;
+
+  --topbar-h: 38px;
+  --rail-w: 240px;
+  /* Starting width of the agent panel; the user's drag overrides it inline. */
+  --insight-w: 300px;
+
+  color-scheme: dark;
+  font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  font-size: 13px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  overflow: hidden;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* ---- top bar ---- */
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--topbar-h);
+  padding: 0 12px;
+  background: var(--bg-raised);
+  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+}
+
+.brand {
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--fg);
+}
+
+.cwd {
+  margin-left: auto;
+  color: var(--fg-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+/* ---- agent dropdown ---- */
+
+.agent-picker {
+  position: relative;
+}
+
+.agent-trigger {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--fg);
+  padding: 4px 10px;
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.agent-trigger:hover,
+.agent-trigger[data-open="true"] {
+  background: #22262f;
+  border-color: var(--border);
+}
+
+.agent-caret {
+  color: var(--fg-dim);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.agent-menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 20;
+  margin-top: 4px;
+  min-width: 220px;
+  padding: 4px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+.agent-option {
+  appearance: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  width: 100%;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  padding: 5px 8px;
+  border-radius: 4px;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.agent-option:hover:not(:disabled),
+.agent-option:focus-visible {
+  background: #22262f;
+  color: var(--fg);
+  outline: none;
+}
+
+.agent-option[data-active="true"] {
+  color: var(--fg);
+}
+
+.agent-option:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* fixed gutter so labels line up whether or not a row is checked */
+.agent-check {
+  flex: 0 0 12px;
+  color: var(--accent);
+  font-size: 11px;
+}
+
+.agent-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.agent-option-meta {
+  color: var(--fg-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-menu-sep {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border);
+}
+
+/* ---- body ---- */
+
+.body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.rail {
+  width: var(--rail-w);
+  flex: 0 0 var(--rail-w);
+  border-right: 1px solid var(--border);
+  background: var(--bg-raised);
+  overflow: auto;
+}
+
+.rail-placeholder {
+  padding: 10px 12px;
+  color: var(--fg-dim);
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+}
+
+.main {
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+}
+
+.terminal-wrap {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 6px 0 0 8px;
+}
+
+.terminal-host {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.terminal-error,
+.empty {
+  padding: 10px 12px;
+  color: var(--fg-dim);
+}
+
+.terminal-error {
+  color: var(--danger);
+}
+
+/* ---- exit overlay ---- */
+
+.exit-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: rgba(20, 22, 26, 0.88);
+  backdrop-filter: blur(2px);
+}
+
+.exit-overlay p {
+  margin: 0;
+  color: var(--fg-dim);
+}
+
+.restart {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--fg);
+  padding: 6px 16px;
+  border-radius: 6px;
+  font: inherit;
+  cursor: pointer;
+}
+
+.restart:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ---- file tree ---- */
+
+.tree {
+  padding: 6px 0;
+  font-size: 12.5px;
+  user-select: none;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px 2px 0;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.tree-row:hover {
+  background: #22262f;
+}
+
+.tree-row[data-selected="true"] {
+  background: #2a3550;
+}
+
+.tree-chevron {
+  width: 12px;
+  flex: 0 0 12px;
+  color: var(--fg-dim);
+  font-size: 10px;
+}
+
+.tree-name[data-dir="true"] {
+  color: var(--fg);
+}
+
+.tree-name[data-dir="false"] {
+  color: var(--fg-dim);
+}
+
+.tree-row[data-selected="true"] .tree-name {
+  color: var(--fg);
+}
+
+.tree-error {
+  padding: 8px 12px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+/* the cwd control doubles as the folder picker */
+button.cwd {
+  appearance: none;
+  border: 1px solid transparent;
+  background: transparent;
+  cursor: pointer;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+
+button.cwd:hover {
+  border-color: var(--border);
+  color: var(--fg);
+}
+
+/* ---- split ---- */
+
+.split {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+}
+
+.split-top {
+  display: flex;
+  min-height: 0;
+  flex-grow: 0;
+  flex-shrink: 0;
+  position: relative;
+}
+
+.split-bottom {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+.split-divider {
+  flex: 0 0 5px;
+  cursor: row-resize;
+  background: var(--border);
+}
+
+.split-divider:hover,
+.split[data-dragging="true"] .split-divider {
+  background: var(--accent);
+}
+
+/* Dragging over the terminal would otherwise select its text. */
+.split[data-dragging="true"] {
+  user-select: none;
+}
+
+.terminal-slot {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* ---- viewer ---- */
+
+.viewer-slot {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.viewer {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  background: var(--bg);
+}
+
+.viewer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-raised);
+  flex: 0 0 auto;
+}
+
+.viewer-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  color: var(--fg);
+}
+
+.viewer-badge {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.viewer-close {
+  position: absolute;
+  top: 4px;
+  right: 8px;
+  z-index: 2;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 4px 6px;
+  border-radius: 4px;
+}
+
+.viewer-close:hover {
+  color: var(--fg);
+  background: #22262f;
+}
+
+.viewer-host {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.viewer-message {
+  padding: 10px 12px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.viewer-message.error {
+  color: var(--danger);
+}
+
+/* ---- git status ---- */
+
+:root {
+  --st-modified: #e0af68;
+  --st-added: #9ece6a;
+  --st-deleted: #f7768e;
+  --st-renamed: #7aa2f7;
+  --st-conflicted: #ff9e64;
+}
+
+.tree-status {
+  margin-left: auto;
+  padding-left: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+  flex: 0 0 auto;
+}
+
+.tree-status[data-status="modified"] { color: var(--st-modified); }
+.tree-status[data-status="added"] { color: var(--st-added); }
+.tree-status[data-status="deleted"] { color: var(--st-deleted); }
+.tree-status[data-status="renamed"] { color: var(--st-renamed); }
+.tree-status[data-status="conflicted"] { color: var(--st-conflicted); }
+
+/* Collapsed directory containing changes. */
+.tree-dot {
+  margin-left: auto;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--st-modified);
+  flex: 0 0 auto;
+  opacity: 0.7;
+}
+
+/* "Just changed": the watcher saw this move in the last few seconds. Git can
+   only say a file differs from HEAD, so this is what distinguishes the agent's
+   latest edits from work that has been dirty for hours. */
+.tree-row[data-recent="true"] {
+  background: #223046;
+  box-shadow: inset 2px 0 0 var(--accent);
+  transition: background 600ms ease-out;
+}
+
+/* ---- changes list ---- */
+
+.changes {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 4px;
+}
+
+.changes-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  padding: 8px 10px 6px;
+  cursor: pointer;
+}
+
+.changes-header:hover {
+  color: var(--fg);
+}
+
+.changes-count {
+  margin-left: auto;
+  font-size: 11px;
+  letter-spacing: 0;
+  color: var(--fg-dim);
+  background: #22262f;
+  border-radius: 8px;
+  padding: 0 6px;
+}
+
+.changes-row {
+  padding-left: 10px;
+}
+
+.changes-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  direction: rtl; /* keep the filename visible when the path is long */
+  text-align: left;
+  color: var(--fg-dim);
+}
+
+.changes-row[data-selected="true"] .changes-path {
+  color: var(--fg);
+}
+
+.changes-row .tree-status {
+  margin-left: 0;
+  padding-left: 0;
+  padding-right: 6px;
+  width: 12px;
+}
+
+/* ---- topbar right ---- */
+
+.topbar-right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cwd {
+  margin-left: 0;
+}
+
+.branch {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--fg-dim);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 1px 6px;
+}
+
+/* ---- project picker ---- */
+
+.picker-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  /* Opaque: the app is still mounted underneath so the agent keeps running. */
+  background: var(--bg);
+}
+
+.picker-card {
+  width: 100%;
+  max-width: 520px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.picker-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.picker-section-label {
+  color: var(--fg-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.recent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  /* px, not vh: the picker measures itself to size the window, and a
+     viewport-relative cap would feed that measurement back into itself. */
+  max-height: 360px;
+  overflow-y: auto;
+}
+
+.recent-row {
+  display: flex;
+  align-items: center;
+  border-radius: 6px;
+}
+
+.recent-row:hover {
+  background: #22262f;
+}
+
+.recent-open {
+  appearance: none;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.recent-open:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.recent-name {
+  font-weight: 500;
+  flex: 0 0 auto;
+}
+
+.recent-path {
+  color: var(--fg-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* The folder is gone: still listed so it can be removed, but not openable. */
+.recent-row[data-missing="true"] .recent-name {
+  color: var(--fg-dim);
+}
+
+.recent-row[data-missing="true"] .recent-path {
+  color: var(--danger);
+}
+
+.recent-open:disabled {
+  cursor: default;
+}
+
+.recent-forget {
+  appearance: none;
+  flex: 0 0 auto;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  opacity: 0;
+}
+
+.recent-row:hover .recent-forget,
+.recent-forget:focus-visible {
+  opacity: 1;
+}
+
+.recent-forget:hover {
+  color: var(--danger);
+}
+
+.picker-empty {
+  margin: 0;
+  color: var(--fg-dim);
+}
+
+.picker-error {
+  margin: 0;
+  color: var(--danger);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.picker-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.picker-browse,
+.picker-cancel {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--fg);
+  font: inherit;
+  padding: 6px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.picker-browse:hover,
+.picker-cancel:hover {
+  background: #22262f;
+}
+
+.picker-browse:focus-visible,
+.picker-cancel:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.picker-cancel {
+  border-color: transparent;
+  background: transparent;
+  color: var(--fg-dim);
+}
+
+/* ---- segmented controls in the viewer bar ---- */
+
+.seg {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.seg-btn {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+.seg-btn:hover:not(:disabled) {
+  color: var(--fg);
+  background: #22262f;
+}
+
+.seg-btn[data-active="true"] {
+  color: var(--fg);
+  background: #2a3550;
+}
+
+.seg-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.viewer-status {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.viewer-status[data-status="modified"] { color: var(--st-modified); }
+.viewer-status[data-status="added"] { color: var(--st-added); }
+.viewer-status[data-status="deleted"] { color: var(--st-deleted); }
+.viewer-status[data-status="renamed"] { color: var(--st-renamed); }
+.viewer-status[data-status="conflicted"] { color: var(--st-conflicted); }
+
+.viewer-bar .viewer-badge {
+  margin-left: auto;
+}
+
+/* the close button now lives in the bar rather than floating over the editor */
+.viewer-bar .viewer-close {
+  position: static;
+}
+
+/* ---- merge view ---- */
+
+.cm-merge-revert {
+  background: var(--bg-raised);
+}
+
+.cm-mergeView,
+.cm-mergeViewEditors {
+  height: 100%;
+}
+
+/* ---- agent panel (right) ---- */
+
+/*
+ * Mirrors `.rail` on the other side of the main column. Width is inline rather
+ * than tokenised because it is draggable; the token is only the default.
+ */
+.insight {
+  width: var(--insight-w);
+  flex: 0 0 auto;
+  border-left: 1px solid var(--border);
+  background: var(--bg-raised);
+  overflow: auto;
+}
+
+.insight-resizer {
+  flex: 0 0 5px;
+  cursor: col-resize;
+  background: transparent;
+}
+
+.insight-resizer:hover,
+.insight-resizer[data-dragging="true"] {
+  background: var(--border);
+}
+
+.insight-inner {
+  display: flex;
+  flex-direction: column;
+}
+
+.insight-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.insight-heading {
+  flex: 1 1 auto;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--fg-dim);
+}
+
+.insight-close {
+  background: none;
+  border: none;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 11px;
+  padding: 2px 4px;
+  border-radius: 4px;
+}
+
+.insight-close:hover {
+  background: #22262f;
+  color: var(--fg);
+}
+
+.insight-toggle {
+  background: none;
+  border: 1px solid transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+  font-size: 13px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+}
+
+.insight-toggle:hover {
+  background: #22262f;
+  color: var(--fg);
+}
+
+.insight-toggle[data-open="true"] {
+  color: var(--accent);
+}
+
+.insight-section {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 6px;
+}
+
+.insight-empty,
+.insight-note {
+  padding: 8px 12px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+/* ---- live strip ---- */
+
+.insight-now {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  background: #223046;
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.now-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.now-row + .now-row {
+  margin-top: 6px;
+}
+
+.now-name {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.now-status,
+.now-elapsed {
+  flex: 0 0 auto;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.isession-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--st-added);
+}
+
+/* ---- limit meters ---- */
+
+.meter {
+  padding: 4px 12px 6px;
+}
+
+.meter-line {
+  display: flex;
+  justify-content: space-between;
+  font-size: 11px;
+  color: var(--fg-dim);
+  margin-bottom: 4px;
+}
+
+.meter-pct {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fg);
+}
+
+.meter-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #22262f;
+  overflow: hidden;
+}
+
+.meter-fill {
+  height: 100%;
+  background: var(--accent);
+}
+
+.meter-fill[data-level="warn"] { background: var(--st-modified); }
+.meter-fill[data-level="high"] { background: var(--danger); }
+
+/* ---- account switcher ---- */
+
+.iaccount-add {
+  margin-left: auto;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+  padding: 1px 5px;
+  border-radius: 4px;
+}
+
+.iaccount-add:hover:not(:disabled),
+.iaccount-add:focus-visible {
+  background: #22262f;
+  color: var(--fg);
+  outline: none;
+}
+
+.iaccount-add:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.iaccounts {
+  display: flex;
+  flex-direction: column;
+}
+
+.iaccount {
+  display: flex;
+  align-items: center;
+  padding: 0 8px 0 12px;
+}
+
+.iaccount:hover {
+  background: #22262f;
+}
+
+.iaccount-pick {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+  padding: 5px 0;
+  border-radius: 4px;
+}
+
+.iaccount-pick:disabled {
+  cursor: default;
+}
+
+.iaccount-pick:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.iaccount-mark {
+  flex: 0 0 auto;
+  font-size: 9px;
+  color: var(--fg-dim);
+}
+
+.iaccount[data-active="true"] .iaccount-mark {
+  color: var(--st-added);
+}
+
+.iaccount-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.iaccount-state {
+  flex: 0 0 auto;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+/* Tools stay out of the way until the row is reached for. */
+.iaccount-tools {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+  visibility: hidden;
+}
+
+.iaccount:hover .iaccount-tools,
+.iaccount:focus-within .iaccount-tools {
+  visibility: visible;
+}
+
+.iaccount-confirm {
+  display: flex;
+  gap: 2px;
+  flex: 0 0 auto;
+}
+
+.iaccount-act {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 5px;
+  border-radius: 4px;
+}
+
+.iaccount-act:hover,
+.iaccount-act:focus-visible {
+  background: var(--bg);
+  color: var(--fg);
+  outline: none;
+}
+
+.iaccount-rename {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 3px 0;
+  background: var(--bg);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  padding: 2px 6px;
+}
+
+.iaccount-rename:focus {
+  outline: none;
+}
+
+/* ---- session rows ---- */
+
+.isession {
+  padding: 2px 0 6px;
+}
+
+.isession:hover {
+  background: #22262f;
+}
+
+.isession-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 4px 12px 0;
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+  font: inherit;
+  font-size: 12.5px;
+}
+
+.isession-title {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.isession-cost {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.isession[data-live="true"] .isession-cost {
+  color: var(--fg);
+}
+
+.isession-sub {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  /* Clears the chevron so the metadata lines up with the title above it. */
+  padding: 2px 12px 0 28px;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.isession-sep {
+  opacity: 0.5;
+}
+
+.isession-branch {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 120px;
+}
+
+.isession-detail {
+  padding: 6px 12px 2px 28px;
+}
+
+.imodel + .imodel {
+  margin-top: 8px;
+}
+
+.imodel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.imodel-cost {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.imodel-grid {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 1px 10px;
+  margin: 0;
+  font-size: 11px;
+}
+
+.imodel-grid dt {
+  color: var(--fg-dim);
+}
+
+.imodel-grid dd {
+  margin: 0;
+  text-align: right;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.isession-started {
+  margin-top: 6px;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+/* ---- rollup ---- */
+
+.insight-rollup {
+  padding: 8px 0 4px;
+}
+
+.rollup-row {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 12px;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.rollup-row span:nth-child(2) {
+  margin-left: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.rollup-cost {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  min-width: 56px;
+  text-align: right;
+}
+
+.rollup-total {
+  color: var(--fg);
+}

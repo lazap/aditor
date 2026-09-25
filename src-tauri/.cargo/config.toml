@@ -1,0 +1,10 @@
+# This machine has Xcode 16.2 installed under /Applications/Xcode.app, which is
+# too old for macOS 26 -- `xcodebuild` fails to load its own libraries, so any
+# build script that shells out to `cc` dies with "Failed to locate 'clang'".
+#
+# The standalone Command Line Tools (26.6.0, clang 21) are healthy, so point the
+# toolchain at those instead. Remove this once Xcode is updated, or once
+# `sudo xcode-select --switch /Library/Developer/CommandLineTools` is run
+# system-wide.
+[env]
+DEVELOPER_DIR = "/Library/Developer/CommandLineTools"

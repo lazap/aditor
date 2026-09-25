@@ -1,0 +1,427 @@
+//! PTY sessions: spawn an agent CLI on a real pseudo-terminal and pump its
+//! output to the webview.
+//!
+//! The agent *is* the process here -- we run `$SHELL -l -c '<agent>'` rather
+//! than dropping into an interactive shell and typing the command. That gives
+//! clean lifecycle semantics (the pane's life == the agent's life) at the cost
+//! of having no shell to fall back on when the agent quits, so the frontend has
+//! to offer a restart when `pty://exit` arrives.
+//!
+//! The login shell matters: a GUI-launched macOS app inherits a bare PATH, so
+//! `claude` at /opt/homebrew/bin would not resolve if we exec'd it directly.
+
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD as B64;
+use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, State};
+
+/// Flush pending PTY output at least this often. One event per read syscall
+/// floods the IPC bridge when an agent dumps a long file; batching keeps
+/// scrollback smooth without adding latency you can perceive.
+const FLUSH_INTERVAL: Duration = Duration::from_millis(4);
+/// ...or sooner, if this much has piled up.
+const FLUSH_BYTES: usize = 32 * 1024;
+const READ_BUF: usize = 8 * 1024;
+
+pub struct PtySession {
+    writer: Box<dyn Write + Send>,
+    master: Box<dyn MasterPty + Send>,
+    /// Needed because dropping `master` is *not* enough to end the child: the
+    /// reader thread holds a cloned reader for the same PTY, so the master fd
+    /// stays open, no SIGHUP is delivered, and the agent would outlive its
+    /// pane. The killer lets `pty_kill` signal the child directly while the
+    /// reader thread keeps the `Child` itself for `wait()`.
+    killer: Box<dyn ChildKiller + Send + Sync>,
+}
+
+#[derive(Default)]
+pub struct PtyRegistry {
+    sessions: Mutex<HashMap<String, PtySession>>,
+    next_id: AtomicU64,
+}
+
+impl PtyRegistry {
+    fn new_id(&self) -> String {
+        format!("pty-{}", self.next_id.fetch_add(1, Ordering::Relaxed))
+    }
+}
+
+#[derive(Clone, Serialize)]
+struct PtyOutput {
+    id: String,
+    /// base64 of the raw bytes. Deliberately not a String: a read boundary can
+    /// land mid-UTF-8-sequence, and lossy decoding would pepper the agent's
+    /// box-drawing and emoji with replacement characters. xterm.js decodes
+    /// incrementally from a Uint8Array, so bytes travel end to end untouched.
+    bytes: String,
+}
+
+#[derive(Clone, Serialize)]
+struct PtyExit {
+    id: String,
+    code: Option<i32>,
+}
+
+/// An agent CLI Aditor knows how to launch.
+#[derive(Clone, Serialize)]
+pub struct AgentInfo {
+    pub id: String,
+    pub label: String,
+    /// What we run inside the login shell. `None` would mean "just the shell";
+    /// no registry entry uses it today, but the path is kept so a plain-shell
+    /// entry can come back as a one-line change.
+    pub command: Option<String>,
+    pub available: bool,
+    pub version: Option<String>,
+}
+
+fn user_shell() -> String {
+    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
+}
+
+/// Session and IPC markers exported by a parent agent process.
+///
+/// Aditor inherits whatever environment it was launched with, and passes it to
+/// every agent it spawns. Launched from a terminal that is itself inside a
+/// Claude Code session -- which is exactly what `npm run tauri dev` does while
+/// developing Aditor -- these leak through and make the spawned Claude Code
+/// believe it is a nested child session, which silently turns transcript
+/// saving off.
+///
+/// Only session-scoped markers are stripped. Deliberate user configuration
+/// (`ANTHROPIC_API_KEY`, `CLAUDE_CONFIG_DIR`) must survive, or the agent cannot
+/// authenticate or find its own settings.
+const INHERITED_SESSION_VARS: [&str; 9] = [
+    "CLAUDECODE",
+    "CLAUDE_CODE_CHILD_SESSION",
+    "CLAUDE_CODE_SESSION_ID",
+    "CLAUDE_CODE_ENTRYPOINT",
+    "CLAUDE_CODE_EXECPATH",
+    "CLAUDE_CODE_MESSAGING_SOCKET",
+    "CLAUDE_CODE_MESSAGING_TOKEN",
+    "CLAUDE_PID",
+    "CLAUDE_EFFORT",
+];
+
+/// Variable prefixes exported by whatever terminal emulator launched Aditor.
+///
+/// Aditor *is* the terminal once it spawns a PTY, so the previous emulator's
+/// identity must not pass through. This is not cosmetic: Ghostty exports
+/// `TERMINFO` pointing into its own app bundle, and we advertise
+/// `TERM=xterm-256color`, so ncurses programs would look that entry up in the
+/// wrong database. Its `GHOSTTY_*` variables likewise re-activate Ghostty's
+/// shell integration inside our terminal, emitting OSC sequences aimed at a
+/// different emulator.
+///
+/// Matched by prefix so a future release adding variables is covered too.
+const FOREIGN_TERMINAL_PREFIXES: [&str; 7] = [
+    "GHOSTTY_",
+    "ITERM_",
+    "ITERM2_",
+    "KITTY_",
+    "WEZTERM_",
+    "ALACRITTY_",
+    "VSCODE_",
+];
+
+/// Exact terminal-identity variables, same reasoning as the prefixes above.
+/// `ZDOTDIR` is deliberately absent: that one is the user's own shell
+/// configuration, and dropping it would break their setup.
+const FOREIGN_TERMINAL_VARS: [&str; 5] = [
+    "TERMINFO",
+    "TERMINFO_DIRS",
+    "TERM_SESSION_ID",
+    "LC_TERMINAL",
+    "LC_TERMINAL_VERSION",
+];
+
+/// Build `$SHELL -l -c '<command>'`, or an interactive login shell when
+/// `command` is None -- a branch nothing reaches while the registry is all
+/// agents. `-l` sources the login profile, which is what makes the user's real
+/// PATH (and therefore the agent binaries) visible.
+fn shell_command(command: Option<&str>, cwd: &str) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(user_shell());
+    match command {
+        Some(c) => {
+            // `stty -echo` closes a window in which the PTY line discipline
+            // echoes terminal replies back as text. An agent TUI asks the
+            // terminal for its device attributes (ESC[c) before switching the
+            // tty to raw mode; xterm.js dutifully answers, and with ECHO still
+            // on the answer is echoed to the screen -- appearing as a literal
+            // `^[[?1;2c` in front of the first prompt (caret notation being
+            // the tty's own ECHOCTL rendering of ESC, which is what identifies
+            // the line discipline as the culprit rather than the renderer).
+            //
+            // `exec` keeps the process tree flat: without it zsh stays as a
+            // parent, and the ChildKiller would signal the shell instead of the
+            // agent. Commands come from a fixed registry of bare binary names,
+            // so there is nothing to quote here.
+            cmd.args(["-l", "-c", &format!("stty -echo 2>/dev/null; exec {c}")]);
+        }
+        None => {
+            // Dormant: see the note above. An interactive shell needs ECHO left
+            // alone, or you type blind.
+            cmd.args(["-l", "-i"]);
+        }
+    }
+    cmd.cwd(cwd);
+    // Claude Code and opencode both render full-colour TUIs; without these they
+    // fall back to something much plainer.
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    // Identify ourselves the way terminal emulators do, rather than passing on
+    // a stale value describing whatever launched Aditor. Both halves must be
+    // set together: TERM_PROGRAM=Aditor beside an inherited
+    // TERM_PROGRAM_VERSION would claim a version that is not ours.
+    cmd.env("TERM_PROGRAM", "Aditor");
+    cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+
+    for key in INHERITED_SESSION_VARS {
+        cmd.env_remove(key);
+    }
+    for key in FOREIGN_TERMINAL_VARS {
+        cmd.env_remove(key);
+    }
+    for (key, _) in std::env::vars() {
+        if FOREIGN_TERMINAL_PREFIXES
+            .iter()
+            .any(|prefix| key.starts_with(prefix))
+        {
+            cmd.env_remove(&key);
+        }
+    }
+    cmd
+}
+
+/// Emit whatever has been coalesced so far. Both the reader and the ticker
+/// call this, under the same lock, so bytes reach the webview in read order.
+fn flush(app: &AppHandle, id: &str, pending: &mut Vec<u8>) {
+    if pending.is_empty() {
+        return;
+    }
+    let _ = app.emit(
+        "pty://output",
+        PtyOutput {
+            id: id.to_string(),
+            bytes: B64.encode(&pending),
+        },
+    );
+    pending.clear();
+}
+
+#[tauri::command]
+pub fn pty_spawn(
+    app: AppHandle,
+    registry: State<'_, Arc<PtyRegistry>>,
+    command: Option<String>,
+    cwd: String,
+    cols: u16,
+    rows: u16,
+) -> Result<String, String> {
+    let pair = native_pty_system()
+        .openpty(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| format!("openpty failed: {e}"))?;
+
+    let mut child = pair
+        .slave
+        .spawn_command(shell_command(command.as_deref(), &cwd))
+        .map_err(|e| format!("spawn failed: {e}"))?;
+    // The slave fd must be dropped or the master never sees EOF on child exit.
+    drop(pair.slave);
+
+    let id = registry.new_id();
+    let mut reader = pair
+        .master
+        .try_clone_reader()
+        .map_err(|e| format!("clone reader failed: {e}"))?;
+    let writer = pair
+        .master
+        .take_writer()
+        .map_err(|e| format!("take writer failed: {e}"))?;
+
+    registry.sessions.lock().unwrap().insert(
+        id.clone(),
+        PtySession {
+            writer,
+            master: pair.master,
+            killer: child.clone_killer(),
+        },
+    );
+
+    let pending = Arc::new(Mutex::new(Vec::<u8>::with_capacity(FLUSH_BYTES)));
+    let done = Arc::new(AtomicBool::new(false));
+
+    // Ticker: the flush clock has to live outside the reader, because the
+    // reader can only act when a read returns and then it blocks again. A
+    // burst that ends inside the coalescing window would otherwise sit in
+    // `pending` until the agent next wrote something -- which is why a prompt
+    // redrawn after a resize, or a trust dialog on first open, stayed missing
+    // until a click or keystroke shook the held bytes loose.
+    {
+        let app = app.clone();
+        let id = id.clone();
+        let pending = Arc::clone(&pending);
+        let done = Arc::clone(&done);
+        std::thread::spawn(move || {
+            while !done.load(Ordering::Relaxed) {
+                std::thread::sleep(FLUSH_INTERVAL);
+                flush(&app, &id, &mut pending.lock().unwrap());
+            }
+        });
+    }
+
+    // Reader thread: coalesce into `pending`; the size cap is the only reason
+    // to emit early, since the ticker owns the deadline.
+    {
+        let app = app.clone();
+        let id = id.clone();
+        let pending = Arc::clone(&pending);
+        let done = Arc::clone(&done);
+        std::thread::spawn(move || {
+            let mut buf = [0u8; READ_BUF];
+
+            loop {
+                match reader.read(&mut buf) {
+                    Ok(0) => break,
+                    Ok(n) => {
+                        let mut p = pending.lock().unwrap();
+                        p.extend_from_slice(&buf[..n]);
+                        if p.len() >= FLUSH_BYTES {
+                            flush(&app, &id, &mut p);
+                        }
+                    }
+                    Err(_) => break,
+                }
+            }
+            done.store(true, Ordering::Relaxed);
+            flush(&app, &id, &mut pending.lock().unwrap());
+
+            let code = child.wait().ok().map(|s| s.exit_code() as i32);
+            let _ = app.emit("pty://exit", PtyExit { id: id.clone(), code });
+        });
+    }
+
+    Ok(id)
+}
+
+#[tauri::command]
+pub fn pty_write(
+    registry: State<'_, Arc<PtyRegistry>>,
+    id: String,
+    bytes: String,
+) -> Result<(), String> {
+    let data = B64.decode(bytes).map_err(|e| format!("bad base64: {e}"))?;
+    let mut sessions = registry.sessions.lock().unwrap();
+    let session = sessions.get_mut(&id).ok_or("no such session")?;
+    session.writer.write_all(&data).map_err(|e| e.to_string())?;
+    session.writer.flush().map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn pty_resize(
+    registry: State<'_, Arc<PtyRegistry>>,
+    id: String,
+    cols: u16,
+    rows: u16,
+) -> Result<(), String> {
+    let sessions = registry.sessions.lock().unwrap();
+    let session = sessions.get(&id).ok_or("no such session")?;
+    session
+        .master
+        .resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|e| e.to_string())
+}
+
+/// End the session: signal the child, then drop our handles. The reader thread
+/// sees EOF once the child is gone and emits `pty://exit` on its way out.
+#[tauri::command]
+pub fn pty_kill(registry: State<'_, Arc<PtyRegistry>>, id: String) -> Result<(), String> {
+    if let Some(mut session) = registry.sessions.lock().unwrap().remove(&id) {
+        let _ = session.killer.kill();
+    }
+    Ok(())
+}
+
+/// Reap every session.
+///
+/// The frontend cannot be the only thing responsible for cleanup: a full page
+/// reload throws away the JS context *without* running React's effect cleanups,
+/// so no `pty_kill` is ever sent and the agent outlives the page that owned it.
+/// Same on window close. So the app calls this once at startup -- any session
+/// alive before the first spawn is an orphan from a previous page -- and the
+/// window-destroyed handler calls it on the way out.
+pub fn kill_all(registry: &PtyRegistry) {
+    let mut sessions = registry.sessions.lock().unwrap();
+    for (_, session) in sessions.iter_mut() {
+        let _ = session.killer.kill();
+    }
+    sessions.clear();
+}
+
+#[tauri::command]
+pub fn pty_kill_all(registry: State<'_, Arc<PtyRegistry>>) -> Result<(), String> {
+    kill_all(&registry);
+    Ok(())
+}
+
+/// Probe the agents we know about, through a login shell so PATH matches what
+/// the user sees in their own terminal.
+#[tauri::command]
+pub fn agents_available() -> Vec<AgentInfo> {
+    let known = [
+        ("claude", "Claude Code", Some("claude")),
+        ("opencode", "opencode", Some("opencode")),
+    ];
+
+    known
+        .iter()
+        .map(|(id, label, command)| match command {
+            // Dormant alongside `shell_command`'s None arm -- no entry above
+            // carries a `None` command today.
+            None => AgentInfo {
+                id: id.to_string(),
+                label: label.to_string(),
+                command: None,
+                available: true,
+                version: Some(user_shell()),
+            },
+            Some(bin) => {
+                let out = std::process::Command::new(user_shell())
+                    .args(["-l", "-c", &format!("command -v {bin} >/dev/null && {bin} --version")])
+                    .output();
+                let version = out.ok().filter(|o| o.status.success()).map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .next()
+                        .unwrap_or("")
+                        .trim()
+                        .to_string()
+                });
+                AgentInfo {
+                    id: id.to_string(),
+                    label: label.to_string(),
+                    command: Some(bin.to_string()),
+                    available: version.is_some(),
+                    version,
+                }
+            }
+        })
+        .collect()
+}
