@@ -263,6 +263,13 @@ body,
 
 /* ---- file tree ---- */
 
+/* Structural tree colour. The per-language brand colours are NOT here: they
+   live in components/fileIcons.tsx, because #3178c6 is TypeScript's blue rather
+   than Aditor's, and must not move when this palette does. */
+:root {
+  --icon-dir: #8ba0c9;
+}
+
 .tree {
   padding: 6px 0;
   font-size: 12.5px;
@@ -293,12 +300,77 @@ body,
   font-size: 10px;
 }
 
+/* The tree's own disclosure triangle. A single right-pointing glyph that
+   rotates, so open/closed is one shape and can animate -- unlike the text
+   chevron above, which ChangesList and AgentSessions still use. */
+.tree-twisty {
+  width: 12px;
+  flex: 0 0 12px;
+  height: 12px;
+  display: flex;
+  align-items: center;
+  color: var(--fg-dim);
+  transform: rotate(90deg);
+  transition: transform 120ms ease;
+}
+
+.tree-twisty[data-open="false"] {
+  transform: rotate(0deg);
+}
+
+/* Files keep the column so their icons line up under a directory's. */
+.tree-twisty[data-dir="false"] {
+  visibility: hidden;
+}
+
+.tree-icon {
+  width: 14px;
+  height: 14px;
+  flex: 0 0 14px;
+  display: block;
+}
+
+/* The selected row's icon reads as the active one. */
+.tree-row:not([data-selected="true"]) .tree-icon {
+  opacity: 0.85;
+}
+
+/* A long name truncates instead of scrolling the rail sideways. */
+.tree-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tree-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.tree-row:focus {
+  outline: none;
+}
+
 .tree-name[data-dir="true"] {
   color: var(--fg);
 }
 
 .tree-name[data-dir="false"] {
   color: var(--fg-dim);
+}
+
+/* Git state tints the name itself; the badge to the right still spells it
+   out. Ordering matters -- see the selected-row rule directly below, which has
+   equal specificity and must keep winning so a selected modified file stays
+   readable against its highlight. */
+.tree-row[data-status="modified"] .tree-name { color: var(--st-modified); }
+.tree-row[data-status="added"] .tree-name { color: var(--st-added); }
+.tree-row[data-status="renamed"] .tree-name { color: var(--st-renamed); }
+.tree-row[data-status="conflicted"] .tree-name { color: var(--st-conflicted); }
+
+.tree-row[data-status="deleted"] .tree-name {
+  color: var(--st-deleted);
+  text-decoration: line-through;
 }
 
 .tree-row[data-selected="true"] .tree-name {
@@ -917,7 +989,8 @@ button.cwd:hover {
 }
 
 .insight-empty,
-.insight-note {
+.insight-note,
+.changes-empty {
   padding: 8px 12px;
   color: var(--fg-dim);
   font-size: 11px;

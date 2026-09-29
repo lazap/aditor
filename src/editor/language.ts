@@ -18,3 +18,16 @@ export async function loadLanguage(path: string): Promise<Extension[]> {
     return [];
   }
 }
+
+/**
+ * Canonical language name for a filename, or null when nothing matches.
+ *
+ * Synchronous on purpose: `matchFilename` only inspects the descriptors'
+ * extension/filename patterns and never triggers the lazy `load()` above, so
+ * this is cheap enough to call once per file tree row. Lets the tree's icon
+ * table cover only what it wants to style deliberately and still name the
+ * remaining ~140 languages CodeMirror knows about.
+ */
+export function languageName(filename: string): string | null {
+  return LanguageDescription.matchFilename(languages, filename)?.name ?? null;
+}

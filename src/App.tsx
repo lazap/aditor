@@ -429,6 +429,10 @@ export default function App() {
                 <ChangesList
                   files={repo?.files ?? []}
                   root={workspace}
+                  // null = status not back yet, or it failed. Assume a repo so
+                  // the transient body reads "No changes" rather than accusing
+                  // a real repo of not being one.
+                  isRepo={repo === null || repo.isRepo}
                   selected={openFile}
                   recent={recent}
                   onSelect={selectFile}

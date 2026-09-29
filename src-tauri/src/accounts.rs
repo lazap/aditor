@@ -16,7 +16,8 @@
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Sender, TryRecvError, channel};
+use std::sync::Mutex;
+use std::sync::mpsc::{RecvTimeoutError, Sender, channel};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -170,7 +171,9 @@ fn now_ms() -> i64 {
 // a blocked event loop), and stealing it would let two writers run at once.
 const CREDENTIAL_STALENESS: Duration = Duration::from_secs(60);
 const CONFIG_STALENESS: Duration = Duration::from_secs(10);
-/// A little faster than Claude Code's 5s, for margin.
+/// How often a held lock is touched -- a little faster than Claude Code's 5s,
+/// for margin. Not a release latency: `Lock::drop` wakes the toucher rather
+/// than waiting the period out.
 const TOUCH_INTERVAL: Duration = Duration::from_secs(3);
 /// Per lock. Claude Code holds the credential lock for one token-endpoint round
 /// trip and the config lock for a local read-modify-write, so this outlasts
@@ -206,6 +209,17 @@ fn jitter_ms() -> u64 {
 }
 
 fn acquire(dir: PathBuf, staleness: Duration, timeout: Duration) -> Result<Lock, String> {
+    acquire_every(dir, staleness, timeout, TOUCH_INTERVAL)
+}
+
+/// `acquire` with the touch period spelled out, so a test can watch the toucher
+/// keep a lock alive without waiting out the protocol's own interval.
+fn acquire_every(
+    dir: PathBuf,
+    staleness: Duration,
+    timeout: Duration,
+    touch_every: Duration,
+) -> Result<Lock, String> {
     if let Some(parent) = dir.parent() {
         let _ = fs::create_dir_all(parent);
     }
@@ -246,10 +260,15 @@ fn acquire(dir: PathBuf, staleness: Duration, timeout: Duration) -> Result<Lock,
     let held = dir.clone();
     let toucher = std::thread::spawn(move || {
         loop {
-            std::thread::sleep(TOUCH_INTERVAL);
-            match rx.try_recv() {
-                Ok(()) | Err(TryRecvError::Disconnected) => return,
-                Err(TryRecvError::Empty) => {}
+            // A wait rather than a sleep: `Lock::drop` drops the sender, which
+            // wakes this immediately. Sleeping the period out and only then
+            // checking made every release cost up to `touch_every` -- three
+            // locks per switch, so seconds of frozen UI for no work at all.
+            match rx.recv_timeout(touch_every) {
+                // Still held; keep it looking alive.
+                Err(RecvTimeoutError::Timeout) => {}
+                // Released, or the holder is gone. Either way, done.
+                Ok(()) | Err(RecvTimeoutError::Disconnected) => return,
             }
             // Gone means taken over as stale; there is nothing left to keep alive.
             if !touch(&held) {
@@ -858,8 +877,41 @@ fn recapture_outgoing(dir: &Path, index: &Index) -> Result<(), String> {
 
 // ------------------------------------------------------------- commands ---
 
+/// One account operation at a time.
+///
+/// The lock directories guard against *other* processes. This guards against
+/// two of our own commands interleaving the halves they do outside those locks
+/// -- `save`'s index write, `forget`'s slot removal -- which running on the
+/// main thread used to prevent for free.
+static GATE: Mutex<()> = Mutex::new(());
+
+/// Run an account operation off the UI thread.
+///
+/// A synchronous `#[tauri::command]` is called inline by Tauri's IPC handler,
+/// which on macOS is the main thread: everything below spawns `security`,
+/// fsyncs, and can sit on Claude Code's locks for `LOCK_TIMEOUT`, none of which
+/// the window can afford to wait for. The work itself stays blocking -- it is
+/// filesystem and subprocess work, not async work -- so it goes to the blocking
+/// pool rather than onto the runtime's worker threads.
+async fn off_thread<T, F>(f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let _gate = GATE.lock().unwrap_or_else(|e| e.into_inner());
+        f()
+    })
+    .await
+    .map_err(|e| format!("the account operation did not finish: {e}"))?
+}
+
 #[tauri::command]
-pub fn claude_accounts(app: AppHandle) -> Result<Accounts, String> {
+pub async fn claude_accounts(app: AppHandle) -> Result<Accounts, String> {
+    off_thread(move || accounts_blocking(app)).await
+}
+
+fn accounts_blocking(app: AppHandle) -> Result<Accounts, String> {
     if let Some(reason) = unsupported_reason() {
         return Ok(Accounts::unsupported(reason));
     }
@@ -898,7 +950,11 @@ pub fn claude_accounts(app: AppHandle) -> Result<Accounts, String> {
 /// Save whichever account is logged in right now, or refresh the copy we
 /// already hold for it.
 #[tauri::command]
-pub fn claude_account_save(app: AppHandle) -> Result<Account, String> {
+pub async fn claude_account_save(app: AppHandle) -> Result<Account, String> {
+    off_thread(move || save_blocking(app)).await
+}
+
+fn save_blocking(app: AppHandle) -> Result<Account, String> {
     if let Some(reason) = unsupported_reason() {
         return Err(reason);
     }
@@ -942,7 +998,11 @@ pub fn claude_account_save(app: AppHandle) -> Result<Account, String> {
 /// Nothing here touches the PTY, the transcripts or the session registry: the
 /// agent keeps running, and picks the new account up on its next token read.
 #[tauri::command]
-pub fn claude_account_switch(app: AppHandle, uuid: String) -> Result<(), String> {
+pub async fn claude_account_switch(app: AppHandle, uuid: String) -> Result<(), String> {
+    off_thread(move || switch_blocking(app, uuid)).await
+}
+
+fn switch_blocking(app: AppHandle, uuid: String) -> Result<(), String> {
     if let Some(reason) = unsupported_reason() {
         return Err(reason);
     }
@@ -986,7 +1046,15 @@ pub fn claude_account_switch(app: AppHandle, uuid: String) -> Result<(), String>
 }
 
 #[tauri::command]
-pub fn claude_account_rename(app: AppHandle, uuid: String, label: String) -> Result<(), String> {
+pub async fn claude_account_rename(
+    app: AppHandle,
+    uuid: String,
+    label: String,
+) -> Result<(), String> {
+    off_thread(move || rename_blocking(app, uuid, label)).await
+}
+
+fn rename_blocking(app: AppHandle, uuid: String, label: String) -> Result<(), String> {
     let dir = store_dir(&app)?;
     let mut index = read_index(&dir);
     let entry = index
@@ -1007,7 +1075,11 @@ pub fn claude_account_rename(app: AppHandle, uuid: String, label: String) -> Res
 /// so forgetting the active one leaves the machine logged in but unable to
 /// come back to it without `/login`.
 #[tauri::command]
-pub fn claude_account_forget(app: AppHandle, uuid: String) -> Result<(), String> {
+pub async fn claude_account_forget(app: AppHandle, uuid: String) -> Result<(), String> {
+    off_thread(move || forget_blocking(app, uuid)).await
+}
+
+fn forget_blocking(app: AppHandle, uuid: String) -> Result<(), String> {
     let dir = store_dir(&app)?;
     let mut index = read_index(&dir);
     index.accounts.retain(|a| a.uuid != uuid);
@@ -1117,6 +1189,34 @@ mod tests {
             Ok(_) => panic!("a live lock must not be taken over"),
             Err(e) => assert!(e.contains("locked"), "unexpected message: {e}"),
         }
+    }
+
+    /// Releasing has to be immediate. A toucher that checked its stop channel
+    /// only after sleeping made every release wait the period out, and a switch
+    /// takes three locks -- which is what froze the window for seconds.
+    #[test]
+    fn releasing_a_lock_does_not_wait_for_the_touch_period() {
+        let dir = scratch("release-fast").join("x.lock");
+        let start = Instant::now();
+        drop(acquire(dir, CONFIG_STALENESS, LOCK_TIMEOUT).unwrap());
+        let took = start.elapsed();
+        assert!(
+            took < TOUCH_INTERVAL / 4,
+            "releasing took {took:?}; a release must not wait on the touch period"
+        );
+    }
+
+    /// The other half of that: a lock held longer than its touch period must
+    /// keep looking alive, or the next waiter takes it over as stale.
+    #[test]
+    fn a_held_lock_keeps_being_touched() {
+        let dir = scratch("touched").join("x.lock");
+        let every = Duration::from_millis(50);
+        let _held = acquire_every(dir.clone(), CONFIG_STALENESS, LOCK_TIMEOUT, every).unwrap();
+        let first = fs::metadata(&dir).unwrap().modified().unwrap();
+        std::thread::sleep(every * 4);
+        let later = fs::metadata(&dir).unwrap().modified().unwrap();
+        assert!(later > first, "a held lock must keep its mtime moving");
     }
 
     /// The protocol's escape hatch: a holder that died without releasing must
