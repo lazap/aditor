@@ -23,6 +23,8 @@ interface Props {
   statuses: Map<string, ChangeKind>;
   /** Paths the watcher saw move recently -- accented, then fades. */
   recent: Set<string>;
+  /** Bumping this moves the caret to the tree. Zero never does. */
+  focusToken: number;
 }
 
 export function FileTree(props: Props) {
@@ -105,6 +107,7 @@ function Tree({
   onToggle,
   statuses,
   recent,
+  focusToken,
 }: Props) {
   const [cache, setCache] = useState<Map<string, DirEntry[]>>(new Map());
   const [errors, setErrors] = useState<Map<string, string>>(new Map());
@@ -258,6 +261,21 @@ function Tree({
     else setCursor(next.entry.path);
   }, [items, cursor, root, focusRow]);
 
+  // Taking focus on request -- ⌘1. Compared against the last value rather
+  // than fired on every run, because `Tree` remounts when the project changes
+  // and a bare effect would rip the caret out of the terminal on every switch.
+  const lastFocusToken = useRef(focusToken);
+  useEffect(() => {
+    if (focusToken === lastFocusToken.current) return;
+    lastFocusToken.current = focusToken;
+    // An empty or still-loading tree has no row to land on; the container
+    // takes it instead, so the chord is never silently ignored.
+    if (tabTarget) focusRow(tabTarget);
+    else boxRef.current?.focus();
+    // `tabTarget` is read, not depended on: this must fire on the token alone,
+    // and the closure belongs to the render in which the token changed.
+  }, [focusToken]);
+
   const typed = useRef({ buffer: "", at: 0 });
 
   const onKeyDown = useCallback(
@@ -346,6 +364,7 @@ function Tree({
       className="tree"
       role="tree"
       aria-label="Files"
+      tabIndex={-1}
       ref={boxRef}
       onKeyDown={onKeyDown}
     >
@@ -380,6 +399,11 @@ function Tree({
               aria-selected={entry.path === selected}
               tabIndex={entry.path === tabTarget ? 0 : -1}
               data-path={entry.path}
+              // The keyboard cursor is styled from this, not from
+              // :focus-visible: WebKit does not reliably match that pseudo-class
+              // on a programmatically focused div[tabindex], which left the
+              // cursor invisible and the arrow keys looking dead.
+              data-cursor={entry.path === tabTarget}
               data-selected={entry.path === selected}
               data-recent={recent.has(entry.path)}
               data-status={status}

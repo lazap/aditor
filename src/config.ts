@@ -10,6 +10,8 @@ export const STORAGE = {
   insightOpen: "aditor.insightOpen",
   insightWidth: "aditor.insightWidth",
   diffLayout: "aditor.diffLayout",
+  /** Rebound keyboard shortcuts: command id -> chord, or null for unbound. */
+  shortcuts: "aditor.shortcuts",
 
   // Pre-picker keys. Nothing writes these any more; they exist so
   // `migrateLegacyState` in projects.ts can fold them into the new shape once

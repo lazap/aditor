@@ -3,6 +3,7 @@ import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { listen } from "@tauri-apps/api/event";
+import { isReservedForApp } from "../shortcuts/store";
 import {
   fromBase64,
   ptyKill,
@@ -12,20 +13,6 @@ import {
   type PtyExit,
   type PtyOutput,
 } from "../pty/api";
-
-/**
- * Keys Aditor keeps for itself. Everything else is forwarded to the PTY --
- * the agent needs Ctrl-C, Cmd-K, and Opt/Cmd-arrow word motion far more than
- * the webview does.
- */
-function isReservedForApp(e: KeyboardEvent): boolean {
-  const mod = e.metaKey || e.ctrlKey;
-  if (mod && (e.key === "q" || e.key === "w" || e.key === "m")) return true; // window mgmt
-  if (mod && e.key.toLowerCase() === "o") return true; // project chooser
-  if (mod && e.shiftKey && e.key.toLowerCase() === "r") return true; // reload (dev)
-  if (mod && (e.key === "+" || e.key === "-" || e.key === "0")) return true; // zoom
-  return false;
-}
 
 const terminalTheme = {
   background: "#14161a",
@@ -57,11 +44,22 @@ interface Props {
   cwd: string;
   /** Bumping this respawns -- how the agent picker switches agents. */
   generation: number;
+  /** Bumping this takes the caret, without touching the session. */
+  focusToken: number;
   onExit(code: number | null): void;
 }
 
-export function TerminalPane({ command, cwd, generation, onExit }: Props) {
+export function TerminalPane({
+  command,
+  cwd,
+  generation,
+  focusToken,
+  onExit,
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
+  // Reachable from outside the spawn effect, so focusing never goes near the
+  // dependencies that kill and respawn the PTY.
+  const termRef = useRef<Terminal | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -86,6 +84,7 @@ export function TerminalPane({ command, cwd, generation, onExit }: Props) {
       scrollback: 10_000,
       macOptionIsMeta: true, // Opt-arrow does word motion instead of emitting ø∂
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
@@ -101,6 +100,10 @@ export function TerminalPane({ command, cwd, generation, onExit }: Props) {
       /* DOM renderer is the default; nothing to do. */
     }
 
+    // Everything the app has not claimed goes to the PTY -- the agent needs
+    // Ctrl-C, Cmd-K and Opt/Cmd-arrow word motion far more than the webview
+    // does. Declining a key here does not preventDefault it, which is how the
+    // reserved ones go on to reach App's window listener.
     term.attachCustomKeyEventHandler((e) => !isReservedForApp(e));
     fit.fit();
 
@@ -167,9 +170,17 @@ export function TerminalPane({ command, cwd, generation, onExit }: Props) {
       observer.disconnect();
       unlisteners.forEach((u) => u());
       if (sessionId) void ptyKill(sessionId);
+      termRef.current = null;
       term.dispose();
     };
   }, [command, cwd, generation, onExit]);
+
+  // Its own effect, and `focusToken` stays out of the one above: adding it
+  // there would tear down the PTY and restart the agent on every ⌘2.
+  useEffect(() => {
+    if (focusToken === 0) return;
+    termRef.current?.focus();
+  }, [focusToken]);
 
   return (
     <div className="terminal-wrap">

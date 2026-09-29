@@ -9,6 +9,13 @@ import { FileTree } from "./components/FileTree";
 import { ChangesList } from "./components/ChangesList";
 import { BottomPane } from "./components/BottomPane";
 import { SplitPane } from "./components/SplitPane";
+import { ShortcutSettings } from "./components/ShortcutSettings";
+import { Toast, type ToastMessage } from "./components/Toast";
+import { useShortcuts } from "./shortcuts/useShortcuts";
+import { chordFor } from "./shortcuts/store";
+import { formatChord } from "./shortcuts/keys";
+import { switchToNextAccount } from "./accounts/next";
+import type { CommandId } from "./shortcuts/registry";
 import { agentsAvailable, reapOrphansOnce, type AgentInfo } from "./pty/api";
 import { dirsExist, fsDebounceMs, openWorkspace } from "./fs/api";
 import { gitStatus, type RepoStatus } from "./git/api";
@@ -37,6 +44,12 @@ const AGENT_DEBOUNCE_MS = 400;
 /** Keeps the rail and the terminal both usable. */
 const INSIGHT_MIN = 220;
 const INSIGHT_MAX = 480;
+
+/** A tooltip that names the chord, and stays honest once it is rebound. */
+function chordHint(text: string, id: CommandId): string {
+  const chord = chordFor(id);
+  return chord ? `${text} (${formatChord(chord)})` : text;
+}
 
 export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -72,6 +85,15 @@ export default function App() {
   const [resizing, setResizing] = useState(false);
   /** Bumped by `agents://changed`, separately from the workspace watcher. */
   const [agentsToken, setAgentsToken] = useState(0);
+
+  // Focus is real DOM focus, so "focus the tree" cannot be state -- it is an
+  // event. A counter is how the panes are asked to take the caret, matching
+  // `generation` and `refreshToken` elsewhere here.
+  const [filesFocus, setFilesFocus] = useState(0);
+  const [agentFocus, setAgentFocus] = useState(0);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [toast, setToast] = useState<ToastMessage | null>(null);
+  const toastSeq = useRef(0);
 
   // Persisting per-project state from the callbacks below needs the current
   // workspace, but taking it as a dep would rebuild handlers the tree treats
@@ -289,18 +311,52 @@ export default function App() {
     [],
   );
 
-  // Cmd-O anywhere, including with the terminal focused -- TerminalPane
-  // reserves the chord rather than forwarding it to the agent.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "o") {
-        e.preventDefault();
-        setPicking(true);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
+  const showToast = useCallback((text: string, tone: ToastMessage["tone"] = "info") => {
+    setToast({ id: ++toastSeq.current, text, tone });
   }, []);
+  const hideToast = useCallback(() => setToast(null), []);
+
+  // Every shortcut the app has. The chords themselves live in the registry,
+  // which is also what stops TerminalPane forwarding them to the agent --
+  // ⌘O used to need a listener here and a line over there to work.
+  //
+  // A dialog is on top: the app behind it is inert, so nothing but closing the
+  // dialog should fire.
+  const blocked = picking || shortcutsOpen;
+  useShortcuts({
+    "project.open": () => !shortcutsOpen && setPicking(true),
+    "app.shortcuts": () => !picking && setShortcutsOpen((open) => !open),
+    "focus.files": () => {
+      if (blocked || !workspace) return;
+      setFilesFocus((t) => t + 1);
+    },
+    "focus.agent": () => {
+      if (blocked) return;
+      setAgentFocus((t) => t + 1);
+    },
+    "account.next": () => {
+      if (blocked) return;
+      // The backend would happily swap the Claude login underneath opencode;
+      // it just would not mean anything.
+      if (active?.id !== "claude") {
+        showToast("Switch to Claude Code to change accounts.", "error");
+        return;
+      }
+      void switchToNextAccount()
+        .then(({ label, settleSeconds }) => {
+          showToast(
+            settleSeconds > 0
+              ? `Switched to ${label}. The session keeps going and picks it up in ${settleSeconds}s.`
+              : `Switched to ${label}.`,
+          );
+          // Sessions and limits on screen belong to the account we just left.
+          setAgentsToken((t) => t + 1);
+        })
+        .catch((e: unknown) =>
+          showToast(String(e).replace(/^Error:\s*/, ""), "error"),
+        );
+    },
+  });
 
   const toggleDir = useCallback((path: string) => {
     setExpanded((prev) => {
@@ -350,6 +406,7 @@ export default function App() {
           command={active.command}
           cwd={workspace}
           generation={generation}
+          focusToken={agentFocus}
           onExit={handleExit}
         />
         {exitCode !== undefined && (
@@ -406,6 +463,14 @@ export default function App() {
             >
               ◫
             </button>
+            <button
+              className="shortcuts-open"
+              onClick={() => setShortcutsOpen(true)}
+              title={chordHint("Keyboard shortcuts", "app.shortcuts")}
+              aria-label="Keyboard shortcuts"
+            >
+              ⌨
+            </button>
             {repo?.isRepo && repo.branch && (
               <span className="branch" title="Current branch">
                 {repo.branch}
@@ -414,7 +479,10 @@ export default function App() {
             <button
               className="cwd"
               onClick={() => setPicking(true)}
-              title={`${workspace ?? "…"} — click to switch project (⌘O)`}
+              title={chordHint(
+                `${workspace ?? "…"} — click to switch project`,
+                "project.open",
+              )}
             >
               {(workspace ?? "").split("/").slice(-2).join("/") ||
                 "Choose project…"}
@@ -446,6 +514,7 @@ export default function App() {
                   onToggle={toggleDir}
                   statuses={statuses}
                   recent={recent}
+                  focusToken={filesFocus}
                 />
               </>
             ) : (
@@ -516,6 +585,10 @@ export default function App() {
           fitWindow={workspace === null}
         />
       )}
+
+      {shortcutsOpen && <ShortcutSettings onClose={() => setShortcutsOpen(false)} />}
+
+      <Toast message={toast} onDone={hideToast} />
     </>
   );
 }

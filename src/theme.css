@@ -342,9 +342,20 @@ body,
   text-overflow: ellipsis;
 }
 
-.tree-row:focus-visible {
+/* The keyboard cursor. Gated on :focus-within so it shows only while the tree
+   actually has the keyboard, and driven by data-cursor rather than
+   :focus-visible -- WebKit does not reliably match that pseudo-class on a
+   programmatically focused div[tabindex], which made arrow-key navigation look
+   broken because nothing moved on screen. */
+.tree:focus-within .tree-row[data-cursor="true"] {
   outline: 1px solid var(--accent);
   outline-offset: -1px;
+}
+
+/* A background too, so the cursor is legible at a glance and not just a hairline
+   -- but never over the open file's own highlight. */
+.tree:focus-within .tree-row[data-cursor="true"]:not([data-selected="true"]) {
+  background: #202634;
 }
 
 .tree-row:focus {
@@ -963,7 +974,8 @@ button.cwd:hover {
   color: var(--fg);
 }
 
-.insight-toggle {
+.insight-toggle,
+.shortcuts-open {
   background: none;
   border: 1px solid transparent;
   color: var(--fg-dim);
@@ -974,7 +986,8 @@ button.cwd:hover {
   border-radius: 4px;
 }
 
-.insight-toggle:hover {
+.insight-toggle:hover,
+.shortcuts-open:hover {
   background: #22262f;
   color: var(--fg);
 }
@@ -1361,4 +1374,142 @@ button.cwd:hover {
 
 .rollup-total {
   color: var(--fg);
+}
+
+/* ---- toast ---- */
+
+/* Feedback for things with nothing on screen to show them: an account switched
+   by chord while the agent panel is closed, or the refusal that stopped it.
+   Above the overlays, so a message raised on the way into one is still read. */
+.toast {
+  position: fixed;
+  z-index: 60;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: min(520px, calc(100vw - 48px));
+  padding: 9px 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  animation: toast-in 120ms ease-out;
+  /* Never in the way of the pane underneath it. */
+  pointer-events: none;
+}
+
+.toast[data-tone="error"] {
+  border-color: var(--danger);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+
+/* ---- keyboard shortcuts ---- */
+
+.shortcuts-card {
+  max-width: 560px;
+}
+
+.shortcuts-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.shortcut-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0 3px 10px;
+  border-radius: 6px;
+}
+
+.shortcut-row:hover {
+  background: #22262f;
+}
+
+.shortcut-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut-chord {
+  appearance: none;
+  flex: 0 0 auto;
+  min-width: 96px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  /* The glyphs are the point, so keep them from reflowing as they change. */
+  text-align: center;
+  cursor: pointer;
+}
+
+.shortcut-chord:hover {
+  border-color: var(--fg-dim);
+}
+
+.shortcut-chord:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* Recording. The accent is the whole signal that keys are being listened for. */
+.shortcut-chord[data-armed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.shortcut-chord[data-unbound="true"] {
+  color: var(--fg-dim);
+}
+
+.shortcut-act {
+  appearance: none;
+  flex: 0 0 auto;
+  width: 22px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.shortcut-act:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+.shortcut-act:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* Fixed width so a row does not shift when its dot appears. */
+.shortcut-mark {
+  flex: 0 0 auto;
+  width: 10px;
+  color: var(--accent);
+}
+
+.shortcuts-note {
+  margin: 0;
+  color: var(--accent);
+}
+
+.shortcuts-hint {
+  margin: 0;
+  color: var(--fg-dim);
 }
