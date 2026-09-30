@@ -19,20 +19,66 @@
 ## What it is
 
 Aditor wraps a coding agent running in a real PTY, and puts the things you
-reach for mid-turn around it:
+reach for mid-turn around it. The agent is not a sidebar here. It is the main
+pane, and everything else exists to answer the questions that come up while it
+works.
 
-- the workspace **file tree**, gitignore-aware
-- a read-only **file viewer** with syntax highlighting
-- the current **git diff**, as a side-by-side view
-- the agent's own **session history** and token spend
-- a **switcher** for the Claude account it runs under
+## Features
 
-The agent is not a sidebar here. It is the main pane, and everything else exists
-to answer the questions that come up while it works.
+**The agent**
 
-Only Claude Code is implemented today. `agent_sessions` in
-`src-tauri/src/agents.rs` is the single dispatch point -- another agent is a new
-arm there plus a reader module.
+- **Claude Code in a real terminal** -- full-colour TUI, your own login shell's
+  `PATH`, each agent in its own process group. opencode is detected and can be
+  launched from the agent picker too.
+- **Clickable file paths** -- `src/a.ts:42` printed by the agent is underlined
+  on hover and opens the file at that line, tinted so you can see which one was
+  meant. Toggle in **Settings → General**.
+- **A live task list** -- Aditor runs a small local MCP server and hands each
+  agent it spawns an `update_tasks` tool, so the agent can publish its plan and
+  you can watch it tick through in the **Tasks** tab.
+- **Prompt templates** -- the prompts you retype every day, typed into the agent
+  without sending, with placeholders for the open file, branch and more. See
+  [below](#prompt-templates).
+
+**The workspace**
+
+- **File tree**, gitignore-aware, refreshed by a filesystem watcher and
+  remembering which folders you had open per project.
+- **File viewer**, read-only, with syntax highlighting.
+- **Diff viewer**, unified or side-by-side, for every changed file.
+- **Pane or window** -- files and diffs open under the terminal, or in a window
+  of their own that keeps itself current as the agent edits. Chosen separately
+  for the tree and the git list.
+- **Vim motions** in the viewers, opt-in: `hjkl`, `w`/`b`, `gg`/`G`,
+  <kbd>Ctrl</kbd>-`d`/`u`/`f`/`b`, `/` search, and `]c`/`[c` between diff hunks.
+
+**Git**
+
+- **Changes list** with ahead/behind against upstream, and recently touched files
+  highlighted as the agent works.
+- **Stage, unstage, commit, pull (merge or rebase) and push** from the rail or
+  the **Git** menu. Writes go through your own `git` binary, so credential
+  helpers, SSH agent, hooks and signing all behave as they do in your terminal.
+
+**The agent panel**
+
+- **Session history** for the project -- every session with its branch, status,
+  age and token count, plus running totals and approximate cost.
+- **Usage limits** -- the 5-hour and 7-day windows, with a refresh button that
+  fetches the current numbers on request.
+- **Account switcher** -- keep several Claude logins and flip between them with
+  <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd>.
+
+**The app**
+
+- **Recent projects**, reopened with their open file, tree and agent as you left
+  them.
+- **Rebindable shortcuts**, mirrored into the native menu bar.
+- **One settings file** at `~/.aditor/settings.json`. See [Settings](#settings).
+
+The session panel, limits and account switching are Claude Code only today.
+`agent_sessions` in `src-tauri/src/agents.rs` is the single dispatch point --
+another agent is a new arm there plus a reader module.
 
 ## Install
 
@@ -66,13 +112,18 @@ Mac should work but is untested.
 | | |
 |---|---|
 | <kbd>⌘</kbd><kbd>1</kbd> | Focus file tree |
-| <kbd>⌘</kbd><kbd>2</kbd> | Focus agent |
+| <kbd>⌘</kbd><kbd>2</kbd> | Focus git changes |
+| <kbd>⌘</kbd><kbd>3</kbd> | Focus agent |
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> | Next Claude Code account |
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd> | Prompt templates… |
+| <kbd>⌘</kbd><kbd>⌥</kbd><kbd>C</kbd> | Commit |
+| <kbd>⌘</kbd><kbd>⌥</kbd><kbd>L</kbd> | Pull |
+| <kbd>⌘</kbd><kbd>⌥</kbd><kbd>P</kbd> | Push |
 | <kbd>⌘</kbd><kbd>O</kbd> | Open project… |
 | <kbd>⌘</kbd><kbd>,</kbd> | Settings… |
 
-Every one of these is rebindable from **Settings → Shortcuts**. Chords bound to
+**Stage all** and **Pull with rebase** ship unbound. Every command is
+rebindable from **Settings → Shortcuts**. Chords bound to
 the app are held back from the agent; everything else goes straight through to
 the terminal. `src/shortcuts/registry.ts` is the source of truth for both halves.
 
@@ -181,22 +232,27 @@ scripts/              dev.sh, release.sh, and the toolchain.sh both source
 src/                  React frontend
   components/         panes and pickers
   pty/ fs/ git/       typed wrappers over the Tauri commands
-  agents/ accounts/
+  agents/ accounts/ mcp/
+  editor/             CodeMirror setup: languages, vim motions, line jumps
   shortcuts/          keybinding system
   settings/           the ~/.aditor/settings.json document, hydrated once
   templates/          prompt templates and their placeholders
 src-tauri/src/
   pty.rs              agent processes, in their own process groups
   fs.rs               gitignore-aware listing, guarded reads, fs watcher
-  git.rs              status and diffs via git2; read-only by design
-  agents.rs           session history and token counters, read off disk
+  git.rs              status and diffs via git2; writes via the git CLI
+  agents.rs           session history, token counters and limits
   accounts.rs         account switching: login Keychain + ~/.claude.json
+  mcp.rs              loopback MCP server behind the Tasks tab
   settings.rs         ~/.aditor/settings.json, as an opaque document
 ```
 
-The Rust side makes no network calls and spawns no subprocesses to gather agent
-state -- everything in `agents.rs` is read from the agent's own on-disk files,
-so the panel can refresh as often as the frontend likes.
+The Rust side spawns no subprocesses to gather agent state -- everything in
+`agents.rs` is read from the agent's own on-disk files, so the panel can
+refresh as often as the frontend likes. Its one network call is the Limits
+refresh, made only when you click it. The MCP server listens on `127.0.0.1`
+only, behind a per-launch bearer token that only agents Aditor spawned are
+given.
 
 ## Contributing
 
