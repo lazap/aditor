@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { AgentPicker } from "./components/AgentPicker";
+import { BranchPicker } from "./components/BranchPicker";
 import { InsightPanel } from "./components/InsightPanel";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { TerminalPane } from "./components/TerminalPane";
@@ -26,7 +27,9 @@ import {
 } from "./pty/api";
 import { dirsExist, fsDebounceMs, openWorkspace } from "./fs/api";
 import {
+  gitCheckout,
   gitCommit,
+  gitFetch,
   gitPull,
   gitPush,
   gitStage,
@@ -35,6 +38,7 @@ import {
   gitUnstage,
   gitUnstageAll,
   pathsOf,
+  type BranchInfo,
   type FileStatus,
   type RepoStatus,
 } from "./git/api";
@@ -487,6 +491,17 @@ export default function App() {
       }),
     [runGit, showToast],
   );
+  const checkout = useCallback(
+    (b: BranchInfo) =>
+      void runGit("checkout", async () => {
+        await gitCheckout(b);
+        // A remote branch lands as the local one tracking it.
+        const local = b.remote ? b.name.slice(b.name.indexOf("/") + 1) : b.name;
+        showToast(`Switched to ${local}.`);
+      }),
+    [runGit, showToast],
+  );
+  const fetchRemotes = useCallback(() => runGit("fetch", gitFetch), [runGit]);
 
   // Every shortcut the app has. The chords themselves live in the registry,
   // which is also what stops TerminalPane forwarding them to the agent --
@@ -753,9 +768,12 @@ export default function App() {
                 "Choose project…"}
             </button>
             {repo?.isRepo && repo.branch && (
-              <span className="branch" title="Current branch">
-                {repo.branch}
-              </span>
+              <BranchPicker
+                branch={repo.branch}
+                busy={gitBusy !== null}
+                onCheckout={checkout}
+                onFetch={fetchRemotes}
+              />
             )}
           </div>
           <AgentPicker

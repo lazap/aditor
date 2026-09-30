@@ -962,6 +962,74 @@ button.cwd:hover {
   padding: 1px 6px;
   /* The path yields first: a truncated branch name is a misleading one. */
   flex: 0 0 auto;
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: none;
+  cursor: pointer;
+}
+
+.branch:hover,
+.branch[data-open="true"] {
+  background: #22262f;
+  color: var(--fg);
+}
+
+/* The picker wraps the branch, so the no-shrink rule has to hold here too. */
+.topbar-project > .agent-picker {
+  flex: 0 0 auto;
+}
+
+/* Branch menu: the agent menu's shell and rows, plus a filter and a scroll. */
+.branch-menu {
+  min-width: 260px;
+  max-width: 420px;
+}
+
+.branch-filter {
+  width: 100%;
+  box-sizing: border-box;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.branch-filter:focus {
+  border-color: var(--fg-dim);
+}
+
+.branch-list {
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.branch-section {
+  padding: 6px 8px 2px;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--fg-dim);
+}
+
+.branch-option-name {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.branch-note {
+  padding: 6px 8px;
+  font-size: 12px;
+  color: var(--fg-dim);
 }
 
 /* ---- project picker ---- */

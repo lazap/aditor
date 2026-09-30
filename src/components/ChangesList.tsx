@@ -2,13 +2,15 @@ import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "re
 import { BADGE, type ChangeKind, type FileStatus } from "../git/api";
 
 /** The git write in flight, if any. One at a time, as the backend enforces. */
-export type GitOp = "stage" | "commit" | "pull" | "push";
+export type GitOp = "stage" | "commit" | "pull" | "push" | "checkout" | "fetch";
 
 const BUSY_LABEL: Record<GitOp, string> = {
   stage: "Staging…",
   commit: "Committing…",
   pull: "Pulling…",
   push: "Pushing…",
+  checkout: "Switching branch…",
+  fetch: "Fetching…",
 };
 
 interface Props {

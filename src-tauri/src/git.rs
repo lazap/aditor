@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
-use git2::{Branch, Repository, Status, StatusOptions};
+use git2::{Branch, BranchType, Repository, Status, StatusOptions};
 use serde::Serialize;
 use tauri::State;
 
@@ -242,6 +242,83 @@ pub fn git_status(ws: State<'_, Workspace>) -> Result<RepoStatus, String> {
         behind: 0,
         files: Vec::new(),
     }))
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchInfo {
+    /// `feature` for a local branch, `origin/feature` for a remote one.
+    pub name: String,
+    pub remote: bool,
+    /// What a local branch tracks, e.g. `origin/feature`.
+    pub upstream: Option<String>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BranchList {
+    /// None on a detached or unborn HEAD.
+    pub current: Option<String>,
+    pub local: Vec<BranchInfo>,
+    /// Only the remote branches no local branch tracks: picking one of those
+    /// would just be switching to its local twin, which is already listed.
+    pub remote: Vec<BranchInfo>,
+}
+
+fn list_branches(repo: &Repository) -> Result<BranchList, String> {
+    let current = repo
+        .head()
+        .ok()
+        .filter(|h| h.is_branch())
+        .and_then(|h| h.shorthand().ok().map(str::to_string));
+
+    let mut local = Vec::new();
+    for entry in repo.branches(Some(BranchType::Local)).map_err(|e| e.to_string())? {
+        let Ok((branch, _)) = entry else { continue };
+        let Some(name) = branch.name().ok().flatten().map(str::to_string) else {
+            continue;
+        };
+        let upstream = branch
+            .upstream()
+            .ok()
+            .and_then(|u| u.name().ok().flatten().map(str::to_string));
+        local.push(BranchInfo { name, remote: false, upstream });
+    }
+
+    let mut remote = Vec::new();
+    for entry in repo.branches(Some(BranchType::Remote)).map_err(|e| e.to_string())? {
+        let Ok((branch, _)) = entry else { continue };
+        // `origin/HEAD` is a pointer to another remote branch, not one itself.
+        if branch.get().symbolic_target().is_ok_and(|t| t.is_some()) {
+            continue;
+        }
+        let Some(name) = branch.name().ok().flatten().map(str::to_string) else {
+            continue;
+        };
+        if name.ends_with("/HEAD") || local.iter().any(|l| l.upstream.as_deref() == Some(&name)) {
+            continue;
+        }
+        remote.push(BranchInfo { name, remote: true, upstream: None });
+    }
+
+    local.sort_by(|a, b| a.name.cmp(&b.name));
+    remote.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(BranchList { current, local, remote })
+}
+
+/// Async and off the main thread: a repo with thousands of remote branches is
+/// a noticeable walk, and a sync command would freeze the webview for it.
+#[tauri::command]
+pub async fn git_branches(ws: State<'_, Workspace>) -> Result<BranchList, String> {
+    let root = workspace_root(&ws)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let Ok(repo) = Repository::discover(&root) else {
+            return Ok(BranchList { current: None, local: Vec::new(), remote: Vec::new() });
+        };
+        list_branches(&repo)
+    })
+    .await
+    .map_err(|e| format!("listing branches did not finish: {e}"))?
 }
 
 /// HEAD's version of `rel`, or empty when the file is untracked / newly added.
@@ -512,4 +589,42 @@ pub async fn git_push(ws: State<'_, Workspace>) -> Result<String, String> {
         run_git(&root, &["push", "-u", &remote, "HEAD"], None)
     })
     .await
+}
+
+/// Switch to a local branch, or to a remote one by creating the local branch
+/// that tracks it. Git's own refusal (a dirty tree in the way) comes back as-is.
+#[tauri::command]
+pub async fn git_checkout(
+    ws: State<'_, Workspace>,
+    name: String,
+    remote: bool,
+) -> Result<(), String> {
+    // `switch` has no `--` before the branch (it would mean a pathspec), so a
+    // leading dash must not reach it as an option.
+    if name.is_empty() || name.starts_with('-') {
+        return Err(format!("{name:?} is not a branch name."));
+    }
+    let root = workspace_root(&ws)?;
+    off_thread(move || {
+        if !remote {
+            return run_git(&root, &["switch", &name], None).map(drop);
+        }
+        let short = name.split_once('/').map_or(name.as_str(), |(_, b)| b);
+        let repo = Repository::discover(&root).map_err(|e| e.to_string())?;
+        if repo.find_branch(short, BranchType::Local).is_ok() {
+            return Err(format!(
+                "A local branch `{short}` already exists; switch to it instead."
+            ));
+        }
+        drop(repo);
+        run_git(&root, &["switch", "--track", &name], None).map(drop)
+    })
+    .await
+}
+
+/// Refresh every remote's branches, dropping the ones deleted upstream.
+#[tauri::command]
+pub async fn git_fetch(ws: State<'_, Workspace>) -> Result<(), String> {
+    let root = workspace_root(&ws)?;
+    off_thread(move || run_git(&root, &["fetch", "--all", "--prune"], None).map(drop)).await
 }

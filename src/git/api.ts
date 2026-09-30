@@ -48,6 +48,28 @@ export const gitCommit = (message: string) =>
 export const gitPull = (rebase: boolean) => invoke<string>("git_pull", { rebase });
 export const gitPush = () => invoke<string>("git_push");
 
+export interface BranchInfo {
+  /** `feature` locally, `origin/feature` for a remote branch. */
+  name: string;
+  remote: boolean;
+  /** What a local branch tracks, e.g. `origin/feature`. */
+  upstream: string | null;
+}
+
+export interface BranchList {
+  /** null on a detached or unborn HEAD. */
+  current: string | null;
+  local: BranchInfo[];
+  /** Only remote branches no local branch already tracks. */
+  remote: BranchInfo[];
+}
+
+export const gitBranches = () => invoke<BranchList>("git_branches");
+/** A remote branch is switched to by creating the local branch tracking it. */
+export const gitCheckout = (b: BranchInfo) =>
+  invoke<void>("git_checkout", { name: b.name, remote: b.remote });
+export const gitFetch = () => invoke<void>("git_fetch");
+
 /** The paths a stage/unstage of this entry must name: both ends of a rename. */
 export const pathsOf = (f: FileStatus): string[] =>
   f.oldPath ? [f.path, f.oldPath] : [f.path];
