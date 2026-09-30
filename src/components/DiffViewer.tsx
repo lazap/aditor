@@ -5,6 +5,8 @@ import { MergeView, unifiedMergeView } from "@codemirror/merge";
 import { gitDiff, type FileDiff } from "../git/api";
 import { aditorEditorTheme, aditorHighlighting } from "../editor/theme";
 import { loadLanguage } from "../editor/language";
+import { vimMode, vimMotions } from "../editor/vim";
+import { useSetting } from "../settings/store";
 
 export type DiffLayout = "unified" | "split";
 
@@ -13,6 +15,8 @@ interface Props {
   layout: DiffLayout;
   /** Bumped by the watcher, so the diff follows the agent's edits live. */
   refreshToken: number;
+  /** Take focus once built, so vim motions work without a click first. */
+  autoFocus?: boolean;
 }
 
 function formatBytes(n: number): string {
@@ -21,11 +25,24 @@ function formatBytes(n: number): string {
     : `${Math.round(n / 1024)} KB`;
 }
 
-export function DiffViewer({ path, layout, refreshToken }: Props) {
+/** The editors behind an instance, new side first. */
+function editorsOf(instance: EditorView | MergeView | null): EditorView[] {
+  if (!instance) return [];
+  return instance instanceof MergeView ? [instance.b, instance.a] : [instance];
+}
+
+export function DiffViewer({ path, layout, refreshToken, autoFocus }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<EditorView | MergeView | null>(null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const vim = useSetting((s) => s.keyboardMode === "vim");
+  // Read by the build effect rather than depended on: flipping the setting
+  // reconfigures the live view below instead of rebuilding it.
+  const vimRef = useRef(vim);
+  vimRef.current = vim;
+  const autoFocusRef = useRef(autoFocus);
+  autoFocusRef.current = autoFocus;
 
   useEffect(() => {
     let stale = false;
@@ -54,6 +71,7 @@ export function DiffViewer({ path, layout, refreshToken }: Props) {
         aditorEditorTheme,
         aditorHighlighting,
         EditorState.readOnly.of(true),
+        vimMode.of(vimMotions(vimRef.current)),
         ...lang,
       ];
 
@@ -83,12 +101,19 @@ export function DiffViewer({ path, layout, refreshToken }: Props) {
           collapseUnchanged: { margin: 3, minSize: 6 },
         });
       }
+
+      if (autoFocusRef.current) editorsOf(instanceRef.current)[0]?.focus();
     })();
 
     return () => {
       disposed = true;
     };
   }, [diff, layout, path]);
+
+  useEffect(() => {
+    const effects = vimMode.reconfigure(vimMotions(vim));
+    for (const view of editorsOf(instanceRef.current)) view.dispatch({ effects });
+  }, [vim]);
 
   useEffect(
     () => () => {

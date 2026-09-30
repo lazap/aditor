@@ -26,8 +26,11 @@ export interface ProjectState {
   lastAgent: string | null;
 }
 
-/** Where a diff opens: under the terminal, or in a window of its own. */
+/** Where a diff or a file opens: under the terminal, or in a window of its own. */
 export type DiffDisplay = "pane" | "window";
+
+/** How the read-only viewers take the keyboard: as-is, or with vim motions. */
+export type KeyboardMode = "standard" | "vim";
 
 /** Which panel the left rail shows. */
 export type RailTab = "files" | "git";
@@ -42,6 +45,8 @@ export interface Layout {
   insightWidth: number;
   diffLayout: DiffLayout;
   diffDisplay: DiffDisplay;
+  /** Where a file picked in the tree opens; the git list goes by `diffDisplay`. */
+  fileDisplay: DiffDisplay;
   /**
    * Collapsible bands in the agent panel: section id -> open.
    *
@@ -72,6 +77,7 @@ export interface Settings {
   /** Agent to offer for a project opened for the first time. */
   lastAgent: string | null;
   layout: Layout;
+  keyboardMode: KeyboardMode;
   /** Which tab the Settings dialog opens on. */
   settingsTab: SettingsTab;
 }
@@ -99,7 +105,9 @@ export const DEFAULTS: Settings = {
     insightWidth: 300,
     diffLayout: "unified",
     diffDisplay: "window",
+    fileDisplay: "window",
     sections: {},
   },
+  keyboardMode: "standard",
   settingsTab: "general",
 };

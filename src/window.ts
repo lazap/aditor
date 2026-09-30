@@ -105,14 +105,23 @@ export async function openTemplatesWindow(ctx: Context): Promise<void> {
   if (!created) await emitTo("templates", TEMPLATES_CONTEXT, ctx);
 }
 
+/** What the viewer window shows for its path. */
+export type ViewerMode = "diff" | "file";
+
+/** Main -> viewer window payload. */
+export interface ViewerTarget {
+  path: string;
+  mode: ViewerMode;
+}
+
 /**
- * The diff for `path`, in a window of its own.
+ * `path` -- its diff, or the file itself -- in a window of its own.
  *
  * Only one: opening another file retargets it, the way the template picker is
  * handed a new context rather than a second window.
  */
-export async function openDiffWindow(path: string): Promise<void> {
-  const url = `index.html?view=diff&path=${encodeURIComponent(path)}`;
+export async function openViewerWindow(path: string, mode: ViewerMode): Promise<void> {
+  const url = `index.html?view=diff&path=${encodeURIComponent(path)}&mode=${mode}`;
   const created = await showWindow("diff", url, {
     title: basename(path),
     width: 1000,
@@ -121,7 +130,7 @@ export async function openDiffWindow(path: string): Promise<void> {
     minHeight: 360,
   });
   if (!created) {
-    await emitTo("diff", DIFF_PATH, path);
+    await emitTo("diff", DIFF_PATH, { path, mode } satisfies ViewerTarget);
     return;
   }
   // Main hears when it goes, so the highlight in the tree can follow.
@@ -142,7 +151,7 @@ export async function closeDiffWindow(): Promise<void> {
 
 export const basename = (path: string): string => path.split("/").pop() || path;
 
-/** Main -> diff window: show this path instead. */
+/** Main -> viewer window: show this path, in this mode, instead. */
 export const DIFF_PATH = "diff://path";
 
 /** Main -> picker: the context changed under a window that is already open. */

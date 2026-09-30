@@ -45,10 +45,11 @@ import {
   closeDiffWindow,
   growWindowToEditor,
   onDiffWindowClosed,
-  openDiffWindow,
+  openViewerWindow,
   openSettingsWindow,
   openTemplatesWindow,
   TEMPLATES_INSERT,
+  type ViewerMode,
 } from "./window";
 import {
   forgetProject,
@@ -130,8 +131,10 @@ export default function App() {
   const [pickError, setPickError] = useState<string | null>(null);
 
   const [openFile, setOpenFile] = useState<string | null>(null);
+  /** How the pane's file was opened: as the file (tree) or its diff (git). */
+  const [openedAs, setOpenedAs] = useState<ViewerMode>("file");
   /**
-   * The file in the diff window, while it is the last one picked. Highlighted
+   * The file in the side window, while it is the last one picked. Highlighted
    * in its place of `openFile`, which it does not replace: the pane is left
    * alone, and this is not restored with the project.
    */
@@ -165,6 +168,7 @@ export default function App() {
   // event. A counter is how the panes are asked to take the caret, matching
   // `generation` and `refreshToken` elsewhere here.
   const [filesFocus, setFilesFocus] = useState(0);
+  const [gitFocus, setGitFocus] = useState(0);
   const [agentFocus, setAgentFocus] = useState(0);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const toastSeq = useRef(0);
@@ -335,9 +339,6 @@ export default function App() {
     () => new Map((repo?.files ?? []).map((f) => [f.path, f.status])),
     [repo],
   );
-  // For `selectFile`, which is stable and so cannot take `statuses` as a dep.
-  const statusesRef = useRef(statuses);
-  statusesRef.current = statuses;
   const recent = useMemo(() => new Set(recentAt.keys()), [recentAt]);
   const diffInWindow = useSetting((s) => s.layout.diffDisplay === "window");
 
@@ -531,6 +532,7 @@ export default function App() {
     "focus.git": () => {
       if (blocked || !workspace) return;
       setRailTab("git");
+      setGitFocus((t) => t + 1);
     },
     "focus.agent": () => {
       if (blocked) return;
@@ -601,19 +603,26 @@ export default function App() {
     });
   }, []);
 
-  const selectFile = useCallback((path: string) => {
-    // A changed file's diff goes to its own window when that is the setting,
-    // and only there -- the pane is left as it was.
-    if (settings().layout.diffDisplay === "window" && statusesRef.current.has(path)) {
-      void openDiffWindow(path);
+  /**
+   * Open `path` as the file (from the tree) or as its diff (from the git
+   * list). Each goes to the side window when its setting says so, and only
+   * there -- the pane is left as it was.
+   */
+  const openPath = useCallback((path: string, as: ViewerMode) => {
+    const { diffDisplay, fileDisplay } = settings().layout;
+    if ((as === "diff" ? diffDisplay : fileDisplay) === "window") {
+      void openViewerWindow(path, as);
       setDiffFile(path);
       return;
     }
     setDiffFile(null);
     setOpenFile(path);
+    setOpenedAs(as);
     const ws = workspaceRef.current;
     if (ws) saveProjectState(ws, { openFile: path });
   }, []);
+  const openFromTree = useCallback((path: string) => openPath(path, "file"), [openPath]);
+  const openFromGit = useCallback((path: string) => openPath(path, "diff"), [openPath]);
 
   const closeFile = useCallback(() => {
     setOpenFile(null);
@@ -805,7 +814,7 @@ export default function App() {
                     <FileTree
                       root={workspace}
                       selected={diffFile ?? openFile}
-                      onSelect={selectFile}
+                      onSelect={openFromTree}
                       refreshToken={refreshToken}
                       expanded={expanded}
                       onToggle={toggleDir}
@@ -827,11 +836,12 @@ export default function App() {
                       behind={repo?.behind ?? 0}
                       selected={diffFile ?? openFile}
                       recent={recent}
-                      onSelect={selectFile}
+                      onSelect={openFromGit}
                       message={commitMessage}
                       onMessage={setCommitMessage}
                       busy={gitBusy}
                       commitRequest={commitRequest}
+                      focusToken={gitFocus}
                       onStage={stageFile}
                       onUnstage={unstageFile}
                       onStageAll={stageAll}
@@ -875,6 +885,7 @@ export default function App() {
                     status={statuses.get(openFile) ?? null}
                     refreshToken={refreshToken}
                     diffInWindow={diffInWindow}
+                    openedAs={openedAs}
                     onClose={closeFile}
                   />
                 ) : null

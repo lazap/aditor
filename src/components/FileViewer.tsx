@@ -4,11 +4,15 @@ import { EditorView, lineNumbers } from "@codemirror/view";
 import { readFile, type FileContents } from "../fs/api";
 import { aditorEditorTheme, aditorHighlighting } from "../editor/theme";
 import { loadLanguage } from "../editor/language";
+import { vimMode, vimMotions } from "../editor/vim";
+import { useSetting } from "../settings/store";
 
 interface Props {
   path: string;
   /** Bumped by the watcher; reloads when the agent rewrites the file. */
   refreshToken: number;
+  /** Take focus once built, so the keyboard lands in the file without a click. */
+  autoFocus?: boolean;
 }
 
 function formatBytes(n: number): string {
@@ -17,11 +21,18 @@ function formatBytes(n: number): string {
     : `${Math.round(n / 1024)} KB`;
 }
 
-export function FileViewer({ path, refreshToken }: Props) {
+export function FileViewer({ path, refreshToken, autoFocus }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [contents, setContents] = useState<FileContents | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const vim = useSetting((s) => s.keyboardMode === "vim");
+  // Read by the build effect rather than depended on: flipping the setting
+  // reconfigures the live view below instead of rebuilding it.
+  const vimRef = useRef(vim);
+  vimRef.current = vim;
+  const autoFocusRef = useRef(autoFocus);
+  autoFocusRef.current = autoFocus;
 
   useEffect(() => {
     let stale = false;
@@ -52,6 +63,7 @@ export function FileViewer({ path, refreshToken }: Props) {
         EditorView.lineWrapping,
         // Read-only for now; writable buffers are bucket 4.
         EditorState.readOnly.of(true),
+        vimMode.of(vimMotions(vimRef.current)),
         ...lang,
       ];
 
@@ -60,12 +72,17 @@ export function FileViewer({ path, refreshToken }: Props) {
         state: EditorState.create({ doc: text, extensions }),
         parent: host,
       });
+      if (autoFocusRef.current) viewRef.current.focus();
     })();
 
     return () => {
       disposed = true;
     };
   }, [contents, path]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: vimMode.reconfigure(vimMotions(vim)) });
+  }, [vim]);
 
   useEffect(
     () => () => {

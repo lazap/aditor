@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
 import { BADGE, type ChangeKind, type FileStatus } from "../git/api";
 
 /** The git write in flight, if any. One at a time, as the backend enforces. */
@@ -32,6 +32,8 @@ interface Props {
    * the box already has the caret and there is something to commit.
    */
   commitRequest: number;
+  /** Bumped by ⌘2: puts the keyboard cursor on the list. */
+  focusToken: number;
   onStage(file: FileStatus): void;
   onUnstage(file: FileStatus): void;
   onStageAll(): void;
@@ -63,6 +65,7 @@ export function ChangesList({
   onMessage,
   busy,
   commitRequest,
+  focusToken,
   onStage,
   onUnstage,
   onStageAll,
@@ -92,20 +95,116 @@ export function ChangesList({
     requestAnimationFrame(() => box.current?.focus());
   }, [commitRequest]);
 
+  // The keyboard cursor. Keyed by section as well as path: a partly staged
+  // file is a row in both lists.
+  const rows = [
+    ...staged.map((f) => ({ key: `s:${f.path}`, f })),
+    ...unstaged.map((f) => ({ key: `u:${f.path}`, f })),
+  ];
+  const [cursor, setCursor] = useState<string | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+
+  // Exactly one row is tabbable, so the list is a single tab stop and the
+  // arrow keys move within it -- as in the file tree.
+  const tabTarget =
+    (cursor && rows.some((r) => r.key === cursor) && cursor) ||
+    rows.find((r) => r.f.path === selected)?.key ||
+    rows[0]?.key ||
+    null;
+
+  const focusRow = useCallback((key: string) => {
+    setCursor(key);
+    listRef.current
+      ?.querySelector<HTMLElement>(`[data-key="${CSS.escape(key)}"]`)
+      ?.focus();
+  }, []);
+
+  // Staging moves a row to the other section, and unmounting the focused row
+  // drops focus on the body. Put it back at the same index, so arrowing down
+  // the list staging as you go keeps working.
+  const lastRows = useRef(rows);
+  useEffect(() => {
+    const prev = lastRows.current;
+    lastRows.current = rows;
+    if (!cursor || rows.some((r) => r.key === cursor)) return;
+    const was = prev.findIndex((r) => r.key === cursor);
+    const next = rows[Math.min(was < 0 ? 0 : was, rows.length - 1)];
+    const active = document.activeElement;
+    const hadFocus =
+      active === document.body || !!listRef.current?.contains(active);
+    if (!next) setCursor(null);
+    else if (hadFocus) focusRow(next.key);
+    else setCursor(next.key);
+  });
+
+  // ⌘2. Compared against the last value, as FileTree does, so a remount never
+  // takes the caret on its own.
+  const lastFocusToken = useRef(focusToken);
+  useEffect(() => {
+    if (focusToken === lastFocusToken.current) return;
+    lastFocusToken.current = focusToken;
+    if (tabTarget) focusRow(tabTarget);
+    else listRef.current?.focus();
+    // `tabTarget` is read, not depended on: this must fire on the token alone.
+  }, [focusToken]);
+
+  const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    // Enter on a row's stage button is the button's.
+    if ((e.target as HTMLElement).closest("button")) return;
+    const at = rows.findIndex((r) => r.key === tabTarget);
+    const step = (to: number) => {
+      const next = rows[Math.max(0, Math.min(to, rows.length - 1))];
+      if (next) focusRow(next.key);
+    };
+    switch (e.key) {
+      case "ArrowDown":
+        step(at + 1);
+        break;
+      case "ArrowUp":
+        step(at - 1);
+        break;
+      case "Home":
+        step(0);
+        break;
+      case "End":
+        step(rows.length - 1);
+        break;
+      case "Enter":
+      case " ":
+        if (at < 0) return;
+        onSelect(rows[at].f.path);
+        break;
+      default:
+        return;
+    }
+    e.preventDefault();
+  };
+
   const rel = (path: string) =>
     path.startsWith(root) ? path.slice(root.length + 1) : path;
 
   const row = (
+    key: string,
     f: FileStatus,
     kind: ChangeKind,
     act: { label: string; title: string; run(): void },
   ) => (
     <div
-      key={f.path}
+      key={key}
       className="tree-row changes-row"
+      tabIndex={key === tabTarget ? 0 : -1}
+      data-key={key}
+      data-cursor={key === tabTarget}
       data-selected={f.path === selected}
       data-recent={recent.has(f.path)}
-      onClick={() => onSelect(f.path)}
+      onClick={(e) => {
+        // Explicitly, as in FileTree: WKWebView does not reliably focus a
+        // div[tabindex] on mousedown.
+        setCursor(key);
+        e.currentTarget.focus();
+        onSelect(f.path);
+      }}
       title={f.oldPath ? `${rel(f.oldPath)} → ${f.path}` : f.path}
     >
       <span className="tree-status" data-status={kind}>
@@ -134,7 +233,12 @@ export function ChangesList({
         {isRepo && <span className="changes-count">{files.length}</span>}
       </div>
 
-      <div className="changes-body">
+      <div
+        className="changes-body"
+        tabIndex={-1}
+        ref={listRef}
+        onKeyDown={onKeyDown}
+      >
         {!isRepo ? (
           <div className="changes-empty">Not a git repository</div>
         ) : files.length === 0 ? (
@@ -157,7 +261,7 @@ export function ChangesList({
                   </button>
                 </div>
                 {staged.map((f) =>
-                  row(f, f.staged!, {
+                  row(`s:${f.path}`, f, f.staged!, {
                     label: "−",
                     title: "Unstage",
                     run: () => onUnstage(f),
@@ -181,7 +285,7 @@ export function ChangesList({
                   </button>
                 </div>
                 {unstaged.map((f) =>
-                  row(f, f.unstaged!, {
+                  row(`u:${f.path}`, f, f.unstaged!, {
                     label: "+",
                     title: "Stage",
                     run: () => onStage(f),

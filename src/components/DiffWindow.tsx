@@ -2,17 +2,21 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { DiffViewer } from "./DiffViewer";
+import { FileViewer } from "./FileViewer";
 import { DiffLayoutToggle } from "./BottomPane";
 import { BADGE, gitStatus, type ChangeKind } from "../git/api";
 import { fsDebounceMs } from "../fs/api";
 import { useSetting } from "../settings/store";
-import { basename, DIFF_PATH } from "../window";
+import { basename, DIFF_PATH, type ViewerMode, type ViewerTarget } from "../window";
 
 const initialPath = (): string =>
   new URLSearchParams(location.search).get("path") ?? "";
 
+const initialMode = (): ViewerMode =>
+  new URLSearchParams(location.search).get("mode") === "file" ? "file" : "diff";
+
 /**
- * One file's diff, in a window of its own.
+ * One file -- its diff, or the file itself -- in a window of its own.
  *
  * It keeps itself current rather than being fed by App: the watcher's
  * `fs://changed` reaches every window, and `git_diff` / `git_status` answer
@@ -20,10 +24,12 @@ const initialPath = (): string =>
  */
 export function DiffWindow({ onClose }: { onClose(): void }) {
   const [path, setPath] = useState(initialPath);
+  const [mode, setMode] = useState(initialMode);
   const [refreshToken, setRefreshToken] = useState(0);
   /** undefined = not back yet; null = no longer changed. */
   const [status, setStatus] = useState<ChangeKind | null | undefined>(undefined);
   const layout = useSetting((s) => s.layout.diffLayout);
+  const vim = useSetting((s) => s.keyboardMode === "vim");
   const closeRef = useRef<HTMLButtonElement>(null);
 
   // Somewhere for the keyboard to land, so Escape works straight away.
@@ -43,10 +49,11 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
   }, [onClose]);
 
   useEffect(() => {
-    const unlisten = listen<string>(DIFF_PATH, ({ payload }) => {
-      setPath(payload);
+    const unlisten = listen<ViewerTarget>(DIFF_PATH, ({ payload }) => {
+      setPath(payload.path);
+      setMode(payload.mode);
       setStatus(undefined);
-      void getCurrentWindow().setTitle(basename(payload));
+      void getCurrentWindow().setTitle(basename(payload.path));
     });
     return () => void unlisten.then((u) => u());
   }, []);
@@ -90,7 +97,25 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
             {BADGE[status]}
           </span>
         )}
-        {status && <DiffLayoutToggle />}
+        <div className="seg">
+          <button
+            className="seg-btn"
+            data-active={mode === "diff"}
+            disabled={!status}
+            onClick={() => setMode("diff")}
+            title={status ? "Show diff against HEAD" : "No changes to diff"}
+          >
+            Diff
+          </button>
+          <button
+            className="seg-btn"
+            data-active={mode === "file"}
+            onClick={() => setMode("file")}
+          >
+            File
+          </button>
+        </div>
+        {mode === "diff" && status && <DiffLayoutToggle />}
         <span className="viewer-badge">read-only</span>
         <button
           className="viewer-close"
@@ -102,11 +127,19 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
         </button>
       </div>
 
-      {status === null && (
+      {mode === "file" && (
+        <FileViewer path={path} refreshToken={refreshToken} autoFocus />
+      )}
+      {mode === "diff" && status === null && (
         <div className="viewer-message">No changes to diff</div>
       )}
-      {status && (
-        <DiffViewer path={path} layout={layout} refreshToken={refreshToken} />
+      {mode === "diff" && status && (
+        <DiffViewer
+          path={path}
+          layout={layout}
+          refreshToken={refreshToken}
+          autoFocus={vim}
+        />
       )}
     </div>
   );

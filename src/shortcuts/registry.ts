@@ -35,8 +35,8 @@ export interface ShortcutCommand {
 
 export const COMMANDS: readonly ShortcutCommand[] = [
   { id: "focus.files", group: "Focus", chord: "mod+1", label: "Focus file tree" },
-  { id: "focus.agent", group: "Focus", chord: "mod+2", label: "Focus agent" },
-  { id: "focus.git", group: "Focus", chord: null, label: "Show git changes" },
+  { id: "focus.git", group: "Focus", chord: "mod+2", label: "Focus git changes" },
+  { id: "focus.agent", group: "Focus", chord: "mod+3", label: "Focus agent" },
   {
     id: "account.next",
     group: "Account",

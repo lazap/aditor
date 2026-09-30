@@ -220,8 +220,16 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
         layout.diffDisplay === "pane" || layout.diffDisplay === "window"
           ? layout.diffDisplay
           : DEFAULTS.layout.diffDisplay,
+      fileDisplay:
+        layout.fileDisplay === "pane" || layout.fileDisplay === "window"
+          ? layout.fileDisplay
+          : DEFAULTS.layout.fileDisplay,
       sections: sectionState(layout.sections),
     },
+    keyboardMode:
+      src.keyboardMode === "standard" || src.keyboardMode === "vim"
+        ? src.keyboardMode
+        : DEFAULTS.keyboardMode,
     settingsTab:
       src.settingsTab === "general" ||
       src.settingsTab === "templates" ||

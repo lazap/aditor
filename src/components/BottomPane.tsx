@@ -3,9 +3,7 @@ import { FileViewer } from "./FileViewer";
 import { DiffViewer, type DiffLayout } from "./DiffViewer";
 import { BADGE, type ChangeKind } from "../git/api";
 import { patchLayout, useSetting } from "../settings/store";
-import { basename, openDiffWindow } from "../window";
-
-type Mode = "diff" | "file";
+import { basename, openViewerWindow, type ViewerMode as Mode } from "../window";
 
 interface Props {
   path: string;
@@ -14,6 +12,8 @@ interface Props {
   refreshToken: number;
   /** Diffs open in their own window: this pane only ever shows the file. */
   diffInWindow: boolean;
+  /** From the tree it opens as the file; from the git list, as the diff. */
+  openedAs: Mode;
   onClose(): void;
 }
 
@@ -47,8 +47,16 @@ export function DiffLayoutToggle() {
   );
 }
 
-export function BottomPane({ path, status, refreshToken, diffInWindow, onClose }: Props) {
-  const pick = (): Mode => (status && !diffInWindow ? "diff" : "file");
+export function BottomPane({
+  path,
+  status,
+  refreshToken,
+  diffInWindow,
+  openedAs,
+  onClose,
+}: Props) {
+  const pick = (): Mode =>
+    openedAs === "diff" && status && !diffInWindow ? "diff" : "file";
   const [mode, setMode] = useState<Mode>(pick);
   const layout = useSetting((s) => s.layout.diffLayout);
 
@@ -57,7 +65,7 @@ export function BottomPane({ path, status, refreshToken, diffInWindow, onClose }
   useEffect(() => {
     setMode(pick());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path, diffInWindow]);
+  }, [path, openedAs, diffInWindow]);
 
   return (
     <div className="viewer">
@@ -76,7 +84,7 @@ export function BottomPane({ path, status, refreshToken, diffInWindow, onClose }
             className="seg-btn"
             data-active={mode === "diff"}
             disabled={!status}
-            onClick={() => (diffInWindow ? void openDiffWindow(path) : setMode("diff"))}
+            onClick={() => (diffInWindow ? void openViewerWindow(path, "diff") : setMode("diff"))}
             title={
               !status
                 ? "No changes to diff"

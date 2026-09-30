@@ -1,4 +1,4 @@
-import { patchLayout, useSettings } from "../../settings/store";
+import { patch, patchLayout, useSettings } from "../../settings/store";
 
 /**
  * The app-level preferences that already existed but had nowhere to live.
@@ -8,7 +8,7 @@ import { patchLayout, useSettings } from "../../settings/store";
  * -- and each reads the same field, so they cannot drift apart.
  */
 export function GeneralTab() {
-  const { layout } = useSettings();
+  const { layout, keyboardMode } = useSettings();
 
   return (
     <>
@@ -61,6 +61,60 @@ export function GeneralTab() {
             onClick={() => patchLayout({ diffDisplay: "window" })}
           >
             Separate window
+          </button>
+        </div>
+      </div>
+
+      <div className="setting-row">
+        <span className="setting-label">
+          Open files in
+          <span className="setting-sub">
+            Where a file picked in the tree opens. One picked in the git list
+            opens as a diff, as above.
+          </span>
+        </span>
+        <div className="seg">
+          <button
+            className="seg-btn"
+            data-active={layout.fileDisplay === "pane"}
+            onClick={() => patchLayout({ fileDisplay: "pane" })}
+          >
+            Bottom pane
+          </button>
+          <button
+            className="seg-btn"
+            data-active={layout.fileDisplay === "window"}
+            onClick={() => patchLayout({ fileDisplay: "window" })}
+          >
+            Separate window
+          </button>
+        </div>
+      </div>
+
+      <div className="picker-section-label">Keyboard</div>
+      <div className="setting-row">
+        <span className="setting-label">
+          Viewer navigation
+          <span className="setting-sub">
+            Vim adds <code>j k h l</code>, <code>w b</code>, <code>gg G</code>,{" "}
+            <code>Ctrl-d/u</code> and <code>]c [c</code> for the next and
+            previous change, while a diff or file has focus.
+          </span>
+        </span>
+        <div className="seg">
+          <button
+            className="seg-btn"
+            data-active={keyboardMode === "standard"}
+            onClick={() => patch({ keyboardMode: "standard" })}
+          >
+            Standard
+          </button>
+          <button
+            className="seg-btn"
+            data-active={keyboardMode === "vim"}
+            onClick={() => patch({ keyboardMode: "vim" })}
+          >
+            Vim
           </button>
         </div>
       </div>

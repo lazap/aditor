@@ -736,6 +736,20 @@ button.cwd:hover {
   color: var(--fg-dim);
 }
 
+/* The keyboard cursor, as in the file tree. */
+.changes-body:focus-within .changes-row[data-cursor="true"] {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.changes-body:focus-within .changes-row[data-cursor="true"]:not([data-selected="true"]) {
+  background: #202634;
+}
+
+.changes-body:focus {
+  outline: none;
+}
+
 .changes-row[data-selected="true"] .changes-path {
   color: var(--fg);
 }
@@ -925,6 +939,7 @@ button.cwd:hover {
 }
 
 .changes-row:hover .changes-act,
+.changes-body:focus-within .changes-row[data-cursor="true"] .changes-act,
 .changes-row .changes-act:focus-visible {
   visibility: visible;
 }
@@ -1943,6 +1958,12 @@ button.cwd:hover {
 .setting-sub {
   color: var(--fg-dim);
   font-size: 11px;
+}
+
+/* `.seg` clips its overflow, which lets flex squeeze it below its buttons'
+   width when the label beside it runs long. */
+.setting-row > .seg {
+  flex: 0 0 auto;
 }
 
 .setting-toggle {
