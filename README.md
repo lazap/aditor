@@ -44,11 +44,12 @@ npm start
 
 Use `npm start`, not `npm run dev`. `dev` starts Vite alone, which gives you the
 frontend with no Tauri backend behind it -- every command fails and the terminal
-pane never spawns. `npm start` goes through `scripts/dev.sh`, which exists
-because neither toolchain is reliably on `PATH` in a plain shell: it runs
-`fnm use --install-if-missing` to honor `.node-version`, and finds `cargo` under
-Homebrew's keg-only rustup prefix, which is not linked into `/opt/homebrew/bin`.
-Both failures otherwise surface far from their cause.
+pane never spawns. `npm start` goes through `scripts/dev.sh`, which sources
+`scripts/toolchain.sh` because neither toolchain is reliably on `PATH` in a
+plain shell: it runs `fnm use --install-if-missing` to honor `.node-version`,
+and finds `cargo` under Homebrew's keg-only rustup prefix, which is not linked
+into `/opt/homebrew/bin`. Both failures otherwise surface far from their cause.
+`npm run release` sources the same file.
 
 If you do not use fnm, just make sure `node -v` is 22 or newer and `cargo` is on
 your `PATH` before running `npm start`; the script checks both and tells you
@@ -57,28 +58,61 @@ which one is missing.
 ## Building a release
 
 ```bash
-npm run tauri build
+npm run release
 ```
 
-Output lands in `src-tauri/target/release/bundle/`: `macos/Aditor.app` and, when
-DMG packaging succeeds, `dmg/Aditor_<version>_aarch64.dmg`.
+`scripts/release.sh` builds the production bundle and publishes it as a GitHub
+release on `lazap/aditor`. Everything cheap is checked up front -- that
+`package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` all carry
+the same version, that `v<version>` is not already tagged, that the worktree is
+clean and HEAD is pushed, and that GitHub auth works -- before minutes go into
+the Rust release build.
 
-To hand the app to someone else, zip the bundle rather than copying it raw --
-`.app` is a directory, and a plain `zip` loses symlinks and resource forks:
+Auth goes through `gh` when it is on your `PATH`, and otherwise through the REST
+API with a `GITHUB_TOKEN` carrying `repo` scope:
 
 ```bash
-ditto -c -k --sequesterRsrc --keepParent \
-  src-tauri/target/release/bundle/macos/Aditor.app \
-  Aditor-macos-arm64.zip
+brew install gh && gh auth login    # or:
+export GITHUB_TOKEN=...
 ```
 
+Bumping the version stays manual on purpose: edit the three version fields,
+commit, push, then run the script. Flags go after `--`, so npm passes them
+through:
+
+| | |
+|---|---|
+| `--draft` | leave the release a draft instead of publishing it |
+| `--prerelease` | mark it a prerelease |
+| `--notes FILE` | use FILE as the body instead of the generated notes |
+| `--skip-build` | reuse the existing bundle under `src-tauri/target/release` |
+| `--allow-dirty` | skip the clean-worktree check |
+
+```bash
+npm run release -- --draft
+```
+
+The release is created as a draft either way and flipped live only once every
+asset has uploaded, so a failed upload never leaves a published release with
+missing downloads. Artifacts land in `dist-release/` and are attached to it:
+
+- `Aditor_<version>_aarch64.zip` -- the `.app`, packed with `ditto` rather than
+  `zip`, which would lose symlinks and resource forks
+- `Aditor_<version>_aarch64.dmg` -- only when DMG packaging succeeded (see below)
+- `SHA256SUMS.txt`
+
 Builds are ad-hoc signed, not notarized, so macOS blocks them on first launch on
-any machine but the one that built them. Recipients should right-click the app
-and choose **Open**, or clear the quarantine flag:
+any machine but the one that built them. The generated release notes tell
+recipients to right-click the app and choose **Open**, or to clear the
+quarantine flag:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Aditor.app
 ```
+
+To build without releasing, `npm run tauri build` still works on its own. Output
+lands in `src-tauri/target/release/bundle/`: `macos/Aditor.app` and, when DMG
+packaging succeeds, `dmg/Aditor_<version>_aarch64.dmg`.
 
 ### If the DMG step fails
 
@@ -91,8 +125,9 @@ xcode-select: Failed to locate 'SetFile'
 ```
 
 The `.app` itself is already built and fine at that point -- only the disk image
-is missing, so the zip above is a complete workaround. To actually fix it,
-reinstall the Command Line Tools:
+is missing, so the zip is a complete substitute; `npm run release` warns and
+ships the zip alone rather than failing. To actually fix it, reinstall the
+Command Line Tools:
 
 ```bash
 sudo rm -rf /Library/Developer/CommandLineTools
@@ -106,6 +141,7 @@ the leftover `rw.*.dmg` under `bundle/macos/` is safe to delete.
 ## Layout
 
 ```
+scripts/              dev.sh, release.sh, and the toolchain.sh both source
 src/                  React frontend
   components/         panes and pickers
   pty/ fs/ git/       typed wrappers over the Tauri commands
