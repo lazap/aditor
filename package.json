@@ -2,6 +2,25 @@
   "name": "aditor",
   "private": true,
   "version": "0.1.0",
+  "description": "A lightweight editor whose main pane is an agent CLI",
+  "license": "MIT",
+  "author": "Lazar Petrov (https://github.com/lazap)",
+  "homepage": "https://github.com/lazap/aditor#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lazap/aditor.git"
+  },
+  "bugs": {
+    "url": "https://github.com/lazap/aditor/issues"
+  },
+  "keywords": [
+    "tauri",
+    "editor",
+    "claude-code",
+    "agent",
+    "terminal",
+    "macos"
+  ],
   "type": "module",
   "scripts": {
     "start": "bash scripts/dev.sh",

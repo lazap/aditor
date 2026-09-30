@@ -1,0 +1,80 @@
+name: Bug report
+description: Something in Aditor does not work
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for filing. Please do not report security issues here — use
+        [private reporting](https://github.com/lazap/aditor/security/advisories/new)
+        instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you got instead.
+      placeholder: |
+        1. Opened a project with ⌘O
+        2. Pressed ⌘⇧A to switch accounts
+        3. The terminal pane went blank and never came back
+    validations:
+      required: true
+
+  - type: dropdown
+    id: install-source
+    attributes:
+      label: How did you install Aditor?
+      options:
+        - Downloaded a release (.dmg or .zip)
+        - Built from source
+    validations:
+      required: true
+
+  - type: input
+    id: aditor-version
+    attributes:
+      label: Aditor version
+      description: The release version, or the commit SHA if you built from source.
+      placeholder: 0.1.0 — or 6911078
+    validations:
+      required: true
+
+  - type: input
+    id: macos-version
+    attributes:
+      label: macOS version and chip
+      description: "`sw_vers -productVersion` and `uname -m`."
+      placeholder: 26.0 / arm64
+    validations:
+      required: true
+
+  - type: input
+    id: claude-version
+    attributes:
+      label: claude CLI version
+      description: Output of `claude --version`. Say "not installed" if it is missing.
+      placeholder: 2.0.1
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Errors or logs
+      description: >
+        Anything from the terminal you ran `npm start` in, or from the webview
+        console. Skip if you downloaded a release and have none.
+      render: text
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before filing
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: I am on macOS. (Linux and Windows are unsupported — patches welcome, but bugs there are expected.)
+          required: false

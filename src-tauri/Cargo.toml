@@ -2,8 +2,12 @@
 name = "aditor"
 version = "0.1.0"
 description = "A lightweight editor whose main pane is an agent CLI"
-authors = ["Lazar"]
+authors = ["Lazar Petrov"]
 edition = "2021"
+license = "MIT"
+repository = "https://github.com/lazap/aditor"
+homepage = "https://github.com/lazap/aditor"
+readme = "../README.md"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

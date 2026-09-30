@@ -25,3 +25,8 @@ dist-ssr
 
 # Release artifacts
 dist-release
+
+# Local toolchain overrides. Per-machine by nature -- a DEVELOPER_DIR or linker
+# tweak that fixes one machine's Xcode breaks a clone that does not share it.
+# See the troubleshooting section of the README.
+src-tauri/.cargo/config.toml

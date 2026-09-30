@@ -1,28 +1,56 @@
-# Aditor
+<h1 align="center">
+  <img src="public/aditor.svg" width="72" height="72" alt=""><br>
+  Aditor
+</h1>
 
-A lightweight editor whose main pane is an agent CLI.
+<p align="center">
+  A lightweight editor whose main pane is an agent CLI.<br>
+  <sub>macOS · Apple Silicon · <a href="LICENSE">MIT</a></sub>
+</p>
+
+<!-- Drop a window shot at docs/screenshot.png (⌘⇧4 then Space, over the
+     Aditor window), then delete these two comment lines to show it. -->
+<!--
+<p align="center">
+  <img src="docs/screenshot.png" alt="Aditor: the file tree on the left, a Claude Code session running in the main pane, and the current git diff below.">
+</p>
+-->
+
+## What it is
 
 Aditor wraps a coding agent running in a real PTY, and puts the things you
-reach for mid-turn around it: the workspace file tree, a read-only file viewer,
-the current git diff, the agent's own session history and token spend, and a
-switcher for the Claude account it runs under.
+reach for mid-turn around it:
 
-Only Claude Code is implemented today. `agent_sessions` in `src-tauri/src/agents.rs`
-is the single dispatch point -- another agent is a new arm there plus a reader
-module.
+- the workspace **file tree**, gitignore-aware
+- a read-only **file viewer** with syntax highlighting
+- the current **git diff**, as a side-by-side view
+- the agent's own **session history** and token spend
+- a **switcher** for the Claude account it runs under
 
-## Requirements
+The agent is not a sidebar here. It is the main pane, and everything else exists
+to answer the questions that come up while it works.
 
-| | |
-|---|---|
-| **Node ≥ 22** | `.node-version` pins 24.18.0. Vite 8's rolldown imports `styleText` from `node:util`, which landed in Node 22. |
-| **Rust** | A stable toolchain, via [rustup](https://rustup.rs). |
-| **Xcode Command Line Tools** | macOS, for linking: `xcode-select --install`. |
-| **The `claude` CLI** | [Claude Code](https://claude.com/claude-code), on your `PATH`. |
+Only Claude Code is implemented today. `agent_sessions` in
+`src-tauri/src/agents.rs` is the single dispatch point -- another agent is a new
+arm there plus a reader module.
 
-Claude Code is a genuine runtime dependency, not just a nice-to-have: the main
-pane has nothing to run without it, and the sessions panel reads `~/.claude.json`
-and `~/.claude/` directly, so it stays empty until you have used Claude Code at
+## Install
+
+Grab the latest `.dmg` or `.zip` from
+[Releases](https://github.com/lazap/aditor/releases), and drag `Aditor.app` into
+`/Applications`.
+
+Builds are ad-hoc signed and not notarized, so macOS blocks them on first
+launch. Right-click the app and choose **Open**, or clear the quarantine flag:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Aditor.app
+```
+
+You also need the [`claude` CLI](https://claude.com/claude-code) on your `PATH`.
+It is a genuine runtime dependency, not just a nice-to-have: the main pane has
+nothing to run without it, and the sessions panel reads `~/.claude.json` and
+`~/.claude/` directly, so it stays empty until you have used Claude Code at
 least once in the project you open.
 
 **macOS is the only platform this has been built and run on.** The bundle
@@ -33,10 +61,24 @@ credential half is behind `cfg(target_os = "macos")` for the login Keychain and
 Apple Silicon only for the prebuilt binaries; building from source on an Intel
 Mac should work but is untested.
 
-## Running it
+## Keyboard shortcuts
+
+| | |
+|---|---|
+| <kbd>⌘</kbd><kbd>1</kbd> | Focus file tree |
+| <kbd>⌘</kbd><kbd>2</kbd> | Focus agent |
+| <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> | Next Claude Code account |
+| <kbd>⌘</kbd><kbd>O</kbd> | Open project… |
+| <kbd>⌘</kbd><kbd>,</kbd> | Keyboard shortcuts… |
+
+Every one of these is rebindable from the shortcuts panel. Chords bound to the
+app are held back from the agent; everything else goes straight through to the
+terminal. `src/shortcuts/registry.ts` is the source of truth for both halves.
+
+## Build from source
 
 ```bash
-git clone git@github.com:lazap/aditor.git
+git clone https://github.com/lazap/aditor.git
 cd aditor
 npm install
 npm start
@@ -55,109 +97,50 @@ If you do not use fnm, just make sure `node -v` is 22 or newer and `cargo` is on
 your `PATH` before running `npm start`; the script checks both and tells you
 which one is missing.
 
-## Building a release
-
-```bash
-npm run release
-```
-
-`scripts/release.sh` builds the production bundle and publishes it as a GitHub
-release on `lazap/aditor`. Everything cheap is checked up front -- that
-`package.json`, `src-tauri/tauri.conf.json` and `src-tauri/Cargo.toml` all carry
-the same version, that `v<version>` is not already tagged, that the worktree is
-clean and HEAD is pushed, and that GitHub auth works -- before minutes go into
-the Rust release build.
-
-Auth goes through `gh` when it is on your `PATH`, and otherwise through the REST
-API with a `GITHUB_TOKEN` carrying `repo` scope:
-
-```bash
-brew install gh && gh auth login    # or:
-export GITHUB_TOKEN=...
-```
-
-Bumping the version stays manual on purpose: edit the three version fields,
-commit, push, then run the script. Flags go after `--`, so npm passes them
-through:
+### Requirements
 
 | | |
 |---|---|
-| `--draft` | leave the release a draft instead of publishing it |
-| `--prerelease` | mark it a prerelease |
-| `--notes FILE` | use FILE as the body instead of the generated notes |
-| `--skip-build` | reuse the existing bundle under `src-tauri/target/release` |
-| `--allow-dirty` | skip the clean-worktree check |
+| **Node ≥ 22** | `.node-version` pins 24.18.0. Vite 8's rolldown imports `styleText` from `node:util`, which landed in Node 22. |
+| **Rust** | A stable toolchain, via [rustup](https://rustup.rs). |
+| **Xcode Command Line Tools** | macOS, for linking: `xcode-select --install`. |
+| **The `claude` CLI** | [Claude Code](https://claude.com/claude-code), on your `PATH`. |
 
-```bash
-npm run release -- --draft
+To build a bundle without cutting a release, `npm run tauri build` works on its
+own; output lands in `src-tauri/target/release/bundle/`.
+
+<details>
+<summary><b>If the build dies with "Failed to locate 'clang'"</b></summary>
+
+An Xcode older than the running macOS cannot load its own libraries, so any
+build script that shells out to `cc` fails. The standalone Command Line Tools
+are healthy in this situation, so point the toolchain at those. Create
+`src-tauri/.cargo/config.toml` -- it is gitignored, because the right value is
+per-machine:
+
+```toml
+[env]
+DEVELOPER_DIR = "/Library/Developer/CommandLineTools"
 ```
 
-The release is created as a draft either way and flipped live only once every
-asset has uploaded, so a failed upload never leaves a published release with
-missing downloads. Artifacts land in `dist-release/` and are attached to it:
+If linking then fails on an SDK instead -- `unknown architecture
+arm64e.x1-macos`, `tapi error: malformed file` -- the toolchain has picked an
+SDK newer than the clang reading it (an `SDKs/` directory can hold several).
+Pin a known-good one alongside the first key:
 
-- `Aditor_<version>_aarch64.zip` -- the `.app`, packed with `ditto` rather than
-  `zip`, which would lose symlinks and resource forks
-- `Aditor_<version>_aarch64.dmg` -- when DMG packaging succeeds (see below)
-- `SHA256SUMS.txt`
-
-Builds are ad-hoc signed, not notarized, so macOS blocks them on first launch on
-any machine but the one that built them. The generated release notes tell
-recipients to right-click the app and choose **Open**, or to clear the
-quarantine flag:
-
-```bash
-xattr -dr com.apple.quarantine /Applications/Aditor.app
+```toml
+[env]
+DEVELOPER_DIR = "/Library/Developer/CommandLineTools"
+SDKROOT = "/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk"
 ```
 
-To build without releasing, `npm run tauri build` still works on its own. Output
-lands in `src-tauri/target/release/bundle/`: `macos/Aditor.app` and, when DMG
-packaging succeeds, `dmg/Aditor_<version>_aarch64.dmg`.
+Updating Xcode to match your macOS fixes it properly. See also
+[docs/releasing.md](docs/releasing.md#if-the-dmg-step-fails), where the same
+Xcode mismatch breaks DMG packaging in a different way.
 
-### If the DMG step fails
+</details>
 
-`bundle_dmg.sh` shells out to `SetFile` twice to set the volume icon, and both
-calls abort:
-
-```
-dlopen(@rpath/libxcodebuildLoader.dylib): Symbol not found: _XPCTypeBool
-  Referenced from: .../CoreDevice.framework/Versions/A/CoreDevice
-  Expected in:     /Library/Apple/.../Mercury.framework/Versions/A/Mercury
-```
-
-`/usr/bin/SetFile` is not the tool -- it is one of Apple's shims that forwards
-through whatever `xcode-select -p` points at. When that is an Xcode older than
-the running macOS, the shim routes through `xcodebuild`, which crashes on a
-symbol the OS no longer provides where Xcode expects it. The `SetFile` binary
-under the Command Line Tools is untouched by this and runs fine:
-
-```bash
-xcode-select -p                                          # the broken Xcode
-/Library/Developer/CommandLineTools/usr/bin/SetFile -h    # works
-```
-
-`npm run release` detects this and prepends that directory to `PATH` for the
-build, so the bare `SetFile` call resolves to the working binary and the DMG
-gets built. Nothing global changes. If you want the shims themselves fixed,
-either update Xcode to match your macOS, or point them at the Command Line
-Tools -- at the cost of anything that genuinely needs full Xcode:
-
-```bash
-sudo xcode-select -s /Library/Developer/CommandLineTools
-```
-
-Do not reinstall the Command Line Tools to fix this. They are not the problem,
-and deleting them removes the one copy of `SetFile` that still works.
-
-If DMG packaging fails for some other reason the `.app` is still built and
-fine -- only the disk image is missing, and the zip is a complete substitute,
-so `npm run release` warns and ships the zip alone rather than failing.
-
-A failed run can also leave a disk image mounted. `ls /Volumes` will show a
-stray `dmg.XXXXXX`; `hdiutil detach /Volumes/dmg.XXXXXX -force` clears it, and
-the leftover `rw.*.dmg` under `bundle/macos/` is safe to delete.
-
-## Layout
+## How it works
 
 ```
 scripts/              dev.sh, release.sh, and the toolchain.sh both source
@@ -177,3 +160,17 @@ src-tauri/src/
 The Rust side makes no network calls and spawns no subprocesses to gather agent
 state -- everything in `agents.rs` is read from the agent's own on-disk files,
 so the panel can refresh as often as the frontend likes.
+
+## Contributing
+
+Bug reports, ideas and patches are all welcome -- see
+[CONTRIBUTING.md](CONTRIBUTING.md) for the dev loop and the conventions worth
+knowing before you open a PR. Maintainer release steps live in
+[docs/releasing.md](docs/releasing.md).
+
+Found a security issue? Please report it privately -- see
+[SECURITY.md](SECURITY.md).
+
+## License
+
+[MIT](LICENSE) © Lazar Petrov
