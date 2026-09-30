@@ -26,6 +26,9 @@ export interface ProjectState {
   lastAgent: string | null;
 }
 
+/** Where a diff opens: under the terminal, or in a window of its own. */
+export type DiffDisplay = "pane" | "window";
+
 /** Which panel the left rail shows. */
 export type RailTab = "files" | "git";
 
@@ -38,6 +41,7 @@ export interface Layout {
   insightOpen: boolean;
   insightWidth: number;
   diffLayout: DiffLayout;
+  diffDisplay: DiffDisplay;
   /**
    * Collapsible bands in the agent panel: section id -> open.
    *
@@ -94,6 +98,7 @@ export const DEFAULTS: Settings = {
     insightOpen: true,
     insightWidth: 300,
     diffLayout: "unified",
+    diffDisplay: "window",
     sections: {},
   },
   settingsTab: "general",

@@ -1852,6 +1852,11 @@ button.cwd:hover {
   justify-content: flex-end;
 }
 
+/* The diff window is the viewer and nothing else. */
+.diff-page {
+  height: 100%;
+}
+
 /* ---- settings window ---- */
 
 .settings-hint {

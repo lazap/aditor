@@ -31,6 +31,20 @@ export function Settings({ onClose }: Props) {
 
   useEffect(() => closeRef.current?.focus(), []);
 
+  // On the window, not the page: WebKit does not focus a button on click, so
+  // after clicking a tab or a toggle focus is on <body>, outside the page, and
+  // a handler there would never see the key. A recording row has already
+  // claimed its Escape (it prevents default), and must not close us with it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (recording || e.defaultPrevented || e.key !== "Escape") return;
+      e.preventDefault();
+      onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [recording, onClose]);
+
   const choose = (next: SettingsTab) => {
     setTab(next);
     setNote(null);
@@ -38,16 +52,7 @@ export function Settings({ onClose }: Props) {
   };
 
   return (
-    <div
-      className="window-page settings-page"
-      onKeyDown={(e) => {
-        if (recording) return;
-        if (e.key === "Escape") {
-          e.preventDefault();
-          onClose();
-        }
-      }}
-    >
+    <div className="window-page settings-page">
       <div className="settings-body">
         <div className="settings-tabs" role="tablist" aria-label="Settings sections">
           {TABS.map((t) => (

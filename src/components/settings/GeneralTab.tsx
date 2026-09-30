@@ -3,9 +3,9 @@ import { patchLayout, useSettings } from "../../settings/store";
 /**
  * The app-level preferences that already existed but had nowhere to live.
  *
- * Small on purpose. Both of these are reachable elsewhere too -- the diff
+ * Small on purpose. Most of these are reachable elsewhere too -- the diff
  * layout from the viewer's own buttons, the agent panel from the topbar toggle
- * -- and both read the same field, so they cannot drift apart.
+ * -- and each reads the same field, so they cannot drift apart.
  */
 export function GeneralTab() {
   const { layout } = useSettings();
@@ -35,6 +35,32 @@ export function GeneralTab() {
             onClick={() => patchLayout({ diffLayout: "split" })}
           >
             Split
+          </button>
+        </div>
+      </div>
+
+      <div className="setting-row">
+        <span className="setting-label">
+          Open diffs in
+          <span className="setting-sub">
+            Under the terminal, or in a window of its own that follows the
+            agent's edits and can sit beside the editor.
+          </span>
+        </span>
+        <div className="seg">
+          <button
+            className="seg-btn"
+            data-active={layout.diffDisplay === "pane"}
+            onClick={() => patchLayout({ diffDisplay: "pane" })}
+          >
+            Bottom pane
+          </button>
+          <button
+            className="seg-btn"
+            data-active={layout.diffDisplay === "window"}
+            onClick={() => patchLayout({ diffDisplay: "window" })}
+          >
+            Separate window
           </button>
         </div>
       </div>

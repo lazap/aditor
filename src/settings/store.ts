@@ -216,6 +216,10 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
         layout.diffLayout === "split" || layout.diffLayout === "unified"
           ? layout.diffLayout
           : DEFAULTS.layout.diffLayout,
+      diffDisplay:
+        layout.diffDisplay === "pane" || layout.diffDisplay === "window"
+          ? layout.diffDisplay
+          : DEFAULTS.layout.diffDisplay,
       sections: sectionState(layout.sections),
     },
     settingsTab:

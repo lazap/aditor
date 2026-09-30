@@ -42,7 +42,9 @@ import { patch, patchLayout, settings, useSetting } from "./settings/store";
 import type { RailTab } from "./settings/schema";
 import { contextFrom } from "./templates/placeholders";
 import {
+  closeDiffWindow,
   growWindowToEditor,
+  openDiffWindow,
   openSettingsWindow,
   openTemplatesWindow,
   TEMPLATES_INSERT,
@@ -325,7 +327,11 @@ export default function App() {
     () => new Map((repo?.files ?? []).map((f) => [f.path, f.status])),
     [repo],
   );
+  // For `selectFile`, which is stable and so cannot take `statuses` as a dep.
+  const statusesRef = useRef(statuses);
+  statusesRef.current = statuses;
   const recent = useMemo(() => new Set(recentAt.keys()), [recentAt]);
+  const diffInWindow = useSetting((s) => s.layout.diffDisplay === "window");
 
   const pickAgent = useCallback((agent: AgentInfo) => {
     patch({ lastAgent: agent.id });
@@ -359,6 +365,9 @@ export default function App() {
         /* sizing is a nicety; never block opening a project on it */
       });
     }
+    // The diff window shows a path in the old project; `git_diff` would now
+    // refuse it as outside the workspace.
+    if (workspaceRef.current !== root) void closeDiffWindow().catch(() => {});
     const state = loadProjectState(root);
     setRecents(rememberProject(root));
     setMissing((prev) => {
@@ -584,6 +593,12 @@ export default function App() {
   }, []);
 
   const selectFile = useCallback((path: string) => {
+    // A changed file's diff goes to its own window when that is the setting,
+    // and only there -- the pane is left as it was.
+    if (settings().layout.diffDisplay === "window" && statusesRef.current.has(path)) {
+      void openDiffWindow(path);
+      return;
+    }
     setOpenFile(path);
     const ws = workspaceRef.current;
     if (ws) saveProjectState(ws, { openFile: path });
@@ -848,6 +863,7 @@ export default function App() {
                     path={openFile}
                     status={statuses.get(openFile) ?? null}
                     refreshToken={refreshToken}
+                    diffInWindow={diffInWindow}
                     onClose={closeFile}
                   />
                 ) : null

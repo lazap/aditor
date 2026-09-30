@@ -3,6 +3,7 @@ import { FileViewer } from "./FileViewer";
 import { DiffViewer, type DiffLayout } from "./DiffViewer";
 import { BADGE, type ChangeKind } from "../git/api";
 import { patchLayout, useSetting } from "../settings/store";
+import { basename, openDiffWindow } from "../window";
 
 type Mode = "diff" | "file";
 
@@ -11,27 +12,52 @@ interface Props {
   /** git status for this path, or null when unchanged / not a repo. */
   status: ChangeKind | null;
   refreshToken: number;
+  /** Diffs open in their own window: this pane only ever shows the file. */
+  diffInWindow: boolean;
   onClose(): void;
 }
 
-function basename(path: string): string {
-  return path.split("/").slice(-1)[0] ?? path;
+/**
+ * Unified / Split. Read straight from settings rather than mirrored into state,
+ * so the General tab, this pane and the diff window cannot disagree.
+ */
+export function DiffLayoutToggle() {
+  const layout = useSetting((s) => s.layout.diffLayout);
+  const choose = (next: DiffLayout) => patchLayout({ diffLayout: next });
+
+  return (
+    <div className="seg">
+      <button
+        className="seg-btn"
+        data-active={layout === "unified"}
+        onClick={() => choose("unified")}
+        title="Unified diff"
+      >
+        Unified
+      </button>
+      <button
+        className="seg-btn"
+        data-active={layout === "split"}
+        onClick={() => choose("split")}
+        title="Side-by-side diff"
+      >
+        Split
+      </button>
+    </div>
+  );
 }
 
-export function BottomPane({ path, status, refreshToken, onClose }: Props) {
-  const [mode, setMode] = useState<Mode>(status ? "diff" : "file");
-  // Read straight from settings rather than mirrored into state, so the same
-  // preference in the General tab and the buttons here cannot disagree.
+export function BottomPane({ path, status, refreshToken, diffInWindow, onClose }: Props) {
+  const pick = (): Mode => (status && !diffInWindow ? "diff" : "file");
+  const [mode, setMode] = useState<Mode>(pick);
   const layout = useSetting((s) => s.layout.diffLayout);
 
   // Re-pick the default when a different file is opened, but not on every
   // watcher refresh -- an explicit choice should survive the agent's edits.
   useEffect(() => {
-    setMode(status ? "diff" : "file");
+    setMode(pick());
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [path]);
-
-  const chooseLayout = (next: DiffLayout) => patchLayout({ diffLayout: next });
+  }, [path, diffInWindow]);
 
   return (
     <div className="viewer">
@@ -50,8 +76,14 @@ export function BottomPane({ path, status, refreshToken, onClose }: Props) {
             className="seg-btn"
             data-active={mode === "diff"}
             disabled={!status}
-            onClick={() => setMode("diff")}
-            title={status ? "Show diff against HEAD" : "No changes to diff"}
+            onClick={() => (diffInWindow ? void openDiffWindow(path) : setMode("diff"))}
+            title={
+              !status
+                ? "No changes to diff"
+                : diffInWindow
+                  ? "Open the diff against HEAD in its own window"
+                  : "Show diff against HEAD"
+            }
           >
             Diff
           </button>
@@ -64,26 +96,7 @@ export function BottomPane({ path, status, refreshToken, onClose }: Props) {
           </button>
         </div>
 
-        {mode === "diff" && status && (
-          <div className="seg">
-            <button
-              className="seg-btn"
-              data-active={layout === "unified"}
-              onClick={() => chooseLayout("unified")}
-              title="Unified diff"
-            >
-              Unified
-            </button>
-            <button
-              className="seg-btn"
-              data-active={layout === "split"}
-              onClick={() => chooseLayout("split")}
-              title="Side-by-side diff"
-            >
-              Split
-            </button>
-          </div>
-        )}
+        {mode === "diff" && status && <DiffLayoutToggle />}
 
         <span className="viewer-badge">read-only</span>
         <button className="viewer-close" onClick={onClose} title="Close file">

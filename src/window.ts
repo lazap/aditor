@@ -105,6 +105,34 @@ export async function openTemplatesWindow(ctx: Context): Promise<void> {
   if (!created) await emitTo("templates", TEMPLATES_CONTEXT, ctx);
 }
 
+/**
+ * The diff for `path`, in a window of its own.
+ *
+ * Only one: opening another file retargets it, the way the template picker is
+ * handed a new context rather than a second window.
+ */
+export async function openDiffWindow(path: string): Promise<void> {
+  const url = `index.html?view=diff&path=${encodeURIComponent(path)}`;
+  const created = await showWindow("diff", url, {
+    title: basename(path),
+    width: 1000,
+    height: 700,
+    minWidth: 560,
+    minHeight: 360,
+  });
+  if (!created) await emitTo("diff", DIFF_PATH, path);
+}
+
+/** Close the diff window, if there is one -- its path belongs to one project. */
+export async function closeDiffWindow(): Promise<void> {
+  await (await WebviewWindow.getByLabel("diff"))?.close();
+}
+
+export const basename = (path: string): string => path.split("/").pop() || path;
+
+/** Main -> diff window: show this path instead. */
+export const DIFF_PATH = "diff://path";
+
 /** Main -> picker: the context changed under a window that is already open. */
 export const TEMPLATES_CONTEXT = "templates://context";
 /** Picker -> main: type this finished prompt into the agent. */
