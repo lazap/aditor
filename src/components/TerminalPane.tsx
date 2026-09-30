@@ -214,7 +214,7 @@ export function TerminalPane({
   }, [liveTerm, fileLinks]);
 
   // Its own effect, and `focusToken` stays out of the one above: adding it
-  // there would tear down the PTY and restart the agent on every ⌘3.
+  // there would tear down the PTY and restart the agent on every ⌘E.
   useEffect(() => {
     if (focusToken === 0) return;
     termRef.current?.focus();

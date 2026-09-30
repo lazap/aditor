@@ -15,10 +15,8 @@ import { SplitPane } from "./components/SplitPane";
 import { Toast, type ToastMessage } from "./components/Toast";
 import { useShortcuts, type Handlers } from "./shortcuts/useShortcuts";
 import { installAppMenu } from "./menu";
-import { chordFor } from "./shortcuts/store";
-import { formatChord } from "./shortcuts/keys";
+import { chordHint } from "./shortcuts/store";
 import { switchToNextAccount } from "./accounts/next";
-import type { CommandId } from "./shortcuts/registry";
 import {
   agentsAvailable,
   ptyWriteActive,
@@ -90,12 +88,6 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v
 
 /** Which pane edge is being dragged, if any. */
 type Dragging = "rail" | "insight" | null;
-
-/** A tooltip that names the chord, and stays honest once it is rebound. */
-function chordHint(text: string, id: CommandId): string {
-  const chord = chordFor(id);
-  return chord ? `${text} (${formatChord(chord)})` : text;
-}
 
 /** Rail tab glyphs. Stroked in `currentColor`, so the tab state colours them. */
 const FilesIcon = () => (
@@ -555,6 +547,16 @@ export default function App() {
     "focus.agent": () => {
       if (blocked) return;
       setAgentFocus((t) => t + 1);
+    },
+    // The panel only exists with a project open; the chord opens it too, so it
+    // never lands on a hidden tab.
+    "focus.agentInfo": () => {
+      if (blocked || !workspace) return;
+      patchLayout({ insightOpen: true, insightTab: "info" });
+    },
+    "focus.agentTasks": () => {
+      if (blocked || !workspace) return;
+      patchLayout({ insightOpen: true, insightTab: "tasks" });
     },
     "account.next": () => {
       if (blocked) return;

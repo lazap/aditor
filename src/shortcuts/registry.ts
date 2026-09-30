@@ -11,6 +11,8 @@ export type CommandId =
   | "focus.files"
   | "focus.agent"
   | "focus.git"
+  | "focus.agentInfo"
+  | "focus.agentTasks"
   | "account.next"
   | "prompt.templates"
   | "project.open"
@@ -36,7 +38,14 @@ export interface ShortcutCommand {
 export const COMMANDS: readonly ShortcutCommand[] = [
   { id: "focus.files", group: "Focus", chord: "mod+1", label: "Focus file tree" },
   { id: "focus.git", group: "Focus", chord: "mod+2", label: "Focus git changes" },
-  { id: "focus.agent", group: "Focus", chord: "mod+3", label: "Focus agent" },
+  { id: "focus.agent", group: "Focus", chord: "mod+e", label: "Focus agent" },
+  {
+    id: "focus.agentInfo",
+    group: "Focus",
+    chord: "mod+3",
+    label: "Show agent info",
+  },
+  { id: "focus.agentTasks", group: "Focus", chord: "mod+4", label: "Show tasks" },
   {
     id: "account.next",
     group: "Account",

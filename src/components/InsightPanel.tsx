@@ -1,6 +1,7 @@
 import type { AgentInfo } from "../pty/api";
 import type { InsightTab } from "../settings/schema";
 import { patchLayout, useSetting } from "../settings/store";
+import { chordHint } from "../shortcuts/store";
 import { AgentSessions } from "./AgentSessions";
 import { AgentTasks, useAgentTasks } from "./AgentTasks";
 
@@ -72,7 +73,7 @@ export function InsightPanel({ agent, onClose, ...info }: Props) {
           role="tab"
           aria-selected={tab === "info"}
           aria-label="Agent info"
-          title="Agent info"
+          title={chordHint("Agent info", "focus.agentInfo")}
           onClick={() => select("info")}
         >
           <InfoIcon />
@@ -82,7 +83,7 @@ export function InsightPanel({ agent, onClose, ...info }: Props) {
           role="tab"
           aria-selected={tab === "tasks"}
           aria-label="Tasks"
-          title="Tasks"
+          title={chordHint("Tasks", "focus.agentTasks")}
           onClick={() => select("tasks")}
         >
           <TasksIcon />

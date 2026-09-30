@@ -1,7 +1,7 @@
 import { useSyncExternalStore } from "react";
 import { patch, settings } from "../settings/store";
 import { COMMANDS, commandById, type CommandId } from "./registry";
-import { eventChord, isSystemReserved } from "./keys";
+import { eventChord, formatChord, isSystemReserved } from "./keys";
 
 /**
  * The live keymap: defaults from the registry, with the user's rebindings on
@@ -131,4 +131,10 @@ export function isReservedForApp(e: KeyboardEvent): boolean {
   if (isSystemReserved(e)) return true;
   const chord = eventChord(e);
   return chord !== null && byChord.has(chord);
+}
+
+/** A tooltip that names the chord, and stays honest once it is rebound. */
+export function chordHint(text: string, id: CommandId): string {
+  const chord = chordFor(id);
+  return chord ? `${text} (${formatChord(chord)})` : text;
 }
