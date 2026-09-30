@@ -107,7 +107,7 @@ pub struct SessionSummary {
 /// Account-wide rate-limit headroom. The agent caches it only at startup and on
 /// `/status`, so it goes stale between those -- `fetched_at_ms` is shown
 /// alongside it for that reason, and `agent_refresh_limits` fetches it live.
-#[derive(Serialize, Clone)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageLimits {
     five_hour_pct: f64,
@@ -277,18 +277,18 @@ pub struct AgentState {
     watcher: Mutex<Option<Box<dyn Watcher + Send>>>,
     /// What the live watcher currently covers, so a repeat call is a no-op.
     watching: Mutex<Option<PathBuf>>,
-    /// The last limits fetched by `agent_refresh_limits`. Kept here rather than
-    /// written into the agent's config, which is not ours to write, so the next
-    /// panel refresh does not fall back to the older cached figures.
+    /// The last limits `agent_refresh_limits` fetched, per account, mirrored
+    /// from `LIMITS_FILE`. Kept in our own file rather than written into the
+    /// agent's config, which is not ours to write, so neither the next panel
+    /// refresh nor a restart falls back to the older cached figures. `None`
+    /// until first read from disk.
     fetched_limits: Mutex<Option<FetchedLimits>>,
 }
 
-struct FetchedLimits {
-    /// Whose limits these are. A switch or a `/login` makes them someone
-    /// else's, and they stop being shown.
-    account: Option<String>,
-    limits: UsageLimits,
-}
+/// Account uuid -> the limits last fetched for it. Keyed by account so a
+/// switch or a `/login` stops showing them, and switching back shows them
+/// again. An unknown account is keyed as "".
+type FetchedLimits = HashMap<String, UsageLimits>;
 
 // --------------------------------------------------------------- folding ---
 
@@ -658,6 +658,24 @@ fn config_limits() -> Option<ConfigLimits> {
     })
 }
 
+/// Our own cache of fetched limits, in `~/.aditor`.
+const LIMITS_FILE: &str = "limits.json";
+
+/// A missing or unreadable file is an empty cache: the agent's own figures
+/// are still there to fall back on.
+fn read_fetched_limits() -> FetchedLimits {
+    crate::accounts::aditor_dir()
+        .ok()
+        .and_then(|dir| std::fs::read_to_string(dir.join(LIMITS_FILE)).ok())
+        .and_then(|text| serde_json::from_str(&text).ok())
+        .unwrap_or_default()
+}
+
+fn write_fetched_limits(fetched: &FetchedLimits) -> Result<(), String> {
+    let bytes = serde_json::to_vec_pretty(fetched).map_err(|e| e.to_string())?;
+    crate::accounts::write_private(&crate::accounts::aditor_dir()?.join(LIMITS_FILE), &bytes)
+}
+
 /// The freshest limits we have for the live account: the agent's cache or our
 /// own last fetch, whichever is newer.
 fn usage_limits(state: &AgentState) -> Option<UsageLimits> {
@@ -666,9 +684,9 @@ fn usage_limits(state: &AgentState) -> Option<UsageLimits> {
         .fetched_limits
         .lock()
         .unwrap()
-        .as_ref()
-        .filter(|f| f.account == config.account)
-        .map(|f| f.limits.clone());
+        .get_or_insert_with(read_fetched_limits)
+        .get(config.account.as_deref().unwrap_or_default())
+        .cloned();
     match (config.cached, fetched) {
         (Some(c), Some(f)) => Some(if f.fetched_at_ms > c.fetched_at_ms { f } else { c }),
         (c, f) => c.or(f),
@@ -875,13 +893,20 @@ pub async fn agent_refresh_limits(app: AppHandle, agent_id: String) -> Result<Us
         return Err("Limits aren't available for this agent.".into());
     }
     // Whose token is about to be used, read before it is.
-    let account = config_limits().and_then(|c| c.account);
-    let limits = tauri::async_runtime::spawn_blocking(fetch_limits)
-        .await
-        .map_err(|e| format!("the refresh did not finish: {e}"))??;
-    *app.state::<AgentState>().fetched_limits.lock().unwrap() =
-        Some(FetchedLimits { account, limits: limits.clone() });
-    Ok(limits)
+    let account = config_limits().and_then(|c| c.account).unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || {
+        let limits = fetch_limits()?;
+        let state = app.state::<AgentState>();
+        let mut fetched = state.fetched_limits.lock().unwrap();
+        let fetched = fetched.get_or_insert_with(read_fetched_limits);
+        fetched.insert(account, limits.clone());
+        // The fetch itself succeeded, so a failed write only costs the figures
+        // surviving a restart -- not worth failing the refresh over.
+        let _ = write_fetched_limits(fetched);
+        Ok(limits)
+    })
+    .await
+    .map_err(|e| format!("the refresh did not finish: {e}"))?
 }
 
 /// Watch the agent's state so the panel refreshes itself during a turn.
