@@ -6,6 +6,9 @@
  */
 import { LogicalSize } from "@tauri-apps/api/dpi";
 import { getCurrentWindow } from "@tauri-apps/api/window";
+import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
+import { emitTo } from "@tauri-apps/api/event";
+import type { Context } from "./templates/placeholders";
 
 const PICKER_WIDTH = 560;
 /** Bounds for the measured fit: small enough to look deliberate, tall enough
@@ -41,3 +44,68 @@ export async function growWindowToEditor(): Promise<void> {
   await win.setSize(new LogicalSize(EDITOR_WIDTH, EDITOR_HEIGHT));
   await win.center();
 }
+
+// ------------------------------------------------------------ side windows ---
+
+/** Matches `--bg` in theme.css, so a new window does not flash white before
+ *  its stylesheet lands. */
+const WINDOW_BG = "#14161a";
+
+/**
+ * Bring an existing side window forward, or build it.
+ *
+ * One of each, ever: a second Settings window would be two editors of the same
+ * document. `parent` keeps it above the editor on macOS, the way a dialog sits.
+ */
+async function showWindow(
+  label: string,
+  url: string,
+  options: { title: string; width: number; height: number; minWidth: number; minHeight: number },
+): Promise<boolean> {
+  const existing = await WebviewWindow.getByLabel(label);
+  if (existing) {
+    await existing.setFocus();
+    return false;
+  }
+  new WebviewWindow(label, {
+    url,
+    ...options,
+    center: true,
+    parent: "main",
+    backgroundColor: WINDOW_BG,
+  });
+  return true;
+}
+
+export async function openSettingsWindow(): Promise<void> {
+  await showWindow("settings", "index.html?view=settings", {
+    title: "Settings",
+    width: 780,
+    height: 560,
+    minWidth: 600,
+    minHeight: 400,
+  });
+}
+
+/**
+ * The template picker, filled against `ctx`.
+ *
+ * A new window gets the context in its URL, because it cannot be listening for
+ * an event before it exists. One already open is told by event instead.
+ */
+export async function openTemplatesWindow(ctx: Context): Promise<void> {
+  const url = `index.html?view=templates&ctx=${encodeURIComponent(JSON.stringify(ctx))}`;
+  const created = await showWindow("templates", url, {
+    title: "Prompt templates",
+    width: 640,
+    height: 460,
+    minWidth: 480,
+    minHeight: 320,
+  });
+  if (!created) await emitTo("templates", TEMPLATES_CONTEXT, ctx);
+}
+
+/** Main -> picker: the context changed under a window that is already open. */
+export const TEMPLATES_CONTEXT = "templates://context";
+/** Picker -> main: type this finished prompt into the agent. */
+export const TEMPLATES_INSERT = "templates://insert";

@@ -26,11 +26,15 @@ export interface ProjectState {
   lastAgent: string | null;
 }
 
+/** Which panel the left rail shows. */
+export type RailTab = "files" | "git";
+
 /** Window furniture: sizes and which panels are open. */
 export interface Layout {
   splitFraction: number;
   /** Width of the file-tree rail. Draggable, like `insightWidth`. */
   railWidth: number;
+  railTab: RailTab;
   insightOpen: boolean;
   insightWidth: number;
   diffLayout: DiffLayout;
@@ -86,6 +90,7 @@ export const DEFAULTS: Settings = {
     splitFraction: 0.55,
     // Keep in step with `--rail-w`, which styles the rail until a drag lands.
     railWidth: 240,
+    railTab: "files",
     insightOpen: true,
     insightWidth: 300,
     diffLayout: "unified",

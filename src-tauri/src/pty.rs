@@ -82,7 +82,7 @@ pub struct AgentInfo {
     pub version: Option<String>,
 }
 
-fn user_shell() -> String {
+pub(crate) fn user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
 }
 

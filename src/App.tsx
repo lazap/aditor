@@ -1,18 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { AgentPicker } from "./components/AgentPicker";
 import { AgentSessions } from "./components/AgentSessions";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { TerminalPane } from "./components/TerminalPane";
 import { FileTree } from "./components/FileTree";
-import { ChangesList } from "./components/ChangesList";
+import { ChangesList, type GitOp } from "./components/ChangesList";
 import { BottomPane } from "./components/BottomPane";
 import { SplitPane } from "./components/SplitPane";
-import { Settings } from "./components/Settings";
-import { TemplatePicker } from "./components/TemplatePicker";
 import { Toast, type ToastMessage } from "./components/Toast";
-import { useShortcuts } from "./shortcuts/useShortcuts";
+import { useShortcuts, type Handlers } from "./shortcuts/useShortcuts";
+import { installAppMenu } from "./menu";
 import { chordFor } from "./shortcuts/store";
 import { formatChord } from "./shortcuts/keys";
 import { switchToNextAccount } from "./accounts/next";
@@ -24,11 +24,29 @@ import {
   type AgentInfo,
 } from "./pty/api";
 import { dirsExist, fsDebounceMs, openWorkspace } from "./fs/api";
-import { gitStatus, type RepoStatus } from "./git/api";
+import {
+  gitCommit,
+  gitPull,
+  gitPush,
+  gitStage,
+  gitStageAll,
+  gitStatus,
+  gitUnstage,
+  gitUnstageAll,
+  pathsOf,
+  type FileStatus,
+  type RepoStatus,
+} from "./git/api";
 import { agentWatch } from "./agents/api";
 import { patch, patchLayout, settings, useSetting } from "./settings/store";
+import type { RailTab } from "./settings/schema";
 import { contextFrom } from "./templates/placeholders";
-import { growWindowToEditor } from "./window";
+import {
+  growWindowToEditor,
+  openSettingsWindow,
+  openTemplatesWindow,
+  TEMPLATES_INSERT,
+} from "./window";
 import {
   forgetProject,
   loadProjectState,
@@ -52,8 +70,11 @@ const AGENT_DEBOUNCE_MS = 400;
 const INSIGHT_MIN = 220;
 const INSIGHT_MAX = 480;
 
-/** Narrower floor than the panel's: the rail holds paths, not prose. */
-const RAIL_MIN = 160;
+/**
+ * Narrower floor than the panel's: the rail holds paths, not prose. Counts the
+ * 36px tab strip, so the panel beside it never drops under 160.
+ */
+const RAIL_MIN = 196;
 const RAIL_MAX = 480;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
@@ -66,6 +87,27 @@ function chordHint(text: string, id: CommandId): string {
   const chord = chordFor(id);
   return chord ? `${text} (${formatChord(chord)})` : text;
 }
+
+/** Rail tab glyphs. Stroked in `currentColor`, so the tab state colours them. */
+const FilesIcon = () => (
+  <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+    strokeWidth="1.3" strokeLinejoin="round" focusable="false" aria-hidden="true">
+    <path d="M4.5 1.5h5l3 3v7a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z" />
+    <path d="M9.5 1.5v3h3" />
+    <path d="M1.5 5v8.5a1 1 0 0 0 1 1h7" strokeLinecap="round" />
+  </svg>
+);
+
+const GitIcon = () => (
+  <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+    strokeWidth="1.3" strokeLinecap="round" focusable="false" aria-hidden="true">
+    <circle cx="4.5" cy="3.5" r="1.75" />
+    <circle cx="4.5" cy="12.5" r="1.75" />
+    <circle cx="11.5" cy="5.5" r="1.75" />
+    <path d="M4.5 5.25v5.5" />
+    <path d="M11.5 7.25c0 2.5-2 3-5.4 4.1" />
+  </svg>
+);
 
 export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
@@ -88,6 +130,10 @@ export default function App() {
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [refreshToken, setRefreshToken] = useState(0);
   const [repo, setRepo] = useState<RepoStatus | null>(null);
+  const [gitBusy, setGitBusy] = useState<GitOp | null>(null);
+  const [commitMessage, setCommitMessage] = useState("");
+  /** Bumped by the commit shortcut; see ChangesList. */
+  const [commitRequest, setCommitRequest] = useState(0);
   /** path -> when the watcher last saw it move. */
   const [recentAt, setRecentAt] = useState<Map<string, number>>(new Map());
   const splitFraction = useRef(settings().layout.splitFraction);
@@ -99,6 +145,8 @@ export default function App() {
     () => settings().layout.insightWidth,
   );
   const [railWidth, setRailWidth] = useState(() => settings().layout.railWidth);
+  const railTab = useSetting((s) => s.layout.railTab);
+  const setRailTab = (railTab: RailTab) => patchLayout({ railTab });
   const [resizing, setResizing] = useState<Dragging>(null);
   /** Bumped by `agents://changed`, separately from the workspace watcher. */
   const [agentsToken, setAgentsToken] = useState(0);
@@ -108,8 +156,6 @@ export default function App() {
   // `generation` and `refreshToken` elsewhere here.
   const [filesFocus, setFilesFocus] = useState(0);
   const [agentFocus, setAgentFocus] = useState(0);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const toastSeq = useRef(0);
 
@@ -326,6 +372,8 @@ export default function App() {
     setExpanded(new Set(state.expandedDirs));
     setRecentAt(new Map());
     setRepo(null);
+    // A message drafted for one project is not meant for the next.
+    setCommitMessage("");
     if (state.lastAgent) setAgentPref(state.lastAgent);
     setExitCode(undefined);
     setWorkspace(root);
@@ -355,30 +403,116 @@ export default function App() {
   }, []);
   const hideToast = useCallback(() => setToast(null), []);
 
+  /**
+   * Every git write goes through here: one at a time, errors in git's own
+   * words, and a status refresh afterwards -- the watcher ignores `.git`, so
+   * a stage or a commit would otherwise leave the list stale.
+   */
+  const gitBusyRef = useRef(false);
+  const runGit = useCallback(
+    async <T,>(op: GitOp, run: () => Promise<T>): Promise<T | undefined> => {
+      if (gitBusyRef.current) return undefined;
+      gitBusyRef.current = true;
+      setGitBusy(op);
+      try {
+        return await run();
+      } catch (e) {
+        showToast(String(e).replace(/^Error:\s*/, ""), "error");
+        return undefined;
+      } finally {
+        gitBusyRef.current = false;
+        setGitBusy(null);
+        setRefreshToken((t) => t + 1);
+      }
+    },
+    [showToast],
+  );
+
+  const stageFile = useCallback(
+    (f: FileStatus) => void runGit("stage", () => gitStage(pathsOf(f))),
+    [runGit],
+  );
+  const unstageFile = useCallback(
+    (f: FileStatus) => void runGit("stage", () => gitUnstage(pathsOf(f))),
+    [runGit],
+  );
+  const stageAll = useCallback(() => void runGit("stage", gitStageAll), [runGit]);
+  const unstageAll = useCallback(
+    () => void runGit("stage", gitUnstageAll),
+    [runGit],
+  );
+  const commit = useCallback(() => {
+    const message = commitMessage;
+    void runGit("commit", async () => {
+      await gitCommit(message);
+      // Only on success: a failed hook must not eat the message.
+      setCommitMessage("");
+    });
+  }, [runGit, commitMessage]);
+  const pull = useCallback(
+    (rebase: boolean) =>
+      void runGit("pull", async () => {
+        await gitPull(rebase);
+        showToast(rebase ? "Pulled and rebased." : "Pulled.");
+      }),
+    [runGit, showToast],
+  );
+  const push = useCallback(
+    () =>
+      void runGit("push", async () => {
+        await gitPush();
+        showToast("Pushed.");
+      }),
+    [runGit, showToast],
+  );
+
   // Every shortcut the app has. The chords themselves live in the registry,
   // which is also what stops TerminalPane forwarding them to the agent --
   // ⌘O used to need a listener here and a line over there to work.
   //
-  // A dialog is on top: the app behind it is inert, so nothing but closing the
-  // dialog should fire.
-  const blocked = picking || settingsOpen || templatesOpen;
-  useShortcuts({
-    "project.open": () => !settingsOpen && !templatesOpen && setPicking(true),
-    "app.settings": () =>
-      !picking && !templatesOpen && setSettingsOpen((open) => !open),
+  // The chooser is on top: the app behind it is inert, so nothing but closing
+  // it should fire. Settings and the template picker are windows of their own
+  // and leave this one fully usable.
+  const blocked = picking;
+  // Git needs a repo to act on; outside one a silent no-op would read as broken.
+  const gitReady = () => {
+    if (blocked || !workspace) return false;
+    if (repo && !repo.isRepo) {
+      showToast("This project is not a git repository.", "error");
+      return false;
+    }
+    return true;
+  };
+  const commands: Handlers = {
+    "project.open": () => setPicking(true),
+    "app.settings": () => {
+      if (picking) return;
+      void openSettingsWindow().catch(() =>
+        showToast("Could not open Settings.", "error"),
+      );
+    },
     "prompt.templates": () => {
-      if (picking || settingsOpen) return;
+      if (picking) return;
       // Nothing to type into, and a chooser that quietly did nothing would be
       // worse than saying so.
       if (!active || exitCode !== undefined) {
         showToast("No agent is running to send a prompt to.", "error");
         return;
       }
-      setTemplatesOpen((open) => !open);
+      void openTemplatesWindow(
+        contextFrom(workspace, openFile, repo?.branch ?? null),
+      ).catch(() => showToast("Could not open prompt templates.", "error"));
     },
     "focus.files": () => {
       if (blocked || !workspace) return;
+      // Same batch as the token, so the tree is visible by the time its
+      // focus effect runs.
+      setRailTab("files");
       setFilesFocus((t) => t + 1);
+    },
+    "focus.git": () => {
+      if (blocked || !workspace) return;
+      setRailTab("git");
     },
     "focus.agent": () => {
       if (blocked) return;
@@ -406,7 +540,38 @@ export default function App() {
           showToast(String(e).replace(/^Error:\s*/, ""), "error"),
         );
     },
+    "git.commit": () => {
+      if (!gitReady()) return;
+      setRailTab("git");
+      setCommitRequest((t) => t + 1);
+    },
+    "git.stageAll": () => {
+      if (gitReady()) stageAll();
+    },
+    "git.pull": () => {
+      if (gitReady()) pull(false);
+    },
+    "git.pullRebase": () => {
+      if (gitReady()) pull(true);
+    },
+    "git.push": () => {
+      if (gitReady()) push();
+    },
+  };
+  useShortcuts(commands);
+
+  // The menu bar runs the very same handlers, so a command means one thing
+  // whether it arrives by chord, by button or by menu -- including the guards
+  // that make it a no-op while a dialog is up. They are read through a ref
+  // because they close over this render's state, and the native menu is built
+  // once.
+  const commandsRef = useRef(commands);
+  useEffect(() => {
+    commandsRef.current = commands;
   });
+  useEffect(() => {
+    void installAppMenu((id) => commandsRef.current[id]?.());
+  }, []);
 
   const toggleDir = useCallback((path: string) => {
     setExpanded((prev) => {
@@ -462,6 +627,19 @@ export default function App() {
     [showToast],
   );
 
+  // The picker lives in its own window, but the agent's PTY lives in this one,
+  // so a chosen prompt comes back here to be typed. Focus follows it, so the
+  // user lands in the terminal ready to add to it.
+  useEffect(() => {
+    const unlisten = listen<string>(TEMPLATES_INSERT, ({ payload }) => {
+      void getCurrentWindow()
+        .setFocus()
+        .catch(() => {});
+      insertPrompt(payload);
+    });
+    return () => void unlisten.then((u) => u());
+  }, [insertPrompt]);
+
   // Both the agent list and the workspace must be resolved before spawning:
   // cwd is one of TerminalPane's effect deps, so spawning against a fallback
   // path and correcting it afterwards would kill and respawn the agent.
@@ -513,43 +691,11 @@ export default function App() {
           and cancelling would kill a live agent session. */}
       <div className="app" aria-hidden={picking} inert={picking}>
         <header className="topbar">
-          <span className="brand">Aditor</span>
-          <AgentPicker
-            agents={agents}
-            activeId={active?.id ?? null}
-            onPick={pickAgent}
-          />
-          <div className="topbar-right">
-            <button
-              className="insight-toggle"
-              data-open={insightOpen}
-              aria-pressed={insightOpen}
-              onClick={toggleInsight}
-              title={insightOpen ? "Hide agent panel" : "Show agent panel"}
-            >
-              ◫
-            </button>
-            <button
-              className="shortcuts-open"
-              onClick={() => setTemplatesOpen(true)}
-              title={chordHint("Prompt templates", "prompt.templates")}
-              aria-label="Prompt templates"
-            >
-              ❝
-            </button>
-            <button
-              className="shortcuts-open"
-              onClick={() => setSettingsOpen(true)}
-              title={chordHint("Settings", "app.settings")}
-              aria-label="Settings"
-            >
-              ⚙
-            </button>
-            {repo?.isRepo && repo.branch && (
-              <span className="branch" title="Current branch">
-                {repo.branch}
-              </span>
-            )}
+          {/* The project is what this window is, so it leads where the app's
+              own name used to sit. The branch rides along: both answer "where
+              am I working?", and splitting them across the bar made you look
+              in two places for one fact. */}
+          <div className="topbar-project">
             <button
               className="cwd"
               onClick={() => setPicking(true)}
@@ -558,8 +704,36 @@ export default function App() {
                 "project.open",
               )}
             >
-              {(workspace ?? "").split("/").slice(-2).join("/") ||
+              {(workspace ?? "").split("/").filter(Boolean).pop() ||
                 "Choose project…"}
+            </button>
+            {repo?.isRepo && repo.branch && (
+              <span className="branch" title="Current branch">
+                {repo.branch}
+              </span>
+            )}
+          </div>
+          <AgentPicker
+            agents={agents}
+            activeId={active?.id ?? null}
+            onPick={pickAgent}
+          />
+          <div className="topbar-right">
+            <button
+              className="shortcuts-open"
+              onClick={() => commands["prompt.templates"]?.()}
+              title={chordHint("Prompt templates", "prompt.templates")}
+              aria-label="Prompt templates"
+            >
+              ❝
+            </button>
+            <button
+              className="shortcuts-open"
+              onClick={() => commands["app.settings"]?.()}
+              title={chordHint("Settings", "app.settings")}
+              aria-label="Settings"
+            >
+              ⚙
             </button>
           </div>
         </header>
@@ -568,28 +742,80 @@ export default function App() {
           <aside className="rail" style={{ width: railWidth }}>
             {workspace ? (
               <>
-                <FileTree
-                  root={workspace}
-                  selected={openFile}
-                  onSelect={selectFile}
-                  refreshToken={refreshToken}
-                  expanded={expanded}
-                  onToggle={toggleDir}
-                  statuses={statuses}
-                  recent={recent}
-                  focusToken={filesFocus}
-                />
-                <ChangesList
-                  files={repo?.files ?? []}
-                  root={workspace}
-                  // null = status not back yet, or it failed. Assume a repo so
-                  // the transient body reads "No changes" rather than accusing
-                  // a real repo of not being one.
-                  isRepo={repo === null || repo.isRepo}
-                  selected={openFile}
-                  recent={recent}
-                  onSelect={selectFile}
-                />
+                <nav
+                  className="rail-tabs"
+                  role="tablist"
+                  aria-orientation="vertical"
+                >
+                  <button
+                    className="rail-tab"
+                    role="tab"
+                    aria-selected={railTab === "files"}
+                    aria-label="Files"
+                    title={chordHint("Files", "focus.files")}
+                    onClick={() => setRailTab("files")}
+                  >
+                    <FilesIcon />
+                  </button>
+                  <button
+                    className="rail-tab"
+                    role="tab"
+                    aria-selected={railTab === "git"}
+                    aria-label="Git"
+                    title={chordHint("Git", "focus.git")}
+                    onClick={() => setRailTab("git")}
+                  >
+                    <GitIcon />
+                    {(repo?.files.length ?? 0) > 0 && (
+                      <span className="rail-tab-badge">{repo!.files.length}</span>
+                    )}
+                  </button>
+                </nav>
+                {/* Both stay mounted and the other is hidden: remounting the
+                    tree would reload it and lose its scroll, and remounting the
+                    changes would drop the commit box's caret and undo. */}
+                <div className="rail-panel">
+                  <div hidden={railTab !== "files"}>
+                    <FileTree
+                      root={workspace}
+                      selected={openFile}
+                      onSelect={selectFile}
+                      refreshToken={refreshToken}
+                      expanded={expanded}
+                      onToggle={toggleDir}
+                      statuses={statuses}
+                      recent={recent}
+                      focusToken={filesFocus}
+                    />
+                  </div>
+                  <div hidden={railTab !== "git"}>
+                    <ChangesList
+                      files={repo?.files ?? []}
+                      root={workspace}
+                      // null = status not back yet, or it failed. Assume a repo so
+                      // the transient body reads "No changes" rather than accusing
+                      // a real repo of not being one.
+                      isRepo={repo === null || repo.isRepo}
+                      upstream={repo?.upstream ?? null}
+                      ahead={repo?.ahead ?? 0}
+                      behind={repo?.behind ?? 0}
+                      selected={openFile}
+                      recent={recent}
+                      onSelect={selectFile}
+                      message={commitMessage}
+                      onMessage={setCommitMessage}
+                      busy={gitBusy}
+                      commitRequest={commitRequest}
+                      onStage={stageFile}
+                      onUnstage={unstageFile}
+                      onStageAll={stageAll}
+                      onUnstageAll={unstageAll}
+                      onCommit={commit}
+                      onPull={pull}
+                      onPush={push}
+                    />
+                  </div>
+                </div>
               </>
             ) : (
               <div className="rail-placeholder">Files</div>
@@ -630,7 +856,20 @@ export default function App() {
           </main>
 
           {/* A sibling of <main>, never a wrapper around it: anything that
-              remounts the subtree holding TerminalPane kills the agent's PTY. */}
+              remounts the subtree holding TerminalPane kills the agent's PTY.
+              Swapping the panel for the stub keeps <main> in place, so the
+              terminal survives a collapse. */}
+          {workspace && !insightOpen && (
+            <button
+              className="insight-stub"
+              onClick={toggleInsight}
+              title="Show agent panel"
+              aria-label="Show agent panel"
+            >
+              ◫
+            </button>
+          )}
+
           {insightOpen && workspace && (
             <>
               <div
@@ -668,16 +907,6 @@ export default function App() {
           onBrowse={() => void browseForProject()}
           onCancel={workspace ? () => setPicking(false) : null}
           fitWindow={workspace === null}
-        />
-      )}
-
-      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
-
-      {templatesOpen && (
-        <TemplatePicker
-          ctx={contextFrom(workspace, openFile, repo?.branch ?? null)}
-          onInsert={insertPrompt}
-          onClose={() => setTemplatesOpen(false)}
         />
       )}
 

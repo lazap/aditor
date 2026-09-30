@@ -1,11 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { emitTo, listen } from "@tauri-apps/api/event";
 import { useSettings } from "../settings/store";
 import type { PromptTemplate } from "../templates/registry";
 import { fillContext, resolve, scan, type Context } from "../templates/placeholders";
+import { TEMPLATES_CONTEXT, TEMPLATES_INSERT } from "../window";
 
 interface Props {
   ctx: Context;
-  /** Insert the finished prompt into the agent. */
+  /** Insert the finished prompt into the agent. Closing is the caller's job:
+   *  it knows when the prompt has actually left. */
   onInsert(text: string): void;
   onClose(): void;
 }
@@ -13,11 +16,8 @@ interface Props {
 /**
  * Pick a saved prompt and type it into the agent.
  *
- * The overlay shape is the project chooser's, and for the same reason: the app
- * stays mounted behind it, because unmounting the subtree with TerminalPane in
- * it would kill the running agent. Focus goes into the filter on mount, which
- * also takes the caret off the terminal -- otherwise xterm swallows Escape and
- * the arrow keys.
+ * Fills a window of its own (see `TemplatesWindow`). Focus goes into the filter
+ * on mount, so the keyboard works the moment the window appears.
  */
 export function TemplatePicker({ ctx, onInsert, onClose }: Props) {
   const templates = useSettings().templates;
@@ -29,9 +29,13 @@ export function TemplatePicker({ ctx, onInsert, onClose }: Props) {
   const filterRef = useRef<HTMLInputElement>(null);
   const firstAskRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => filterRef.current?.focus(), []);
+  // Focus follows the view both ways. Backing out of the questions unmounts
+  // whatever had focus -- the Back button, an answer field -- and focus on
+  // <body> is outside this component's key handler, so the arrows would stop
+  // moving through the list.
   useEffect(() => {
     if (asking) firstAskRef.current?.focus();
+    else filterRef.current?.focus();
   }, [asking]);
 
   const matches = useMemo(() => {
@@ -49,7 +53,6 @@ export function TemplatePicker({ ctx, onInsert, onClose }: Props) {
 
   const insert = (t: PromptTemplate, filled: Record<string, string>) => {
     onInsert(resolve(t.body, ctx, filled));
-    onClose();
   };
 
   const choose = (t: PromptTemplate) => {
@@ -90,110 +93,144 @@ export function TemplatePicker({ ctx, onInsert, onClose }: Props) {
       : "";
 
   return (
-    <div
-      className="picker-overlay"
-      role="dialog"
-      aria-modal="true"
-      aria-label="Prompt templates"
-      onKeyDown={onKeyDown}
-    >
-      <div className="picker-card templates-card">
-        <h1 className="picker-title">Prompt templates</h1>
-
-        {asking ? (
-          <form
-            className="asks"
-            onSubmit={(e) => {
-              e.preventDefault();
-              insert(asking, answers);
+    <div className="window-page templates-page" onKeyDown={onKeyDown}>
+      {asking ? (
+        <form
+          className="asks"
+          onSubmit={(e) => {
+            e.preventDefault();
+            insert(asking, answers);
+          }}
+        >
+          <div className="picker-section-label">{asking.name}</div>
+          {scan(asking.body).asks.map((label, i) => (
+            <label className="ask-field" key={label}>
+              <span className="ask-label">{label}</span>
+              <input
+                ref={i === 0 ? firstAskRef : undefined}
+                className="template-input"
+                value={answers[label] ?? ""}
+                onChange={(e) =>
+                  setAnswers((prev) => ({ ...prev, [label]: e.target.value }))
+                }
+              />
+            </label>
+          ))}
+          <pre className="template-preview">{preview}</pre>
+          <div className="picker-actions">
+            <button className="picker-browse" type="submit">
+              Insert
+            </button>
+            <button
+              className="picker-cancel"
+              type="button"
+              onClick={() => setAsking(null)}
+            >
+              Back
+            </button>
+          </div>
+        </form>
+      ) : (
+        <>
+          <input
+            ref={filterRef}
+            className="template-filter"
+            placeholder="Filter templates…"
+            value={query}
+            onChange={(e) => {
+              setQuery(e.target.value);
+              setAt(0);
             }}
-          >
-            <div className="picker-section-label">{asking.name}</div>
-            {scan(asking.body).asks.map((label, i) => (
-              <label className="ask-field" key={label}>
-                <span className="ask-label">{label}</span>
-                <input
-                  ref={i === 0 ? firstAskRef : undefined}
-                  className="template-input"
-                  value={answers[label] ?? ""}
-                  onChange={(e) =>
-                    setAnswers((prev) => ({ ...prev, [label]: e.target.value }))
-                  }
-                />
-              </label>
-            ))}
-            <pre className="template-preview">{preview}</pre>
-            <div className="picker-actions">
-              <button className="picker-browse" type="submit">
-                Insert
-              </button>
-              <button
-                className="picker-cancel"
-                type="button"
-                onClick={() => setAsking(null)}
-              >
-                Back
-              </button>
-            </div>
-          </form>
-        ) : (
-          <>
-            <input
-              ref={filterRef}
-              className="template-filter"
-              placeholder="Filter templates…"
-              value={query}
-              onChange={(e) => {
-                setQuery(e.target.value);
-                setAt(0);
-              }}
-            />
+          />
 
-            {matches.length === 0 ? (
-              <p className="picker-empty">
-                {templates.length === 0
-                  ? "No templates yet. Add some in Settings."
-                  : "Nothing matches."}
-              </p>
-            ) : (
-              <div className="template-choose">
-                <div className="templates-list" role="listbox">
-                  {matches.map((t, i) => (
-                    <button
-                      key={t.id}
-                      className="template-row"
-                      role="option"
-                      aria-selected={i === index}
-                      data-selected={i === index}
-                      onMouseEnter={() => setAt(i)}
-                      onClick={() => choose(t)}
-                    >
-                      <span className="template-name">{t.name || "Untitled"}</span>
-                      {scan(t.body).asks.length > 0 && (
-                        <span className="template-asks" title="Asks before inserting">
-                          ?
-                        </span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-                <pre className="template-preview">{preview}</pre>
-              </div>
-            )}
-
-            <p className="settings-hint">
-              The prompt is typed into the agent, not sent — press Enter
-              yourself once you have added anything else it needs.
+          {matches.length === 0 ? (
+            <p className="picker-empty">
+              {templates.length === 0
+                ? "No templates yet. Add some in Settings."
+                : "Nothing matches."}
             </p>
-
-            <div className="picker-actions">
-              <button className="picker-cancel" type="button" onClick={onClose}>
-                Cancel
-              </button>
+          ) : (
+            <div className="template-choose">
+              <div className="templates-list" role="listbox">
+                {matches.map((t, i) => (
+                  <button
+                    key={t.id}
+                    className="template-row"
+                    role="option"
+                    aria-selected={i === index}
+                    data-selected={i === index}
+                    onMouseEnter={() => setAt(i)}
+                    onClick={() => choose(t)}
+                  >
+                    <span className="template-name">{t.name || "Untitled"}</span>
+                    {scan(t.body).asks.length > 0 && (
+                      <span className="template-asks" title="Asks before inserting">
+                        ?
+                      </span>
+                    )}
+                  </button>
+                ))}
+              </div>
+              <pre className="template-preview">{preview}</pre>
             </div>
-          </>
-        )}
-      </div>
+          )}
+
+          <p className="settings-hint">
+            The prompt is typed into the agent, not sent — press Enter
+            yourself once you have added anything else it needs.
+          </p>
+
+          <div className="picker-actions">
+            <button className="picker-cancel" type="button" onClick={onClose}>
+              Cancel
+            </button>
+          </div>
+        </>
+      )}
     </div>
+  );
+}
+
+const EMPTY_CONTEXT: Context = { file: "", project: "", branch: "" };
+
+/** The context the main window opened us with, from the URL. */
+function initialContext(): Context {
+  try {
+    const raw = new URLSearchParams(location.search).get("ctx");
+    return raw ? { ...EMPTY_CONTEXT, ...(JSON.parse(raw) as Partial<Context>) } : EMPTY_CONTEXT;
+  } catch {
+    return EMPTY_CONTEXT;
+  }
+}
+
+/**
+ * The picker as its own window.
+ *
+ * The agent's PTY belongs to the main window, so the finished prompt is handed
+ * back there to be typed in. Opening the picker again while it is up sends a
+ * fresh context; the picker is remounted for it, so it comes back cleared and
+ * with focus in the filter rather than halfway through the last choice.
+ */
+export function TemplatesWindow({ onClose }: { onClose(): void }) {
+  const [ctx, setCtx] = useState(initialContext);
+  const [opened, setOpened] = useState(0);
+
+  useEffect(() => {
+    const unlisten = listen<Context>(TEMPLATES_CONTEXT, ({ payload }) => {
+      setCtx(payload);
+      setOpened((n) => n + 1);
+    });
+    return () => void unlisten.then((u) => u());
+  }, []);
+
+  return (
+    <TemplatePicker
+      key={opened}
+      ctx={ctx}
+      // Close only once the prompt is on its way: IPC calls are not ordered, and
+      // a close that overtook the emit would destroy the window with it.
+      onInsert={(text) => void emitTo("main", TEMPLATES_INSERT, text).finally(onClose)}
+      onClose={onClose}
+    />
   );
 }

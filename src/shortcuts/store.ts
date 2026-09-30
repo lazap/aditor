@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { patch, settings } from "../settings/store";
-import { COMMANDS, type CommandId } from "./registry";
+import { COMMANDS, commandById, type CommandId } from "./registry";
 import { eventChord, isSystemReserved } from "./keys";
 
 /**
@@ -96,7 +96,10 @@ export function setBinding(id: CommandId, chord: string): CommandId | null {
 }
 
 export function clearBinding(id: CommandId): void {
-  overrides[id] = null;
+  // Clearing a command that ships unbound is a return to its default, not an
+  // override of it.
+  if (commandById(id).chord === null) delete overrides[id];
+  else overrides[id] = null;
   commit();
 }
 

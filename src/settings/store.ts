@@ -1,4 +1,6 @@
 import { useSyncExternalStore } from "react";
+import { emit, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { settingsRead, settingsWrite } from "./api";
 import { clearLegacy, hasLegacy, readLegacy } from "./legacy";
 import { DEFAULTS, type Settings } from "./schema";
@@ -63,10 +65,44 @@ export function patch(next: Partial<Settings>): void {
   current = { ...current, ...next };
   for (const fn of listeners) fn();
   schedule();
+  void emit(CHANGED, { from: self, value: current } satisfies Change).catch(() => {});
 }
 
 export function patchLayout(next: Partial<Settings["layout"]>): void {
   patch({ layout: { ...current.layout, ...next } });
+}
+
+// ------------------------------------------------------------ other windows ---
+
+/**
+ * Settings and the template picker are windows of their own, each with its own
+ * copy of this module. Every change is broadcast whole, and every other window
+ * takes it as its snapshot -- so they never disagree, and a debounced write
+ * from any of them saves the same document rather than a stale one.
+ */
+const CHANGED = "settings://changed";
+
+interface Change {
+  from: string;
+  value: Settings;
+}
+
+const self = getCurrentWindow().label;
+
+/**
+ * Follow changes made in other windows. `onChange` runs after the snapshot is
+ * replaced, for readers that keep a derived copy -- the shortcut keymap.
+ *
+ * Adopting does not schedule a write: the window that made the change is
+ * already writing it.
+ */
+export function syncWithPeers(onChange: () => void): void {
+  void listen<Change>(CHANGED, ({ payload }) => {
+    if (payload.from === self) return;
+    current = payload.value;
+    for (const fn of listeners) fn();
+    onChange();
+  });
 }
 
 function schedule(): void {
@@ -164,6 +200,10 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
         typeof layout.railWidth === "number"
           ? layout.railWidth
           : DEFAULTS.layout.railWidth,
+      railTab:
+        layout.railTab === "files" || layout.railTab === "git"
+          ? layout.railTab
+          : DEFAULTS.layout.railTab,
       insightOpen:
         typeof layout.insightOpen === "boolean"
           ? layout.insightOpen

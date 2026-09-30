@@ -52,17 +52,26 @@ body,
   flex: 0 0 auto;
 }
 
-.brand {
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  color: var(--fg);
+/* Project and branch answer one question between them, so they sit tighter than
+   the bar's own rhythm and share its leading edge. */
+.topbar-project {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
+/* Leads the bar, so it carries the weight the app's name used to. Monospace
+   still: it is a path, and a path with an ellipsis in it should look like one. */
 .cwd {
-  margin-left: auto;
-  color: var(--fg-dim);
+  color: var(--fg);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: 12.5px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 /* ---- agent dropdown ---- */
@@ -180,19 +189,92 @@ body,
   min-height: 0;
 }
 
-/* A column, not one scrolling block: the tree takes the slack and scrolls on its
-   own, so the changes list below stays on screen however deep the tree gets. */
-/* Width is inline rather than tokenised because it is draggable; the token is
-   only the default. Mirrors `.insight` on the other side of the main column. */
+/* The tab strip, then whichever panel it has selected. Width is inline rather
+   than tokenised because it is draggable; the token is only the default.
+   Mirrors `.insight` on the other side of the main column. */
 .rail {
   width: var(--rail-w);
   flex: 0 0 auto;
   border-right: 1px solid var(--border);
   background: var(--bg-raised);
   display: flex;
-  flex-direction: column;
+  flex-direction: row;
   min-height: 0;
   overflow: hidden;
+}
+
+.rail-tabs {
+  flex: 0 0 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  border-right: 1px solid var(--border);
+}
+
+.rail-tab {
+  position: relative;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  appearance: none;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+
+.rail-tab:hover {
+  background: #22262f;
+  color: var(--fg);
+}
+
+.rail-tab[aria-selected="true"] {
+  color: var(--fg);
+}
+
+/* The selection bar sits on the strip's outer edge, not the button's. */
+.rail-tab[aria-selected="true"]::before {
+  content: "";
+  position: absolute;
+  left: -4px;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+
+.rail-tab-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -2px;
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: 7px;
+  background: #22262f;
+  color: var(--fg-dim);
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+}
+
+/* Each panel is a column whose one scroller takes the slack. */
+.rail-panel,
+.rail-panel > div {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.rail-panel > [hidden] {
+  display: none;
 }
 
 .rail-placeholder {
@@ -282,8 +364,8 @@ body,
   font-size: 12.5px;
   user-select: none;
   /* Takes the rail's slack and scrolls itself. min-height defeats the automatic
-     min-content floor, or a deep tree refuses to shrink and pushes the changes
-     list out of the rail instead of scrolling. */
+     min-content floor, or a deep tree refuses to shrink and grows past the rail
+     instead of scrolling. */
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
@@ -599,17 +681,13 @@ button.cwd:hover {
 
 /* ---- changes list ---- */
 
-/* Sits under the tree, against the bottom of the rail. Capped rather than free:
-   a repo with a hundred dirty files must not squeeze the tree to nothing, and
-   the header stays put because only the list below it scrolls. */
+/* The whole Git tab: header, the list (the one scroller), and the commit
+   footer pinned below it. */
 .changes {
-  flex: 0 0 auto;
-  max-height: 45%;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-top: 1px solid var(--border);
-  padding-bottom: 4px;
 }
 
 .changes-body {
@@ -634,11 +712,6 @@ button.cwd:hover {
   text-transform: uppercase;
   letter-spacing: 0.08em;
   padding: 8px 10px 6px;
-  cursor: pointer;
-}
-
-.changes-header:hover {
-  color: var(--fg);
 }
 
 .changes-count {
@@ -674,6 +747,188 @@ button.cwd:hover {
   width: 12px;
 }
 
+.changes-busy {
+  font-size: 11px;
+  color: var(--fg-dim);
+  white-space: nowrap;
+}
+
+.changes-pull {
+  position: relative;
+  display: flex;
+}
+
+.changes-tool,
+.changes-act {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  line-height: 1;
+}
+
+.changes-tool {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  padding: 3px 5px;
+}
+
+.changes-tool-more {
+  font-size: 9px;
+  padding: 3px 3px;
+}
+
+.changes-tool:hover:not(:disabled),
+.changes-act:hover:not(:disabled) {
+  color: var(--fg);
+  background: #22262f;
+}
+
+.changes-tool:disabled,
+.changes-act:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.changes-tally {
+  font-size: 10px;
+  color: var(--accent);
+}
+
+.changes-menu {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  /* Opens upward: the list sits at the foot of the rail. */
+  bottom: calc(100% + 4px);
+  display: flex;
+  flex-direction: column;
+  min-width: 150px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+}
+
+.changes-menu button {
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  padding: 5px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.changes-menu button:hover {
+  background: #2a3550;
+}
+
+.changes-commit {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+}
+
+/* Commit takes the row; pull and push ride at its end. */
+.changes-actions {
+  display: flex;
+  align-items: stretch;
+  gap: 2px;
+}
+
+.changes-actions .changes-commit-btn {
+  flex: 1 1 auto;
+  margin-right: 4px;
+}
+
+.changes-message {
+  resize: vertical;
+  min-height: 34px;
+  max-height: 160px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  outline: none;
+}
+
+.changes-message:focus {
+  border-color: var(--accent);
+}
+
+.changes-commit-btn {
+  appearance: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: var(--accent);
+  color: var(--bg);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
+.changes-commit-btn:disabled {
+  background: transparent;
+  border-color: var(--border);
+  color: var(--fg-dim);
+  font-weight: 400;
+  cursor: default;
+}
+
+.changes-section {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px 2px 10px;
+  color: var(--fg-dim);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.changes-section .changes-count {
+  margin-left: 4px;
+}
+
+.changes-section .changes-act {
+  margin-left: auto;
+}
+
+.changes-act {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  font-size: 13px;
+}
+
+/* Row actions appear on hover, so a long list stays a list of paths. */
+.changes-row .changes-act {
+  margin-left: auto;
+  visibility: hidden;
+}
+
+.changes-row:hover .changes-act,
+.changes-row .changes-act:focus-visible {
+  visibility: visible;
+}
+
 /* ---- topbar right ---- */
 
 .topbar-right {
@@ -683,10 +938,6 @@ button.cwd:hover {
   gap: 8px;
 }
 
-.cwd {
-  margin-left: 0;
-}
-
 .branch {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   font-size: 11px;
@@ -694,6 +945,8 @@ button.cwd:hover {
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 1px 6px;
+  /* The path yields first: a truncated branch name is a misleading one. */
+  flex: 0 0 auto;
 }
 
 /* ---- project picker ---- */
@@ -1006,26 +1259,62 @@ button.cwd:hover {
   color: var(--fg);
 }
 
-.insight-toggle,
-.shortcuts-open {
-  background: none;
-  border: 1px solid transparent;
+/* The panel while it is collapsed: a strip on the same edge, wide enough to
+   click and no wider. The panel's own ✕ hides it, so without this there would
+   be no way back but the Settings toggle. */
+.insight-stub {
+  flex: 0 0 26px;
+  appearance: none;
+  border: none;
+  border-left: 1px solid var(--border);
+  background: var(--bg-raised);
   color: var(--fg-dim);
   cursor: pointer;
   font-size: 13px;
-  line-height: 1;
-  padding: 3px 6px;
-  border-radius: 4px;
+  padding: 9px 0 0;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
 }
 
-.insight-toggle:hover,
-.shortcuts-open:hover {
+.insight-stub:hover {
   background: #22262f;
   color: var(--fg);
 }
 
-.insight-toggle[data-open="true"] {
-  color: var(--accent);
+/* Square icon buttons, outlined so they read as controls rather than decoration.
+   The resting border is `.branch`'s; the hover surface is the one every other
+   hoverable row in the app uses, so only the size and the glyph are new. */
+.shortcuts-open {
+  appearance: none;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  background: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  cursor: pointer;
+  font-size: 15px;
+  line-height: 1;
+}
+
+.shortcuts-open:hover {
+  background: #22262f;
+  border-color: var(--fg-dim);
+}
+
+.shortcuts-open:active {
+  background: var(--border);
+}
+
+.shortcuts-open:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .insight-section {
@@ -1462,6 +1751,8 @@ button.cwd:hover {
   color: var(--fg);
   box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
   animation: toast-in 120ms ease-out;
+  /* Git errors arrive as several lines of its own output. */
+  white-space: pre-line;
   /* Never in the way of the pane underneath it. */
   pointer-events: none;
 }
@@ -1572,13 +1863,25 @@ button.cwd:hover {
   color: var(--accent);
 }
 
-/* ---- settings dialog ---- */
+/* ---- side windows ---- */
 
-/* Wider than the other cards: the templates tab is a list beside an editor,
-   and either one alone is too narrow to work in. */
-.settings-card {
-  max-width: 760px;
+/* Settings and the template picker each fill a window of their own. The
+   content grows with the window and scrolls inside itself; the actions stay
+   pinned to the bottom. */
+.window-page {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
 }
+
+.window-page > .picker-actions {
+  margin-top: auto;
+  justify-content: flex-end;
+}
+
+/* ---- settings window ---- */
 
 .settings-hint {
   margin: 0;
@@ -1591,6 +1894,8 @@ button.cwd:hover {
 }
 
 .settings-body {
+  flex: 1 1 auto;
+  min-height: 0;
   display: grid;
   grid-template-columns: 150px 1fr;
   gap: 16px;
@@ -1630,15 +1935,11 @@ button.cwd:hover {
   outline-offset: 1px;
 }
 
-/* px, not vh: the project chooser measures a card to size the window, and a
-   viewport-relative cap in the same overlay would be one more thing feeding
-   back into that measurement. */
 .settings-panel {
   display: flex;
   flex-direction: column;
   gap: 10px;
-  min-height: 360px;
-  max-height: 440px;
+  height: 100%;
   overflow-y: auto;
 }
 
@@ -1887,8 +2188,19 @@ button.cwd:hover {
 
 /* ---- the template chooser ---- */
 
-.templates-card {
-  max-width: 720px;
+/* In the picker window the list and the preview take whatever height the
+   window has, rather than the fixed heights they keep inside Settings. */
+.templates-page .template-choose {
+  flex: 1 1 auto;
+  min-height: 0;
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+}
+
+.templates-page .templates-list,
+.templates-page .template-preview {
+  max-height: none;
+  min-height: 0;
 }
 
 .template-choose {

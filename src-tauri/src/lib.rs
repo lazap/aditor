@@ -31,6 +31,13 @@ pub fn run() {
             fs::dirs_exist,
             git::git_status,
             git::git_diff,
+            git::git_stage,
+            git::git_unstage,
+            git::git_stage_all,
+            git::git_unstage_all,
+            git::git_commit,
+            git::git_pull,
+            git::git_push,
             agents::agent_sessions,
             agents::agent_watch,
             accounts::claude_accounts,
@@ -43,10 +50,21 @@ pub fn run() {
         ])
         // Agents run in their own process groups, so closing the window does not
         // hang them up -- without this they survive the app that spawned them.
+        //
+        // Only the main window owns agents. Settings and the template picker are
+        // windows of their own, and closing one must not take the session with
+        // it. When main goes, they go too: without the editor they are orphans
+        // that would keep the app alive.
         .on_window_event(|window, event| {
-            if matches!(event, WindowEvent::Destroyed) {
-                if let Some(registry) = window.try_state::<Arc<pty::PtyRegistry>>() {
-                    pty::kill_all(&registry);
+            if window.label() != "main" || !matches!(event, WindowEvent::Destroyed) {
+                return;
+            }
+            if let Some(registry) = window.try_state::<Arc<pty::PtyRegistry>>() {
+                pty::kill_all(&registry);
+            }
+            for (label, other) in window.app_handle().webview_windows() {
+                if label != "main" {
+                    let _ = other.close();
                 }
             }
         })

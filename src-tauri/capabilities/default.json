@@ -1,9 +1,11 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window",
+  "description": "Capability for the main window and its settings and template windows",
   "windows": [
-    "main"
+    "main",
+    "settings",
+    "templates"
   ],
   "permissions": [
     "core:default",
@@ -11,6 +13,10 @@
     "core:window:allow-set-min-size",
     "core:window:allow-center",
     "opener:default",
-    "dialog:default"
+    "dialog:default",
+    "core:webview:allow-create-webview-window",
+    "core:window:allow-close",
+    "core:window:allow-set-focus",
+    "core:window:allow-destroy"
   ]
 }
