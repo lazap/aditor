@@ -15,7 +15,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::Mutex;
+use std::sync::{Mutex, OnceLock};
 
 use git2::{Branch, Repository, Status, StatusOptions};
 use serde::Serialize;
@@ -313,12 +313,53 @@ where
     .map_err(|e| format!("the git operation did not finish: {e}"))?
 }
 
+/// Answers ssh's prompts (a key passphrase, an unknown host key) with a native
+/// dialog. Cancel exits non-zero, and ssh fails with its own message.
+const ASKPASS_SCRIPT: &str = r#"#!/bin/sh
+case "$1" in
+  *yes/no*) hidden="" ;;
+  *) hidden="with hidden answer" ;;
+esac
+exec /usr/bin/osascript \
+  -e 'on run argv' \
+  -e 'activate' \
+  -e "return text returned of (display dialog (item 1 of argv) default answer \"\" $hidden with title \"Aditor — git\")" \
+  -e 'end run' \
+  "$1"
+"#;
+
+/// The askpass helper on disk, written once per run. None if it could not be,
+/// in which case ssh keeps its default behaviour.
+fn askpass() -> Option<&'static Path> {
+    static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    PATH.get_or_init(|| {
+        use std::os::unix::fs::OpenOptionsExt;
+        // $TMPDIR on macOS is per-user and private.
+        let path = std::env::temp_dir().join(format!("aditor-askpass-{}.sh", std::process::id()));
+        let mut file = std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o700)
+            .open(&path)
+            .ok()?;
+        file.write_all(ASKPASS_SCRIPT.as_bytes()).ok()?;
+        Some(path)
+    })
+    .as_deref()
+}
+
 /// `git <args>` in `root`, through a login shell so the user's real PATH (and
 /// so their git) resolves in a GUI-launched app. Arguments travel as
 /// positional parameters, so nothing is ever quoted into the script.
 ///
-/// No terminal is attached and prompting is off: a credential prompt fails
-/// fast with git's own message instead of hanging the operation forever.
+/// No terminal is attached and git's own prompting is off: a credential
+/// prompt fails fast with git's own message instead of hanging forever.
+///
+/// ssh does not honour `GIT_TERMINAL_PROMPT`: with a passphrase-protected key
+/// and an empty agent it opens /dev/tty and waits there -- on the terminal
+/// that launched the app, or on nothing at all. Forcing askpass sends its
+/// prompts to a dialog instead.
 fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
     let mut cmd = Command::new(crate::pty::user_shell());
     cmd.args(["-l", "-c", "exec git \"$@\"", "git"])
@@ -328,6 +369,10 @@ fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, St
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+
+    if let Some(helper) = askpass() {
+        cmd.env("SSH_ASKPASS", helper).env("SSH_ASKPASS_REQUIRE", "force");
+    }
 
     let mut child = cmd.spawn().map_err(|e| format!("could not run git: {e}"))?;
     if let Some(input) = stdin {
