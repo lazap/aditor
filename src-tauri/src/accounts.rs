@@ -111,7 +111,7 @@ struct Slot {
 
 // ----------------------------------------------------------------- paths ---
 
-fn home() -> Option<PathBuf> {
+pub(crate) fn home() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
@@ -563,7 +563,7 @@ fn keychain_write(credential: &str) -> Result<(), String> {
 /// Write via a temp file in the same directory and rename over the target, so
 /// a reader never sees a half-written file. Owner-only from the moment it
 /// exists -- these files hold live OAuth tokens.
-fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = path.parent().ok_or_else(|| "no parent directory".to_string())?;
     let tmp = dir.join(format!(
         ".{}.{}.tmp",
@@ -626,8 +626,7 @@ fn rewrite_preserving_mode(path: &Path, bytes: &[u8]) -> Result<(), String> {
 /// directory: this is a store people expect to find, back up and carry between
 /// machines, the way `cswap` keeps `~/.claude-swap-backup`.
 fn store_dir(app: &AppHandle) -> Result<PathBuf, String> {
-    let root = home().ok_or_else(|| "no home directory".to_string())?.join(".aditor");
-    let dir = root.join("accounts");
+    let dir = aditor_dir()?.join("accounts");
 
     // One-time move from where the store used to live. Skipped the moment the
     // new location exists, so it costs a `stat` per call and nothing else.
@@ -638,10 +637,19 @@ fn store_dir(app: &AppHandle) -> Result<PathBuf, String> {
     }
 
     fs::create_dir_all(&dir).map_err(|e| format!("could not create {}: {e}", dir.display()))?;
-    // The slot files are already owner-only; close the directory too, so the
-    // roster is not world-readable either.
-    restrict_dir(&root);
     Ok(dir)
+}
+
+/// `~/.aditor`, created and closed to the owner.
+///
+/// Shared with `settings.rs` so there is one answer to where Aditor's own store
+/// lives. The mode matters here and not only in the slot files: the accounts
+/// roster next door is not something to leave world-readable.
+pub(crate) fn aditor_dir() -> Result<PathBuf, String> {
+    let root = home().ok_or_else(|| "no home directory".to_string())?.join(".aditor");
+    fs::create_dir_all(&root).map_err(|e| format!("could not create {}: {e}", root.display()))?;
+    restrict_dir(&root);
+    Ok(root)
 }
 
 /// Move a previous store into place, if there is one and nothing is there yet.

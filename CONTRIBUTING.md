@@ -57,6 +57,15 @@ second one is the main way a PR gets review comments:
   `src/shortcuts/registry.ts` -- nothing else. That list drives dispatch
   (`useShortcuts`) *and* which chords `TerminalPane` holds back from the agent
   (via the store's `isReservedForApp`). There is no second place to register it.
+- **A new setting is one field** in `Settings` and `DEFAULTS` in
+  `src/settings/schema.ts`, read through `settings()` and written through
+  `patch()`. The Rust side never learns what it is -- `settings.rs` reads and
+  writes an opaque JSON document -- and nothing new goes into `localStorage`.
+- **A new prompt template shipped with the app is one row** in
+  `DEFAULT_TEMPLATES` in `src/templates/registry.ts`, plus a bump of
+  `TEMPLATE_SEED` in the same commit. The bump is what folds it into the
+  settings of people who already have the old set, without resurrecting the
+  templates they deleted.
 - **A new agent is a new arm** in `agent_sessions` in `src-tauri/src/agents.rs`,
   plus a reader module alongside it. `agents.rs` is the single dispatch point.
 - **`git.rs` is read-only by design.** It reports status and diffs through

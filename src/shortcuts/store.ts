@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { STORAGE, loadJSON, removeKey, saveJSON } from "../config";
+import { patch, settings } from "../settings/store";
 import { COMMANDS, type CommandId } from "./registry";
 import { eventChord, isSystemReserved } from "./keys";
 
@@ -17,11 +17,26 @@ import { eventChord, isSystemReserved } from "./keys";
 /** id -> chord, or null for a binding the user cleared. */
 type Overrides = Partial<Record<CommandId, string | null>>;
 
-let overrides: Overrides = sane(loadJSON<Overrides>(STORAGE.shortcuts, {}));
+let overrides: Overrides = {};
 let bindings = buildBindings();
 let byChord = buildByChord();
 
 const listeners = new Set<() => void>();
+
+/**
+ * Take the rebindings from the settings document.
+ *
+ * Called once from `main.tsx`, after the document is loaded and before React
+ * mounts. It cannot be done at module scope: imports are evaluated before
+ * anything gets to await the disk read, so this module would adopt the
+ * defaults and never hear about the file.
+ */
+export function adopt(): void {
+  overrides = sane(settings().shortcuts);
+  bindings = buildBindings();
+  byChord = buildByChord();
+  for (const fn of listeners) fn();
+}
 
 /** Drop anything that is not a command we still ship. */
 function sane(raw: Overrides): Overrides {
@@ -49,7 +64,7 @@ function buildByChord(): ReadonlyMap<string, CommandId> {
 function commit(): void {
   bindings = buildBindings();
   byChord = buildByChord();
-  saveJSON(STORAGE.shortcuts, overrides);
+  patch({ shortcuts: overrides });
   for (const fn of listeners) fn();
 }
 
@@ -89,7 +104,7 @@ export function resetAll(): void {
   overrides = {};
   bindings = buildBindings();
   byChord = buildByChord();
-  removeKey(STORAGE.shortcuts);
+  patch({ shortcuts: overrides });
   for (const fn of listeners) fn();
 }
 

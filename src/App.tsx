@@ -9,18 +9,25 @@ import { FileTree } from "./components/FileTree";
 import { ChangesList } from "./components/ChangesList";
 import { BottomPane } from "./components/BottomPane";
 import { SplitPane } from "./components/SplitPane";
-import { ShortcutSettings } from "./components/ShortcutSettings";
+import { Settings } from "./components/Settings";
+import { TemplatePicker } from "./components/TemplatePicker";
 import { Toast, type ToastMessage } from "./components/Toast";
 import { useShortcuts } from "./shortcuts/useShortcuts";
 import { chordFor } from "./shortcuts/store";
 import { formatChord } from "./shortcuts/keys";
 import { switchToNextAccount } from "./accounts/next";
 import type { CommandId } from "./shortcuts/registry";
-import { agentsAvailable, reapOrphansOnce, type AgentInfo } from "./pty/api";
+import {
+  agentsAvailable,
+  ptyWriteActive,
+  reapOrphansOnce,
+  type AgentInfo,
+} from "./pty/api";
 import { dirsExist, fsDebounceMs, openWorkspace } from "./fs/api";
 import { gitStatus, type RepoStatus } from "./git/api";
 import { agentWatch } from "./agents/api";
-import { STORAGE, loadJSON, saveJSON } from "./config";
+import { patch, patchLayout, settings, useSetting } from "./settings/store";
+import { contextFrom } from "./templates/placeholders";
 import { growWindowToEditor } from "./window";
 import {
   forgetProject,
@@ -54,8 +61,8 @@ function chordHint(text: string, id: CommandId): string {
 export default function App() {
   const [agents, setAgents] = useState<AgentInfo[]>([]);
   /** Agent we would like to run: the project's, else the last one used. */
-  const [agentPref, setAgentPref] = useState<string | null>(() =>
-    loadJSON<string | null>(STORAGE.lastAgent, null),
+  const [agentPref, setAgentPref] = useState<string | null>(
+    () => settings().lastAgent,
   );
   const [active, setActive] = useState<AgentInfo | null>(null);
   const [generation, setGeneration] = useState(0);
@@ -74,13 +81,13 @@ export default function App() {
   const [repo, setRepo] = useState<RepoStatus | null>(null);
   /** path -> when the watcher last saw it move. */
   const [recentAt, setRecentAt] = useState<Map<string, number>>(new Map());
-  const splitFraction = useRef(loadJSON<number>(STORAGE.splitFraction, 0.55));
+  const splitFraction = useRef(settings().layout.splitFraction);
 
-  const [insightOpen, setInsightOpen] = useState(() =>
-    loadJSON<boolean>(STORAGE.insightOpen, true),
-  );
-  const [insightWidth, setInsightWidth] = useState(() =>
-    loadJSON<number>(STORAGE.insightWidth, 300),
+  // Straight from settings rather than mirrored into state: the General tab
+  // sets the same field, and two copies would disagree.
+  const insightOpen = useSetting((s) => s.layout.insightOpen);
+  const [insightWidth, setInsightWidth] = useState(
+    () => settings().layout.insightWidth,
   );
   const [resizing, setResizing] = useState(false);
   /** Bumped by `agents://changed`, separately from the workspace watcher. */
@@ -91,7 +98,8 @@ export default function App() {
   // `generation` and `refreshToken` elsewhere here.
   const [filesFocus, setFilesFocus] = useState(0);
   const [agentFocus, setAgentFocus] = useState(0);
-  const [shortcutsOpen, setShortcutsOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [templatesOpen, setTemplatesOpen] = useState(false);
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const toastSeq = useRef(0);
 
@@ -231,7 +239,7 @@ export default function App() {
     const up = () => {
       setResizing(false);
       setInsightWidth((w) => {
-        saveJSON(STORAGE.insightWidth, w);
+        patchLayout({ insightWidth: w });
         return w;
       });
     };
@@ -250,7 +258,7 @@ export default function App() {
   const recent = useMemo(() => new Set(recentAt.keys()), [recentAt]);
 
   const pickAgent = useCallback((agent: AgentInfo) => {
-    saveJSON(STORAGE.lastAgent, agent.id);
+    patch({ lastAgent: agent.id });
     const ws = workspaceRef.current;
     if (ws) saveProjectState(ws, { lastAgent: agent.id });
     setExitCode(undefined);
@@ -322,10 +330,21 @@ export default function App() {
   //
   // A dialog is on top: the app behind it is inert, so nothing but closing the
   // dialog should fire.
-  const blocked = picking || shortcutsOpen;
+  const blocked = picking || settingsOpen || templatesOpen;
   useShortcuts({
-    "project.open": () => !shortcutsOpen && setPicking(true),
-    "app.shortcuts": () => !picking && setShortcutsOpen((open) => !open),
+    "project.open": () => !settingsOpen && !templatesOpen && setPicking(true),
+    "app.settings": () =>
+      !picking && !templatesOpen && setSettingsOpen((open) => !open),
+    "prompt.templates": () => {
+      if (picking || settingsOpen) return;
+      // Nothing to type into, and a chooser that quietly did nothing would be
+      // worse than saying so.
+      if (!active || exitCode !== undefined) {
+        showToast("No agent is running to send a prompt to.", "error");
+        return;
+      }
+      setTemplatesOpen((open) => !open);
+    },
     "focus.files": () => {
       if (blocked || !workspace) return;
       setFilesFocus((t) => t + 1);
@@ -382,18 +401,34 @@ export default function App() {
 
   const commitSplit = useCallback((f: number) => {
     splitFraction.current = f;
-    saveJSON(STORAGE.splitFraction, f);
+    patchLayout({ splitFraction: f });
   }, []);
 
   const handleExit = useCallback((code: number | null) => setExitCode(code), []);
 
   const toggleInsight = useCallback(
-    () =>
-      setInsightOpen((open) => {
-        saveJSON(STORAGE.insightOpen, !open);
-        return !open;
-      }),
+    () => patchLayout({ insightOpen: !settings().layout.insightOpen }),
     [],
+  );
+
+  /**
+   * Type a finished prompt into the running agent.
+   *
+   * It goes through the module-level session handle rather than a prop, because
+   * anything that re-enters TerminalPane is one step closer to the effect that
+   * kills and respawns the PTY. Focus follows it back to the terminal so the
+   * user can add to the prompt and press Enter.
+   */
+  const insertPrompt = useCallback(
+    (text: string) => {
+      void ptyWriteActive(text)
+        .then((sent) => {
+          if (sent) setAgentFocus((t) => t + 1);
+          else showToast("No agent is running to send a prompt to.", "error");
+        })
+        .catch(() => showToast("Could not reach the agent.", "error"));
+    },
+    [showToast],
   );
 
   // Both the agent list and the workspace must be resolved before spawning:
@@ -465,11 +500,19 @@ export default function App() {
             </button>
             <button
               className="shortcuts-open"
-              onClick={() => setShortcutsOpen(true)}
-              title={chordHint("Keyboard shortcuts", "app.shortcuts")}
-              aria-label="Keyboard shortcuts"
+              onClick={() => setTemplatesOpen(true)}
+              title={chordHint("Prompt templates", "prompt.templates")}
+              aria-label="Prompt templates"
             >
-              ⌨
+              ❝
+            </button>
+            <button
+              className="shortcuts-open"
+              onClick={() => setSettingsOpen(true)}
+              title={chordHint("Settings", "app.settings")}
+              aria-label="Settings"
+            >
+              ⚙
             </button>
             {repo?.isRepo && repo.branch && (
               <span className="branch" title="Current branch">
@@ -586,7 +629,15 @@ export default function App() {
         />
       )}
 
-      {shortcutsOpen && <ShortcutSettings onClose={() => setShortcutsOpen(false)} />}
+      {settingsOpen && <Settings onClose={() => setSettingsOpen(false)} />}
+
+      {templatesOpen && (
+        <TemplatePicker
+          ctx={contextFrom(workspace, openFile, repo?.branch ?? null)}
+          onInsert={insertPrompt}
+          onClose={() => setTemplatesOpen(false)}
+        />
+      )}
 
       <Toast message={toast} onDone={hideToast} />
     </>

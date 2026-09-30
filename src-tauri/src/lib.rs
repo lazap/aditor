@@ -3,6 +3,7 @@ mod agents;
 mod fs;
 mod git;
 mod pty;
+mod settings;
 
 use std::sync::Arc;
 
@@ -37,6 +38,8 @@ pub fn run() {
             accounts::claude_account_switch,
             accounts::claude_account_rename,
             accounts::claude_account_forget,
+            settings::settings_read,
+            settings::settings_write,
         ])
         // Agents run in their own process groups, so closing the window does not
         // hang them up -- without this they survive the app that spawned them.

@@ -59,6 +59,42 @@ const ptyKillAll = () => invoke<void>("pty_kill_all");
 const REAPED = "__aditorOrphansReaped";
 
 /**
+ * The session the agent pane is currently showing, so text can be sent to it
+ * from outside that pane -- which is how a prompt template gets typed in.
+ *
+ * On `window` for the same reason as `REAPED` below: Fast Refresh re-evaluates
+ * module scope but leaves TerminalPane's spawn effect alone, so a module-level
+ * variable would go null in dev and stay null until the next respawn.
+ */
+const ACTIVE = "__aditorActiveSession";
+
+export function setActiveSession(id: string | null): void {
+  (window as unknown as Record<string, string | null>)[ACTIVE] = id;
+}
+
+export const activeSession = (): string | null =>
+  (window as unknown as Record<string, string | null>)[ACTIVE] ?? null;
+
+/**
+ * Type `text` into the running agent, as a paste rather than as keystrokes.
+ *
+ * The bracketed-paste markers are what make a multi-line template arrive as one
+ * block: a bare newline written to the PTY is Enter, which would submit the
+ * turn halfway through the prompt. Inside the markers a TUI treats the run as
+ * pasted text and leaves it in the input line, un-sent, which is the whole
+ * point of a template.
+ *
+ * False means there was no session to write to.
+ */
+export async function ptyWriteActive(text: string): Promise<boolean> {
+  const id = activeSession();
+  if (!id) return false;
+  const body = text.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  await ptyWrite(id, `\x1b[200~${body}\x1b[201~`);
+  return true;
+}
+
+/**
  * Reap sessions left over from a previous page context, at most once per page.
  *
  * A page reload throws away the JS context without running React's effect

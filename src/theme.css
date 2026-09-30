@@ -1412,10 +1412,6 @@ button.cwd:hover {
 
 /* ---- keyboard shortcuts ---- */
 
-.shortcuts-card {
-  max-width: 560px;
-}
-
 .shortcuts-group {
   display: flex;
   flex-direction: column;
@@ -1509,7 +1505,363 @@ button.cwd:hover {
   color: var(--accent);
 }
 
-.shortcuts-hint {
+/* ---- settings dialog ---- */
+
+/* Wider than the other cards: the templates tab is a list beside an editor,
+   and either one alone is too narrow to work in. */
+.settings-card {
+  max-width: 760px;
+}
+
+.settings-hint {
   margin: 0;
   color: var(--fg-dim);
+}
+
+.settings-hint code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fg);
+}
+
+.settings-body {
+  display: grid;
+  grid-template-columns: 150px 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-tab {
+  appearance: none;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  text-align: left;
+  padding: 6px 10px;
+  cursor: pointer;
+}
+
+.settings-tab:hover {
+  background: #22262f;
+  color: var(--fg);
+}
+
+.settings-tab[data-active="true"] {
+  background: var(--bg-raised);
+  color: var(--fg);
+}
+
+.settings-tab:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* px, not vh: the project chooser measures a card to size the window, and a
+   viewport-relative cap in the same overlay would be one more thing feeding
+   back into that measurement. */
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 360px;
+  max-height: 440px;
+  overflow-y: auto;
+}
+
+.settings-tab-actions {
+  display: flex;
+  gap: 8px;
+  padding-top: 4px;
+}
+
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 2px 0;
+}
+
+.setting-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.setting-sub {
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.setting-toggle {
+  appearance: none;
+  flex: 0 0 auto;
+  min-width: 56px;
+  padding: 4px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.setting-toggle[data-on="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.setting-toggle:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ---- prompt templates ---- */
+
+.templates {
+  display: grid;
+  grid-template-columns: 200px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+.templates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.template-row {
+  appearance: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  padding: 5px 8px;
+  cursor: pointer;
+}
+
+.template-row:hover {
+  background: #22262f;
+}
+
+.template-row[data-selected="true"] {
+  background: var(--bg-raised);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.template-row:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+.template-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.template-summary {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+/* The list in the settings tab stacks name over summary; the chooser's does
+   not, because its preview pane already shows the body. */
+.templates .template-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 1px;
+}
+
+.template-asks {
+  flex: 0 0 auto;
+  width: 16px;
+  text-align: center;
+  color: var(--accent);
+}
+
+.template-add {
+  appearance: none;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  padding: 5px 8px;
+  margin-top: 4px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.template-add:hover {
+  border-color: var(--fg-dim);
+  color: var(--fg);
+}
+
+.template-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+
+.template-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.template-field-label {
+  color: var(--fg-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.template-input,
+.template-body,
+.template-filter {
+  appearance: none;
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  font: inherit;
+  padding: 6px 8px;
+}
+
+.template-input:focus,
+.template-body:focus,
+.template-filter:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.template-body,
+.template-preview {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.template-body {
+  min-height: 150px;
+  resize: vertical;
+}
+
+.template-legend {
+  margin: 0;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.template-legend code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--fg);
+}
+
+.template-legend strong {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.template-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.template-act {
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  font: inherit;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.template-act:hover:not(:disabled) {
+  background: #22262f;
+}
+
+.template-act:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.template-delete:hover:not(:disabled) {
+  color: var(--danger);
+}
+
+/* ---- the template chooser ---- */
+
+.templates-card {
+  max-width: 720px;
+}
+
+.template-choose {
+  display: grid;
+  grid-template-columns: 220px 1fr;
+  gap: 12px;
+  align-items: start;
+}
+
+/* Wraps rather than scrolls sideways: this is a prompt being read, not code. */
+.template-preview {
+  margin: 0;
+  min-height: 180px;
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.asks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.ask-field {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.ask-label {
+  flex: 0 0 120px;
+  color: var(--fg-dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }

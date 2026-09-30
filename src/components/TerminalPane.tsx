@@ -5,11 +5,13 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { listen } from "@tauri-apps/api/event";
 import { isReservedForApp } from "../shortcuts/store";
 import {
+  activeSession,
   fromBase64,
   ptyKill,
   ptyResize,
   ptySpawn,
   ptyWrite,
+  setActiveSession,
   type PtyExit,
   type PtyOutput,
 } from "../pty/api";
@@ -123,6 +125,9 @@ export function TerminalPane({
           return;
         }
         sessionId = id;
+        // Published so the prompt-template chooser can type into this session
+        // without a prop that would re-enter this component.
+        setActiveSession(id);
 
         // A session can vanish underneath us (killed, or the agent exited);
         // pty://exit drives the UI, so swallow the write/resize rejection.
@@ -169,6 +174,9 @@ export function TerminalPane({
       window.clearTimeout(resizeTimer);
       observer.disconnect();
       unlisteners.forEach((u) => u());
+      // Only if it is still ours: a respawn publishes the new id before the old
+      // pane's cleanup runs, and clearing unconditionally would blank it.
+      if (sessionId && activeSession() === sessionId) setActiveSession(null);
       if (sessionId) void ptyKill(sessionId);
       termRef.current = null;
       term.dispose();

@@ -11,14 +11,15 @@ export type CommandId =
   | "focus.files"
   | "focus.agent"
   | "account.next"
+  | "prompt.templates"
   | "project.open"
-  | "app.shortcuts";
+  | "app.settings";
 
 export interface ShortcutCommand {
   id: CommandId;
   /** Shown in the shortcuts panel. */
   label: string;
-  group: "Focus" | "Account" | "App";
+  group: "Focus" | "Account" | "Prompt" | "App";
   /** The binding shipped with the app; the user may override it. */
   chord: string;
 }
@@ -32,13 +33,20 @@ export const COMMANDS: readonly ShortcutCommand[] = [
     chord: "mod+shift+a",
     label: "Next Claude Code account",
   },
+  {
+    id: "prompt.templates",
+    group: "Prompt",
+    chord: "mod+shift+p",
+    label: "Prompt templates…",
+  },
   { id: "project.open", group: "App", chord: "mod+o", label: "Open project…" },
-  { id: "app.shortcuts", group: "App", chord: "mod+,", label: "Keyboard shortcuts…" },
+  { id: "app.settings", group: "App", chord: "mod+,", label: "Settings…" },
 ];
 
 export const GROUPS: ReadonlyArray<ShortcutCommand["group"]> = [
   "Focus",
   "Account",
+  "Prompt",
   "App",
 ];
 

@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { FileViewer } from "./FileViewer";
 import { DiffViewer, type DiffLayout } from "./DiffViewer";
 import { BADGE, type ChangeKind } from "../git/api";
-import { STORAGE, loadJSON, saveJSON } from "../config";
+import { patchLayout, useSetting } from "../settings/store";
 
 type Mode = "diff" | "file";
 
@@ -20,9 +20,9 @@ function basename(path: string): string {
 
 export function BottomPane({ path, status, refreshToken, onClose }: Props) {
   const [mode, setMode] = useState<Mode>(status ? "diff" : "file");
-  const [layout, setLayout] = useState<DiffLayout>(() =>
-    loadJSON<DiffLayout>(STORAGE.diffLayout, "unified"),
-  );
+  // Read straight from settings rather than mirrored into state, so the same
+  // preference in the General tab and the buttons here cannot disagree.
+  const layout = useSetting((s) => s.layout.diffLayout);
 
   // Re-pick the default when a different file is opened, but not on every
   // watcher refresh -- an explicit choice should survive the agent's edits.
@@ -31,10 +31,7 @@ export function BottomPane({ path, status, refreshToken, onClose }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path]);
 
-  const chooseLayout = (next: DiffLayout) => {
-    setLayout(next);
-    saveJSON(STORAGE.diffLayout, next);
-  };
+  const chooseLayout = (next: DiffLayout) => patchLayout({ diffLayout: next });
 
   return (
     <div className="viewer">

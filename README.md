@@ -68,12 +68,46 @@ Mac should work but is untested.
 | <kbd>⌘</kbd><kbd>1</kbd> | Focus file tree |
 | <kbd>⌘</kbd><kbd>2</kbd> | Focus agent |
 | <kbd>⌘</kbd><kbd>⇧</kbd><kbd>A</kbd> | Next Claude Code account |
+| <kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd> | Prompt templates… |
 | <kbd>⌘</kbd><kbd>O</kbd> | Open project… |
-| <kbd>⌘</kbd><kbd>,</kbd> | Keyboard shortcuts… |
+| <kbd>⌘</kbd><kbd>,</kbd> | Settings… |
 
-Every one of these is rebindable from the shortcuts panel. Chords bound to the
-app are held back from the agent; everything else goes straight through to the
-terminal. `src/shortcuts/registry.ts` is the source of truth for both halves.
+Every one of these is rebindable from **Settings → Shortcuts**. Chords bound to
+the app are held back from the agent; everything else goes straight through to
+the terminal. `src/shortcuts/registry.ts` is the source of truth for both halves.
+
+## Prompt templates
+
+The prompts you retype every day live in the app instead. <kbd>⌘</kbd><kbd>⇧</kbd><kbd>P</kbd>
+opens the chooser; picking one **types it into the agent without sending it**, so
+you can add whatever else the turn needs and press Enter yourself.
+
+A template can pull in what Aditor already knows, and ask for the rest:
+
+| | |
+|---|---|
+| `{{file}}` | the open file, relative to the workspace |
+| `{{project}}` | the workspace folder's name |
+| `{{branch}}` | the current branch |
+| `{{?label}}` | asked for in the chooser before inserting |
+
+So `Explain what {{file}} does, then list the edge cases it misses.` goes in
+already filled out, and `Write tests for {{?what}} in {{file}}` stops to ask.
+
+Aditor ships six to start with. Edit, reorder and add your own in **Settings →
+Prompt templates**; nothing there is privileged, including the ones that came
+with the app.
+
+## Settings
+
+<kbd>⌘</kbd><kbd>,</kbd>. Everything Aditor remembers is written to
+`~/.aditor/settings.json`, next to the saved logins in `~/.aditor/accounts/` --
+one owner-only file you can read, back up and carry between machines. Nothing
+lives in the webview's storage.
+
+The file is yours to edit, so it is treated as a suggestion: every field is
+checked on load and falls back to its default, and a file that will not parse at
+all is moved to `settings.json.bad` rather than stopping the app from opening.
 
 ## Build from source
 
@@ -149,12 +183,15 @@ src/                  React frontend
   pty/ fs/ git/       typed wrappers over the Tauri commands
   agents/ accounts/
   shortcuts/          keybinding system
+  settings/           the ~/.aditor/settings.json document, hydrated once
+  templates/          prompt templates and their placeholders
 src-tauri/src/
   pty.rs              agent processes, in their own process groups
   fs.rs               gitignore-aware listing, guarded reads, fs watcher
   git.rs              status and diffs via git2; read-only by design
   agents.rs           session history and token counters, read off disk
   accounts.rs         account switching: login Keychain + ~/.claude.json
+  settings.rs         ~/.aditor/settings.json, as an opaque document
 ```
 
 The Rust side makes no network calls and spawns no subprocesses to gather agent
