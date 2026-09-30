@@ -29,9 +29,19 @@ export interface ProjectState {
 /** Window furniture: sizes and which panels are open. */
 export interface Layout {
   splitFraction: number;
+  /** Width of the file-tree rail. Draggable, like `insightWidth`. */
+  railWidth: number;
   insightOpen: boolean;
   insightWidth: number;
   diffLayout: DiffLayout;
+  /**
+   * Collapsible bands in the agent panel: section id -> open.
+   *
+   * Sparse on purpose. A band the user has never touched is absent, so the
+   * default in `Section` still governs it and a later change to that default
+   * reaches everyone who never had an opinion.
+   */
+  sections: Record<string, boolean>;
 }
 
 export type SettingsTab = "general" | "templates" | "shortcuts";
@@ -74,9 +84,12 @@ export const DEFAULTS: Settings = {
   lastAgent: null,
   layout: {
     splitFraction: 0.55,
+    // Keep in step with `--rail-w`, which styles the rail until a drag lands.
+    railWidth: 240,
     insightOpen: true,
     insightWidth: 300,
     diffLayout: "unified",
+    sections: {},
   },
   settingsTab: "general",
 };

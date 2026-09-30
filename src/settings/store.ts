@@ -160,6 +160,10 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
         typeof layout.splitFraction === "number"
           ? layout.splitFraction
           : DEFAULTS.layout.splitFraction,
+      railWidth:
+        typeof layout.railWidth === "number"
+          ? layout.railWidth
+          : DEFAULTS.layout.railWidth,
       insightOpen:
         typeof layout.insightOpen === "boolean"
           ? layout.insightOpen
@@ -172,6 +176,7 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
         layout.diffLayout === "split" || layout.diffLayout === "unified"
           ? layout.diffLayout
           : DEFAULTS.layout.diffLayout,
+      sections: sectionState(layout.sections),
     },
     settingsTab:
       src.settingsTab === "general" ||
@@ -202,6 +207,22 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
   }
 
   return { value, changed };
+}
+
+/**
+ * Remembered open/closed state per panel band.
+ *
+ * Only booleans survive, and unknown ids are kept: a band renamed in a later
+ * release leaves a stale key, which costs nothing, whereas dropping keys we do
+ * not recognise would discard the state of any section not currently mounted.
+ */
+function sectionState(raw: unknown): Record<string, boolean> {
+  if (!isObject(raw)) return { ...DEFAULTS.layout.sections };
+  const out: Record<string, boolean> = {};
+  for (const [id, open] of Object.entries(raw)) {
+    if (typeof open === "boolean") out[id] = open;
+  }
+  return out;
 }
 
 function templateList(raw: unknown): PromptTemplate[] {

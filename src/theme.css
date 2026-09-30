@@ -180,12 +180,19 @@ body,
   min-height: 0;
 }
 
+/* A column, not one scrolling block: the tree takes the slack and scrolls on its
+   own, so the changes list below stays on screen however deep the tree gets. */
+/* Width is inline rather than tokenised because it is draggable; the token is
+   only the default. Mirrors `.insight` on the other side of the main column. */
 .rail {
   width: var(--rail-w);
-  flex: 0 0 var(--rail-w);
+  flex: 0 0 auto;
   border-right: 1px solid var(--border);
   background: var(--bg-raised);
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .rail-placeholder {
@@ -274,6 +281,12 @@ body,
   padding: 6px 0;
   font-size: 12.5px;
   user-select: none;
+  /* Takes the rail's slack and scrolls itself. min-height defeats the automatic
+     min-content floor, or a deep tree refuses to shrink and pushes the changes
+     list out of the rail instead of scrolling. */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .tree-row {
@@ -586,9 +599,23 @@ button.cwd:hover {
 
 /* ---- changes list ---- */
 
+/* Sits under the tree, against the bottom of the rail. Capped rather than free:
+   a repo with a hundred dirty files must not squeeze the tree to nothing, and
+   the header stays put because only the list below it scrolls. */
 .changes {
-  border-bottom: 1px solid var(--border);
+  flex: 0 0 auto;
+  max-height: 45%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-top: 1px solid var(--border);
   padding-bottom: 4px;
+}
+
+.changes-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
 }
 
 .changes-header {
@@ -596,6 +623,8 @@ button.cwd:hover {
   align-items: center;
   gap: 4px;
   width: 100%;
+  /* Never gives up height to the scrolling list beneath it. */
+  flex: 0 0 auto;
   appearance: none;
   border: none;
   background: transparent;
@@ -927,14 +956,17 @@ button.cwd:hover {
   overflow: auto;
 }
 
-.insight-resizer {
+.insight-resizer,
+.rail-resizer {
   flex: 0 0 5px;
   cursor: col-resize;
   background: transparent;
 }
 
 .insight-resizer:hover,
-.insight-resizer[data-dragging="true"] {
+.insight-resizer[data-dragging="true"],
+.rail-resizer:hover,
+.rail-resizer[data-dragging="true"] {
   background: var(--border);
 }
 
@@ -1001,6 +1033,42 @@ button.cwd:hover {
   padding-bottom: 6px;
 }
 
+/* A band's heading. Typography matches .changes-header, but the row itself is
+   not the control: the button inside is, so an action can sit beside it. */
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px 6px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.section-toggle {
+  flex: 1 1 auto;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  appearance: none;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+
+.section-toggle:hover,
+.section-toggle:focus-visible {
+  color: var(--fg);
+  outline: none;
+}
+
 .insight-empty,
 .insight-note,
 .changes-empty {
@@ -1014,7 +1082,6 @@ button.cwd:hover {
 
 .insight-now {
   padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
   background: #223046;
   box-shadow: inset 2px 0 0 var(--accent);
 }

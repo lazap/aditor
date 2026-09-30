@@ -52,6 +52,15 @@ const AGENT_DEBOUNCE_MS = 400;
 const INSIGHT_MIN = 220;
 const INSIGHT_MAX = 480;
 
+/** Narrower floor than the panel's: the rail holds paths, not prose. */
+const RAIL_MIN = 160;
+const RAIL_MAX = 480;
+
+const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
+
+/** Which pane edge is being dragged, if any. */
+type Dragging = "rail" | "insight" | null;
+
 /** A tooltip that names the chord, and stays honest once it is rebound. */
 function chordHint(text: string, id: CommandId): string {
   const chord = chordFor(id);
@@ -89,7 +98,8 @@ export default function App() {
   const [insightWidth, setInsightWidth] = useState(
     () => settings().layout.insightWidth,
   );
-  const [resizing, setResizing] = useState(false);
+  const [railWidth, setRailWidth] = useState(() => settings().layout.railWidth);
+  const [resizing, setResizing] = useState<Dragging>(null);
   /** Bumped by `agents://changed`, separately from the workspace watcher. */
   const [agentsToken, setAgentsToken] = useState(0);
 
@@ -227,21 +237,35 @@ export default function App() {
     };
   }, []);
 
-  // Dragging the panel edge. A horizontal twin of SplitPane's divider rather
+  // Dragging either pane edge. A horizontal twin of SplitPane's divider rather
   // than a generalisation of it: SplitPane wraps the terminal, and reshaping it
   // risks the remount that would kill the PTY.
+  //
+  // The rail measures from the left edge and the panel from the right, so each
+  // one grows towards the pointer. Settings are written on release rather than
+  // per move: a drag is one decision, not a hundred.
   useEffect(() => {
     if (!resizing) return;
-    const move = (e: PointerEvent) =>
-      setInsightWidth(
-        Math.min(INSIGHT_MAX, Math.max(INSIGHT_MIN, window.innerWidth - e.clientX)),
-      );
+    const rail = resizing === "rail";
+    const move = (e: PointerEvent) => {
+      if (rail) setRailWidth(clamp(e.clientX, RAIL_MIN, RAIL_MAX));
+      else
+        setInsightWidth(
+          clamp(window.innerWidth - e.clientX, INSIGHT_MIN, INSIGHT_MAX),
+        );
+    };
     const up = () => {
-      setResizing(false);
-      setInsightWidth((w) => {
-        patchLayout({ insightWidth: w });
-        return w;
-      });
+      setResizing(null);
+      if (rail)
+        setRailWidth((w) => {
+          patchLayout({ railWidth: w });
+          return w;
+        });
+      else
+        setInsightWidth((w) => {
+          patchLayout({ insightWidth: w });
+          return w;
+        });
     };
     window.addEventListener("pointermove", move);
     window.addEventListener("pointerup", up);
@@ -305,6 +329,13 @@ export default function App() {
     if (state.lastAgent) setAgentPref(state.lastAgent);
     setExitCode(undefined);
     setWorkspace(root);
+    // Reopening the project that is already open sets `workspace` to the string
+    // it already holds, so React bails out and every effect keyed on it stays
+    // put -- including the one that fetches git status. `setRepo(null)` above
+    // would then strand the changes list empty until the app restarted. The
+    // token is the one dep those effects share, so bumping it reloads the tree
+    // and the status whether or not the path actually changed.
+    setRefreshToken((t) => t + 1);
     setPicking(false);
   }, []);
 
@@ -534,20 +565,9 @@ export default function App() {
         </header>
 
         <div className="body">
-          <aside className="rail">
+          <aside className="rail" style={{ width: railWidth }}>
             {workspace ? (
               <>
-                <ChangesList
-                  files={repo?.files ?? []}
-                  root={workspace}
-                  // null = status not back yet, or it failed. Assume a repo so
-                  // the transient body reads "No changes" rather than accusing
-                  // a real repo of not being one.
-                  isRepo={repo === null || repo.isRepo}
-                  selected={openFile}
-                  recent={recent}
-                  onSelect={selectFile}
-                />
                 <FileTree
                   root={workspace}
                   selected={openFile}
@@ -559,11 +579,33 @@ export default function App() {
                   recent={recent}
                   focusToken={filesFocus}
                 />
+                <ChangesList
+                  files={repo?.files ?? []}
+                  root={workspace}
+                  // null = status not back yet, or it failed. Assume a repo so
+                  // the transient body reads "No changes" rather than accusing
+                  // a real repo of not being one.
+                  isRepo={repo === null || repo.isRepo}
+                  selected={openFile}
+                  recent={recent}
+                  onSelect={selectFile}
+                />
               </>
             ) : (
               <div className="rail-placeholder">Files</div>
             )}
           </aside>
+
+          <div
+            className="rail-resizer"
+            role="separator"
+            aria-orientation="vertical"
+            data-dragging={resizing === "rail"}
+            onPointerDown={(e) => {
+              e.preventDefault();
+              setResizing("rail");
+            }}
+          />
 
           <main className="main">
             {/* Always a SplitPane, even with no file open -- see the note in
@@ -595,10 +637,10 @@ export default function App() {
                 className="insight-resizer"
                 role="separator"
                 aria-orientation="vertical"
-                data-dragging={resizing}
+                data-dragging={resizing === "insight"}
                 onPointerDown={(e) => {
                   e.preventDefault();
-                  setResizing(true);
+                  setResizing("insight");
                 }}
               />
               <aside className="insight" style={{ width: insightWidth }}>

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AgentInfo } from "../pty/api";
 import { AccountSwitcher } from "./AccountSwitcher";
+import { Section } from "./Section";
 import {
   agentSessions,
   approx,
@@ -222,26 +223,27 @@ export function AgentSessions({
 
       {data?.supported && (
         <>
+          {/* Titled, or a row of name + status + elapsed sitting flush under
+              the account list above reads as another account. */}
           {live.length > 0 && (
-            <div className="insight-now">
-              {live.map((s) => (
-                <div className="now-row" key={s.id}>
-                  <span className="isession-dot" aria-hidden />
-                  <span className="now-name">
-                    {s.live?.name ?? s.title ?? s.id.slice(0, 8)}
-                  </span>
-                  <span className="now-status">{statusLabel(s.live!)}</span>
-                  <span className="now-elapsed">{formatElapsed(s.startedAt)}</span>
-                </div>
-              ))}
-            </div>
+            <Section id="running" title="Current sessions" count={live.length}>
+              <div className="insight-now">
+                {live.map((s) => (
+                  <div className="now-row" key={s.id}>
+                    <span className="isession-dot" aria-hidden />
+                    <span className="now-name">
+                      {s.live?.name ?? s.title ?? s.id.slice(0, 8)}
+                    </span>
+                    <span className="now-status">{statusLabel(s.live!)}</span>
+                    <span className="now-elapsed">{formatElapsed(s.startedAt)}</span>
+                  </div>
+                ))}
+              </div>
+            </Section>
           )}
 
           {data.limits && (
-            <div className="insight-section">
-              <div className="changes-header" role="heading" aria-level={2}>
-                Limits
-              </div>
+            <Section id="limits" title="Limits">
               <Meter
                 label="5 hours"
                 pct={data.limits.fiveHourPct}
@@ -258,14 +260,15 @@ export function AgentSessions({
                   ? formatRelative(data.limits.fetchedAtMs)
                   : "unknown"}
               </div>
-            </div>
+            </Section>
           )}
 
-          <div className="insight-section">
-            <div className="changes-header" role="heading" aria-level={2}>
-              Sessions
-              <span className="changes-count">{sessions.length}</span>
-            </div>
+          <Section
+            id="sessions"
+            title="All sessions"
+            count={sessions.length}
+            defaultOpen={false}
+          >
             {sessions.length === 0 ? (
               <div className="insight-empty">
                 No sessions recorded for this project.
@@ -280,31 +283,33 @@ export function AgentSessions({
                 />
               ))
             )}
-          </div>
+          </Section>
 
           {sessions.length > 0 && (
-            <div className="insight-rollup">
-              <div className="rollup-row">
-                <span>Today</span>
-                <span>{formatTokens(totalTokens(today))} tok</span>
-                <span className="rollup-cost">
-                  {approx(today)}
-                  {formatUsd(today.costUsd)}
-                </span>
+            <Section id="totals" title="Totals" defaultOpen={false}>
+              <div className="insight-rollup">
+                <div className="rollup-row">
+                  <span>Today</span>
+                  <span>{formatTokens(totalTokens(today))} tok</span>
+                  <span className="rollup-cost">
+                    {approx(today)}
+                    {formatUsd(today.costUsd)}
+                  </span>
+                </div>
+                <div className="rollup-row rollup-total">
+                  <span>All time</span>
+                  <span>{formatTokens(totalTokens(project))} tok</span>
+                  <span className="rollup-cost">
+                    {approx(project)}
+                    {formatUsd(project.costUsd)}
+                  </span>
+                </div>
+                <div className="insight-note">
+                  API-equivalent estimate. A “≈” marks a figure the agent did
+                  not record itself, which reads low.
+                </div>
               </div>
-              <div className="rollup-row rollup-total">
-                <span>All time</span>
-                <span>{formatTokens(totalTokens(project))} tok</span>
-                <span className="rollup-cost">
-                  {approx(project)}
-                  {formatUsd(project.costUsd)}
-                </span>
-              </div>
-              <div className="insight-note">
-                API-equivalent estimate. A “≈” marks a figure the agent did not
-                record itself, which reads low.
-              </div>
-            </div>
+            </Section>
           )}
         </>
       )}

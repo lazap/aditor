@@ -8,6 +8,7 @@ import {
   type Account,
   type Accounts,
 } from "../accounts/api";
+import { Section } from "./Section";
 
 interface Props {
   /** Bumped by the workspace watcher and by `agents://changed`. */
@@ -83,12 +84,9 @@ export function AccountSwitcher({ refreshToken, onChanged }: Props) {
 
   if (data && !data.supported) {
     return (
-      <div className="insight-section">
-        <div className="changes-header" role="heading" aria-level={2}>
-          Account
-        </div>
+      <Section id="account" title="Account">
         <div className="insight-note">{data.reason}</div>
-      </div>
+      </Section>
     );
   }
 
@@ -96,9 +94,10 @@ export function AccountSwitcher({ refreshToken, onChanged }: Props) {
   const remaining = settlesAt ? Math.max(0, Math.ceil((settlesAt - now) / 1000)) : 0;
 
   return (
-    <div className="insight-section">
-      <div className="changes-header" role="heading" aria-level={2}>
-        Account
+    <Section
+      id="account"
+      title="Account"
+      actions={
         <button
           className="iaccount-add"
           onClick={() => void act(saveCurrentAccount)}
@@ -111,8 +110,8 @@ export function AccountSwitcher({ refreshToken, onChanged }: Props) {
         >
           {data?.activeSaved ? "Update current" : "+ Save current"}
         </button>
-      </div>
-
+      }
+    >
       {error && <div className="tree-error">{error}</div>}
 
       {accounts.length === 0 ? (
@@ -210,7 +209,7 @@ export function AccountSwitcher({ refreshToken, onChanged }: Props) {
           switching, or its login is lost.
         </div>
       )}
-    </div>
+    </Section>
   );
 }
 
