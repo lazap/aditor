@@ -117,14 +117,32 @@ fi
 
 say "releasing $TAG ($SLUG) from $(git rev-parse --short HEAD) via $BACKEND"
 
+# --- SetFile ------------------------------------------------------------
+# Tauri's bundle_dmg.sh calls bare `SetFile` twice to set the disk image's
+# volume icon. /usr/bin/SetFile is not the tool -- it is an Apple shim that
+# forwards through whatever `xcode-select -p` points at, so when that is an
+# Xcode too old for the running macOS the shim aborts (dlopen: Symbol not
+# found: _XPCTypeBool, Xcode's CoreDevice expecting it in the OS's Mercury)
+# and takes the whole DMG step down with it. The real binary shipped with the
+# Command Line Tools is unaffected, so putting it first on PATH makes the bare
+# call resolve to something that works.
+CLT_BIN=/Library/Developer/CommandLineTools/usr/bin
+if ! SetFile -h >/dev/null 2>&1; then
+  if [ -x "$CLT_BIN/SetFile" ] && "$CLT_BIN/SetFile" -h >/dev/null 2>&1; then
+    PATH="$CLT_BIN:$PATH"
+    export PATH
+    say "/usr/bin/SetFile is broken; using $CLT_BIN/SetFile so DMG packaging works."
+  else
+    say "warning: SetFile is broken and no working copy sits under the Command Line"
+    say "         Tools -- expect DMG packaging to fail. See README.md."
+  fi
+fi
+
 # --- Build --------------------------------------------------------------
 BUNDLE=src-tauri/target/release/bundle
 APP="$BUNDLE/macos/Aditor.app"
 
 if [ "$SKIP_BUILD" -eq 0 ]; then
-  # Drop stale artifacts so a previous version's .app or .dmg can never be
-  # picked up and uploaded. This leaves the cargo build cache alone.
-  rm -rf "$BUNDLE"
   say "installing dependencies (npm ci)"
   npm ci
   say "building (npm run tauri build)"
@@ -135,14 +153,22 @@ fi
 
 [ -d "$APP" ] || die "no app bundle at $APP -- the build did not produce one."
 
+# Nothing above clears the previous build, so check rather than assume: the
+# bundle has to carry the version being released. A leftover .app fails here
+# instead of being quietly shipped under the wrong tag.
+APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist" 2>/dev/null || true)
+[ "$APP_VERSION" = "$VERSION" ] || die \
+  "$APP is version ${APP_VERSION:-unknown}, not $VERSION -- it is left over from an earlier build. Move $BUNDLE aside, then re-run without --skip-build."
+
 # --- Package ------------------------------------------------------------
 case "$(uname -m)" in
   arm64) ARCH=aarch64 ;;   # match Tauri's own DMG naming
   *)     ARCH=$(uname -m) ;;
 esac
 
+# Left in place across runs on purpose. Only the assets collected below are
+# ever uploaded, so anything stale sitting here is inert.
 OUT=dist-release
-rm -rf "$OUT"
 mkdir -p "$OUT"
 
 ZIP="$OUT/Aditor_${VERSION}_${ARCH}.zip"
@@ -153,7 +179,9 @@ ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
 ASSETS=("$ZIP")
 
-DMG=$(ls -1 "$BUNDLE"/dmg/*.dmg 2>/dev/null | head -1 || true)
+# Match the version in the filename: an older image still sitting in the
+# bundle directory must not be mistaken for this build's.
+DMG=$(ls -1 "$BUNDLE"/dmg/Aditor_"${VERSION}"_*.dmg 2>/dev/null | head -1 || true)
 if [ -n "$DMG" ]; then
   cp "$DMG" "$OUT/"
   ASSETS+=("$OUT/$(basename "$DMG")")

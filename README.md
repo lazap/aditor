@@ -98,7 +98,7 @@ missing downloads. Artifacts land in `dist-release/` and are attached to it:
 
 - `Aditor_<version>_aarch64.zip` -- the `.app`, packed with `ditto` rather than
   `zip`, which would lose symlinks and resource forks
-- `Aditor_<version>_aarch64.dmg` -- only when DMG packaging succeeded (see below)
+- `Aditor_<version>_aarch64.dmg` -- when DMG packaging succeeds (see below)
 - `SHA256SUMS.txt`
 
 Builds are ad-hoc signed, not notarized, so macOS blocks them on first launch on
@@ -116,23 +116,42 @@ packaging succeeds, `dmg/Aditor_<version>_aarch64.dmg`.
 
 ### If the DMG step fails
 
-`bundle_dmg.sh` shells out to `SetFile` to set the volume icon. A mismatched
-Xcode and Command Line Tools pair makes that abort:
+`bundle_dmg.sh` shells out to `SetFile` twice to set the volume icon, and both
+calls abort:
 
 ```
 dlopen(@rpath/libxcodebuildLoader.dylib): Symbol not found: _XPCTypeBool
-xcode-select: Failed to locate 'SetFile'
+  Referenced from: .../CoreDevice.framework/Versions/A/CoreDevice
+  Expected in:     /Library/Apple/.../Mercury.framework/Versions/A/Mercury
 ```
 
-The `.app` itself is already built and fine at that point -- only the disk image
-is missing, so the zip is a complete substitute; `npm run release` warns and
-ships the zip alone rather than failing. To actually fix it, reinstall the
-Command Line Tools:
+`/usr/bin/SetFile` is not the tool -- it is one of Apple's shims that forwards
+through whatever `xcode-select -p` points at. When that is an Xcode older than
+the running macOS, the shim routes through `xcodebuild`, which crashes on a
+symbol the OS no longer provides where Xcode expects it. The `SetFile` binary
+under the Command Line Tools is untouched by this and runs fine:
 
 ```bash
-sudo rm -rf /Library/Developer/CommandLineTools
-xcode-select --install
+xcode-select -p                                          # the broken Xcode
+/Library/Developer/CommandLineTools/usr/bin/SetFile -h    # works
 ```
+
+`npm run release` detects this and prepends that directory to `PATH` for the
+build, so the bare `SetFile` call resolves to the working binary and the DMG
+gets built. Nothing global changes. If you want the shims themselves fixed,
+either update Xcode to match your macOS, or point them at the Command Line
+Tools -- at the cost of anything that genuinely needs full Xcode:
+
+```bash
+sudo xcode-select -s /Library/Developer/CommandLineTools
+```
+
+Do not reinstall the Command Line Tools to fix this. They are not the problem,
+and deleting them removes the one copy of `SetFile` that still works.
+
+If DMG packaging fails for some other reason the `.app` is still built and
+fine -- only the disk image is missing, and the zip is a complete substitute,
+so `npm run release` warns and ships the zip alone rather than failing.
 
 A failed run can also leave a disk image mounted. `ls /Volumes` will show a
 stray `dmg.XXXXXX`; `hdiutil detach /Volumes/dmg.XXXXXX -force` clears it, and
