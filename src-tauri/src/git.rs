@@ -6,6 +6,8 @@
 //! Writes go through `run_git` instead: pull and push need the user's
 //! credential helpers, SSH agent, hooks, signing and `pull.*` config, all of
 //! which the CLI already honours and git2 would have to rebuild by hand.
+//! An SSH key passphrase is asked for once and kept in the macOS Keychain,
+//! see `ssh_command`.
 //!
 //! Note the repo root and the workspace root are not necessarily the same: you
 //! can open a subdirectory of a repo as the workspace. Status is therefore
@@ -394,16 +396,41 @@ where
 /// dialog. Cancel exits non-zero, and ssh fails with its own message.
 const ASKPASS_SCRIPT: &str = r#"#!/bin/sh
 case "$1" in
-  *yes/no*) hidden="" ;;
-  *) hidden="with hidden answer" ;;
+  *yes/no*) hidden=""; prompt="$1" ;;
+  *) hidden="with hidden answer"
+     prompt="$1
+
+It will be saved in your macOS Keychain." ;;
 esac
 exec /usr/bin/osascript \
   -e 'on run argv' \
   -e 'activate' \
   -e "return text returned of (display dialog (item 1 of argv) default answer \"\" $hidden with title \"Aditor — git\")" \
   -e 'end run' \
-  "$1"
+  "$prompt"
 "#;
+
+/// Apple's ssh reads a key's passphrase from the login Keychain, and after it
+/// decrypts a key with a typed one, saves it there and loads the key into the
+/// agent -- so the askpass dialog comes up once per key, ever. A wrong
+/// passphrase is never saved. `IgnoreUnknown` keeps a non-Apple ssh on PATH
+/// (Homebrew's lacks `UseKeychain`) working, just without the memory.
+///
+/// None when the user picked their own ssh command; theirs wins.
+fn ssh_command(root: &Path) -> Option<&'static str> {
+    if std::env::var_os("GIT_SSH_COMMAND").is_some() || std::env::var_os("GIT_SSH").is_some() {
+        return None;
+    }
+    let configured = match Repository::discover(root) {
+        Ok(repo) => repo.config().ok(),
+        Err(_) => git2::Config::open_default().ok(),
+    }
+    .is_some_and(|c| c.get_string("core.sshCommand").is_ok());
+    if configured {
+        return None;
+    }
+    Some("ssh -o IgnoreUnknown=UseKeychain -o UseKeychain=yes -o AddKeysToAgent=yes")
+}
 
 /// The askpass helper on disk, written once per run. None if it could not be,
 /// in which case ssh keeps its default behaviour.
@@ -436,7 +463,7 @@ fn askpass() -> Option<&'static Path> {
 /// ssh does not honour `GIT_TERMINAL_PROMPT`: with a passphrase-protected key
 /// and an empty agent it opens /dev/tty and waits there -- on the terminal
 /// that launched the app, or on nothing at all. Forcing askpass sends its
-/// prompts to a dialog instead.
+/// prompts to a dialog instead, and `ssh_command` keeps the answer.
 fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
     let mut cmd = Command::new(crate::pty::user_shell());
     cmd.args(["-l", "-c", "exec git \"$@\"", "git"])
@@ -449,6 +476,9 @@ fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, St
 
     if let Some(helper) = askpass() {
         cmd.env("SSH_ASKPASS", helper).env("SSH_ASKPASS_REQUIRE", "force");
+    }
+    if let Some(ssh) = ssh_command(root) {
+        cmd.env("GIT_SSH_COMMAND", ssh);
     }
 
     let mut child = cmd.spawn().map_err(|e| format!("could not run git: {e}"))?;
