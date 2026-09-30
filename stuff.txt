@@ -1,0 +1,7 @@
+- Clickable file paths: add term.registerLinkProvider(...) and detect src/foo.ts:42 to open it in your editor. This is probably the most useful single feature for an editor
+    like this.
+  - Custom OSC sequences: term.parser.registerOscHandler(...) lets processes talk to Aditor out‑of‑band. For example, OSC 7 reports the cwd, OSC 9 or 777 sends notifications,
+    OSC 133 marks where prompts and commands begin and end, and OSC 0/2 sets the title (term.onTitleChange). You could also define your own OSC number for things like "open
+    this file" or "refresh the diff".
+  - Activity detection: watch output bursts or bells (term.onBell) to show a "working / waiting for input" badge or send a macOS notification when the agent needs you.
+  - Scraping the buffer: term.buffer.active lets you read what's on screen, for search or "copy last response".

@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FileViewer } from "./FileViewer";
+import { FileViewer, type LineTarget } from "./FileViewer";
 import { DiffViewer, type DiffLayout } from "./DiffViewer";
 import { BADGE, type ChangeKind } from "../git/api";
 import { patchLayout, useSetting } from "../settings/store";
@@ -14,6 +14,8 @@ interface Props {
   diffInWindow: boolean;
   /** From the tree it opens as the file; from the git list, as the diff. */
   openedAs: Mode;
+  /** A line to show, from a `path:line` clicked in the terminal. */
+  target: LineTarget | null;
   onClose(): void;
 }
 
@@ -53,6 +55,7 @@ export function BottomPane({
   refreshToken,
   diffInWindow,
   openedAs,
+  target,
   onClose,
 }: Props) {
   const pick = (): Mode =>
@@ -66,6 +69,11 @@ export function BottomPane({
     setMode(pick());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, openedAs, diffInWindow]);
+
+  // A line only means something in the file: show it even if the diff was up.
+  useEffect(() => {
+    if (target) setMode("file");
+  }, [target]);
 
   return (
     <div className="viewer">
@@ -115,7 +123,7 @@ export function BottomPane({
       {mode === "diff" && status ? (
         <DiffViewer path={path} layout={layout} refreshToken={refreshToken} />
       ) : (
-        <FileViewer path={path} refreshToken={refreshToken} />
+        <FileViewer path={path} refreshToken={refreshToken} target={target} />
       )}
     </div>
   );

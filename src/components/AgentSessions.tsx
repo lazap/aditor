@@ -25,7 +25,6 @@ interface Props {
   /** An account switch invalidates everything below it: the sessions and
    *  limits on screen belong to the account we just left. */
   onAccountChanged(): void;
-  onClose(): void;
 }
 
 const EMPTY: Totals = {
@@ -164,7 +163,6 @@ export function AgentSessions({
   workspace,
   refreshToken,
   onAccountChanged,
-  onClose,
 }: Props) {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -221,13 +219,6 @@ export function AgentSessions({
 
   return (
     <div className="insight-inner">
-      <div className="insight-bar">
-        <span className="insight-heading">{agent?.label ?? "Agent"}</span>
-        <button className="insight-close" onClick={onClose} title="Hide panel">
-          ✕
-        </button>
-      </div>
-
       {error && <div className="tree-error">{error}</div>}
 
       {agent?.id === "claude" && (

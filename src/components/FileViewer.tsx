@@ -5,7 +5,17 @@ import { readFile, type FileContents } from "../fs/api";
 import { aditorEditorTheme, aditorHighlighting } from "../editor/theme";
 import { loadLanguage } from "../editor/language";
 import { vimMode, vimMotions } from "../editor/vim";
+import { jumpLine, jumpToLine } from "../editor/jumpLine";
 import { useSetting } from "../settings/store";
+
+/**
+ * A line to show. `token` changes on every request, so asking for the same
+ * line twice -- after scrolling away -- still jumps.
+ */
+export interface LineTarget {
+  line: number;
+  token: number;
+}
 
 interface Props {
   path: string;
@@ -13,6 +23,8 @@ interface Props {
   refreshToken: number;
   /** Take focus once built, so the keyboard lands in the file without a click. */
   autoFocus?: boolean;
+  /** Scroll to and mark this line once the file is up. */
+  target?: LineTarget | null;
 }
 
 function formatBytes(n: number): string {
@@ -21,7 +33,7 @@ function formatBytes(n: number): string {
     : `${Math.round(n / 1024)} KB`;
 }
 
-export function FileViewer({ path, refreshToken, autoFocus }: Props) {
+export function FileViewer({ path, refreshToken, autoFocus, target }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [contents, setContents] = useState<FileContents | null>(null);
@@ -34,11 +46,36 @@ export function FileViewer({ path, refreshToken, autoFocus }: Props) {
   const autoFocusRef = useRef(autoFocus);
   autoFocusRef.current = autoFocus;
 
+  // A target belongs to the path it arrived with, and must land on that file's
+  // view -- not on the previous file's, still up while the new one loads. So
+  // the view records which path it shows, and each token is applied once: a
+  // watcher refresh rebuilds the view, and should not yank it back to the line.
+  const pathRef = useRef(path);
+  pathRef.current = path;
+  const targetRef = useRef(target);
+  targetRef.current = target;
+  /** Which path `contents` was read for; it lags `path` while a read is out. */
+  const loadedPathRef = useRef<string | null>(null);
+  const viewPathRef = useRef<string | null>(null);
+  const jumpedRef = useRef<number | null>(null);
+  const jump = () => {
+    const view = viewRef.current;
+    const t = targetRef.current;
+    if (!view || !t || t.token === jumpedRef.current) return;
+    if (viewPathRef.current !== pathRef.current) return;
+    jumpedRef.current = t.token;
+    jumpToLine(view, t.line);
+  };
+
   useEffect(() => {
     let stale = false;
     setError(null);
     readFile(path)
-      .then((c) => !stale && setContents(c))
+      .then((c) => {
+        if (stale) return;
+        loadedPathRef.current = path;
+        setContents(c);
+      })
       .catch((e) => !stale && setError(String(e)));
     return () => {
       stale = true;
@@ -48,6 +85,9 @@ export function FileViewer({ path, refreshToken, autoFocus }: Props) {
   useEffect(() => {
     const host = hostRef.current;
     if (!host || contents?.kind !== "text") return;
+    // Still the previous file's text: wait for this one's rather than dress
+    // the old text in the new file's language.
+    if (loadedPathRef.current !== path) return;
 
     let disposed = false;
     const text = contents.text;
@@ -64,6 +104,7 @@ export function FileViewer({ path, refreshToken, autoFocus }: Props) {
         // Read-only for now; writable buffers are bucket 4.
         EditorState.readOnly.of(true),
         vimMode.of(vimMotions(vimRef.current)),
+        jumpLine,
         ...lang,
       ];
 
@@ -72,13 +113,20 @@ export function FileViewer({ path, refreshToken, autoFocus }: Props) {
         state: EditorState.create({ doc: text, extensions }),
         parent: host,
       });
+      viewPathRef.current = path;
       if (autoFocusRef.current) viewRef.current.focus();
+      jump();
     })();
 
     return () => {
       disposed = true;
     };
   }, [contents, path]);
+
+  // The file may already be up (another line in the open file), or not yet, in
+  // which case the build above takes the jump when it lands.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  useEffect(() => jump(), [target?.token]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: vimMode.reconfigure(vimMotions(vim)) });

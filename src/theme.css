@@ -1216,12 +1216,41 @@ button.cwd:hover {
  * Mirrors `.rail` on the other side of the main column. Width is inline rather
  * than tokenised because it is draggable; the token is only the default.
  */
+/* The panel, then its tab strip on the window edge. Only the panel scrolls. */
 .insight {
   width: var(--insight-w);
   flex: 0 0 auto;
   border-left: 1px solid var(--border);
   background: var(--bg-raised);
+  display: flex;
+  flex-direction: row;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.insight > .insight-inner {
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: auto;
+}
+
+.insight-body[hidden] {
+  display: none;
+}
+
+/* `.rail-tabs`, mirrored: border and selection bar on the other side. */
+.insight-tabs {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+
+.insight-tabs .rail-tab[aria-selected="true"]::before {
+  left: auto;
+  right: -4px;
+}
+
+.insight-tabs .rail-tab-badge {
+  right: -6px;
 }
 
 .insight-resizer,
@@ -2240,4 +2269,64 @@ button.cwd:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* ---- agent tasks ---- */
+
+.tasks {
+  padding: 4px 0 8px;
+}
+
+.task-list {
+  list-style: none;
+  margin: 0;
+  padding: 0 4px;
+}
+
+.task-row {
+  display: flex;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.task-status {
+  flex: 0 0 12px;
+  text-align: center;
+  color: var(--fg-dim);
+}
+
+.task-body {
+  min-width: 0;
+}
+
+.task-title {
+  color: var(--fg);
+  overflow-wrap: anywhere;
+}
+
+.task-detail {
+  color: var(--fg-dim);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.task-row[data-status="in_progress"] {
+  background: #22262f;
+}
+
+.task-row[data-status="in_progress"] .task-status {
+  color: var(--accent);
+}
+
+.task-row[data-status="completed"] .task-status {
+  color: var(--st-added);
+}
+
+.task-row[data-status="completed"] .task-title {
+  color: var(--fg-dim);
+  text-decoration: line-through;
+  text-decoration-color: var(--border);
 }

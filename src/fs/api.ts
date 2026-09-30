@@ -38,3 +38,11 @@ export const fsDebounceMs = () => invoke<number>("fs_debounce_ms");
  */
 export const dirsExist = (paths: string[]) =>
   invoke<boolean[]>("dirs_exist", { paths });
+
+/**
+ * For each path-like string the agent printed, the canonical absolute path of
+ * the workspace file it names, or null. What the terminal's link provider asks
+ * before underlining anything.
+ */
+export const resolveFileLinks = (candidates: string[]) =>
+  invoke<(string | null)[]>("resolve_file_links", { candidates });

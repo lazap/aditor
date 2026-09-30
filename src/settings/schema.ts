@@ -35,6 +35,9 @@ export type KeyboardMode = "standard" | "vim";
 /** Which panel the left rail shows. */
 export type RailTab = "files" | "git";
 
+/** Which tab the right-hand agent panel shows. */
+export type InsightTab = "info" | "tasks";
+
 /** Window furniture: sizes and which panels are open. */
 export interface Layout {
   splitFraction: number;
@@ -43,6 +46,7 @@ export interface Layout {
   railTab: RailTab;
   insightOpen: boolean;
   insightWidth: number;
+  insightTab: InsightTab;
   diffLayout: DiffLayout;
   diffDisplay: DiffDisplay;
   /** Where a file picked in the tree opens; the git list goes by `diffDisplay`. */
@@ -78,6 +82,8 @@ export interface Settings {
   lastAgent: string | null;
   layout: Layout;
   keyboardMode: KeyboardMode;
+  /** Underline file paths in the agent terminal and open them on click. */
+  terminalFileLinks: boolean;
   /** Which tab the Settings dialog opens on. */
   settingsTab: SettingsTab;
 }
@@ -103,11 +109,13 @@ export const DEFAULTS: Settings = {
     railTab: "files",
     insightOpen: true,
     insightWidth: 300,
+    insightTab: "info",
     diffLayout: "unified",
     diffDisplay: "window",
     fileDisplay: "window",
     sections: {},
   },
   keyboardMode: "standard",
+  terminalFileLinks: true,
   settingsTab: "general",
 };

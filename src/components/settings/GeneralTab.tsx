@@ -8,7 +8,7 @@ import { patch, patchLayout, useSettings } from "../../settings/store";
  * -- and each reads the same field, so they cannot drift apart.
  */
 export function GeneralTab() {
-  const { layout, keyboardMode } = useSettings();
+  const { layout, keyboardMode, terminalFileLinks } = useSettings();
 
   return (
     <>
@@ -117,6 +117,26 @@ export function GeneralTab() {
             Vim
           </button>
         </div>
+      </div>
+
+      <div className="picker-section-label">Terminal</div>
+      <div className="setting-row">
+        <span className="setting-label">
+          Clickable file paths
+          <span className="setting-sub">
+            Underline paths the agent prints and open them on click. Only reads
+            the line under the mouse, never the output stream.
+          </span>
+        </span>
+        <button
+          className="setting-toggle"
+          role="switch"
+          aria-checked={terminalFileLinks}
+          data-on={terminalFileLinks}
+          onClick={() => patch({ terminalFileLinks: !terminalFileLinks })}
+        >
+          {terminalFileLinks ? "On" : "Off"}
+        </button>
       </div>
 
       <div className="picker-section-label">Agent panel</div>

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { DiffViewer } from "./DiffViewer";
-import { FileViewer } from "./FileViewer";
+import { FileViewer, type LineTarget } from "./FileViewer";
 import { DiffLayoutToggle } from "./BottomPane";
 import { BADGE, gitStatus, type ChangeKind } from "../git/api";
 import { fsDebounceMs } from "../fs/api";
@@ -15,6 +15,11 @@ const initialPath = (): string =>
 const initialMode = (): ViewerMode =>
   new URLSearchParams(location.search).get("mode") === "file" ? "file" : "diff";
 
+const initialTarget = (): LineTarget | null => {
+  const line = Number(new URLSearchParams(location.search).get("line"));
+  return line > 0 ? { line, token: 0 } : null;
+};
+
 /**
  * One file -- its diff, or the file itself -- in a window of its own.
  *
@@ -25,6 +30,7 @@ const initialMode = (): ViewerMode =>
 export function DiffWindow({ onClose }: { onClose(): void }) {
   const [path, setPath] = useState(initialPath);
   const [mode, setMode] = useState(initialMode);
+  const [target, setTarget] = useState(initialTarget);
   const [refreshToken, setRefreshToken] = useState(0);
   /** undefined = not back yet; null = no longer changed. */
   const [status, setStatus] = useState<ChangeKind | null | undefined>(undefined);
@@ -52,6 +58,9 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
     const unlisten = listen<ViewerTarget>(DIFF_PATH, ({ payload }) => {
       setPath(payload.path);
       setMode(payload.mode);
+      setTarget(
+        payload.line ? { line: payload.line, token: Date.now() } : null,
+      );
       setStatus(undefined);
       void getCurrentWindow().setTitle(basename(payload.path));
     });
@@ -128,7 +137,12 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
       </div>
 
       {mode === "file" && (
-        <FileViewer path={path} refreshToken={refreshToken} autoFocus />
+        <FileViewer
+          path={path}
+          refreshToken={refreshToken}
+          target={target}
+          autoFocus
+        />
       )}
       {mode === "diff" && status === null && (
         <div className="viewer-message">No changes to diff</div>

@@ -39,6 +39,8 @@ git2 = "0.21"
 libc = "0.2"
 # The live limits refresh in `agents.rs` -- its only network call.
 ureq = { version = "3", features = ["json"] }
+# The MCP server in `mcp.rs`: a blocking loopback listener on its own thread.
+tiny_http = "0.12"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

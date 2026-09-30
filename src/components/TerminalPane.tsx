@@ -4,6 +4,8 @@ import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
 import { listen } from "@tauri-apps/api/event";
 import { isReservedForApp } from "../shortcuts/store";
+import { useSetting } from "../settings/store";
+import { createFileLinkProvider } from "../pty/fileLinks";
 import {
   activeSession,
   fromBase64,
@@ -49,6 +51,8 @@ interface Props {
   /** Bumping this takes the caret, without touching the session. */
   focusToken: number;
   onExit(code: number | null): void;
+  /** A file path in the output was clicked; `line` when it carried one. */
+  onOpenPath(path: string, line?: number): void;
 }
 
 export function TerminalPane({
@@ -57,12 +61,23 @@ export function TerminalPane({
   generation,
   focusToken,
   onExit,
+  onOpenPath,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   // Reachable from outside the spawn effect, so focusing never goes near the
   // dependencies that kill and respawn the PTY.
   const termRef = useRef<Terminal | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * The live terminal as state, for the link effect below: it has to re-run
+   * when a respawn replaces the terminal, and a ref change would not tell it.
+   */
+  const [liveTerm, setLiveTerm] = useState<Terminal | null>(null);
+  const fileLinks = useSetting((s) => s.terminalFileLinks);
+  // Read at click time rather than depended on: any new dependency of the spawn
+  // effect is one more way to kill and restart the agent.
+  const onOpenPathRef = useRef(onOpenPath);
+  onOpenPathRef.current = onOpenPath;
 
   useEffect(() => {
     const host = hostRef.current;
@@ -87,6 +102,7 @@ export function TerminalPane({
       macOptionIsMeta: true, // Opt-arrow does word motion instead of emitting ø∂
     });
     termRef.current = term;
+    setLiveTerm(term);
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.open(host);
@@ -179,9 +195,23 @@ export function TerminalPane({
       if (sessionId && activeSession() === sessionId) setActiveSession(null);
       if (sessionId) void ptyKill(sessionId);
       termRef.current = null;
+      setLiveTerm(null);
       term.dispose();
     };
   }, [command, cwd, generation, onExit]);
+
+  // Separate from the spawn effect for the same reason as focus below: turning
+  // the setting on or off adds or drops the provider on the live terminal and
+  // leaves the agent alone.
+  useEffect(() => {
+    if (!liveTerm || !fileLinks) return;
+    const provider = liveTerm.registerLinkProvider(
+      createFileLinkProvider(liveTerm, (path, line) =>
+        onOpenPathRef.current(path, line),
+      ),
+    );
+    return () => provider.dispose();
+  }, [liveTerm, fileLinks]);
 
   // Its own effect, and `focusToken` stays out of the one above: adding it
   // there would tear down the PTY and restart the agent on every ⌘3.

@@ -22,6 +22,8 @@ use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_s
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
+use crate::mcp::McpServer;
+
 /// Flush pending PTY output at least this often. One event per read syscall
 /// floods the IPC bridge when an agent dumps a long file; batching keeps
 /// scrollback smooth without adding latency you can perceive.
@@ -146,7 +148,7 @@ const FOREIGN_TERMINAL_VARS: [&str; 5] = [
 /// `command` is None -- a branch nothing reaches while the registry is all
 /// agents. `-l` sources the login profile, which is what makes the user's real
 /// PATH (and therefore the agent binaries) visible.
-fn shell_command(command: Option<&str>, cwd: &str) -> CommandBuilder {
+fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder {
     let mut cmd = CommandBuilder::new(user_shell());
     match command {
         Some(c) => {
@@ -161,9 +163,9 @@ fn shell_command(command: Option<&str>, cwd: &str) -> CommandBuilder {
             //
             // `exec` keeps the process tree flat: without it zsh stays as a
             // parent, and the ChildKiller would signal the shell instead of the
-            // agent. Commands come from a fixed registry of bare binary names,
-            // so there is nothing to quote here.
-            cmd.args(["-l", "-c", &format!("stty -echo 2>/dev/null; exec {c}")]);
+            // agent. Commands come from a fixed registry of bare binary names;
+            // `args` is already shell-quoted by `agent_args`.
+            cmd.args(["-l", "-c", &format!("stty -echo 2>/dev/null; exec {c}{args}")]);
         }
         None => {
             // Dormant: see the note above. An interactive shell needs ECHO left
@@ -216,10 +218,37 @@ fn flush(app: &AppHandle, id: &str, pending: &mut Vec<u8>) {
     pending.clear();
 }
 
+/// Quote for a POSIX shell: single quotes, with any `'` closed and reopened.
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Told to Claude alongside the MCP config, or it keeps its plan in its own
+/// built-in todo list and the Tasks tab never hears of it.
+const TASKS_NUDGE: &str = "You are running inside Aditor. Whenever you plan multi-step work \
+    or a task's status changes, also call the aditor `update_tasks` tool with the full task \
+    list, so the user can follow along in Aditor's Tasks panel.";
+
+/// Extra arguments for the agent in PTY `id`, leading space included. Only
+/// Claude Code is wired to Aditor's MCP server today.
+fn agent_args(command: Option<&str>, id: &str, mcp: &McpServer) -> String {
+    match command {
+        Some("claude") => format!(
+            // `--mcp-config` is variadic, so it goes last: anything after it
+            // that is not a flag would be read as one more config.
+            " --append-system-prompt {} --mcp-config {}",
+            sh_quote(TASKS_NUDGE),
+            sh_quote(&mcp.config_for(id)),
+        ),
+        _ => String::new(),
+    }
+}
+
 #[tauri::command]
 pub fn pty_spawn(
     app: AppHandle,
     registry: State<'_, Arc<PtyRegistry>>,
+    mcp: State<'_, McpServer>,
     command: Option<String>,
     cwd: String,
     cols: u16,
@@ -234,14 +263,16 @@ pub fn pty_spawn(
         })
         .map_err(|e| format!("openpty failed: {e}"))?;
 
+    // Allocated before the spawn: the agent's MCP URL carries it.
+    let id = registry.new_id();
+    let args = agent_args(command.as_deref(), &id, &mcp);
     let mut child = pair
         .slave
-        .spawn_command(shell_command(command.as_deref(), &cwd))
+        .spawn_command(shell_command(command.as_deref(), &args, &cwd))
         .map_err(|e| format!("spawn failed: {e}"))?;
     // The slave fd must be dropped or the master never sees EOF on child exit.
     drop(pair.slave);
 
-    let id = registry.new_id();
     let mut reader = pair
         .master
         .try_clone_reader()
@@ -352,10 +383,15 @@ pub fn pty_resize(
 /// End the session: signal the child, then drop our handles. The reader thread
 /// sees EOF once the child is gone and emits `pty://exit` on its way out.
 #[tauri::command]
-pub fn pty_kill(registry: State<'_, Arc<PtyRegistry>>, id: String) -> Result<(), String> {
+pub fn pty_kill(
+    registry: State<'_, Arc<PtyRegistry>>,
+    mcp: State<'_, McpServer>,
+    id: String,
+) -> Result<(), String> {
     if let Some(mut session) = registry.sessions.lock().unwrap().remove(&id) {
         let _ = session.killer.kill();
     }
+    mcp.clear(&id);
     Ok(())
 }
 

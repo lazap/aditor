@@ -3,12 +3,13 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { AgentPicker } from "./components/AgentPicker";
-import { AgentSessions } from "./components/AgentSessions";
+import { InsightPanel } from "./components/InsightPanel";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { TerminalPane } from "./components/TerminalPane";
 import { FileTree } from "./components/FileTree";
 import { ChangesList, type GitOp } from "./components/ChangesList";
 import { BottomPane } from "./components/BottomPane";
+import type { LineTarget } from "./components/FileViewer";
 import { SplitPane } from "./components/SplitPane";
 import { Toast, type ToastMessage } from "./components/Toast";
 import { useShortcuts, type Handlers } from "./shortcuts/useShortcuts";
@@ -133,6 +134,8 @@ export default function App() {
   const [openFile, setOpenFile] = useState<string | null>(null);
   /** How the pane's file was opened: as the file (tree) or its diff (git). */
   const [openedAs, setOpenedAs] = useState<ViewerMode>("file");
+  /** The line to show in the pane's file, when it came from a terminal link. */
+  const [openLine, setOpenLine] = useState<LineTarget | null>(null);
   /**
    * The file in the side window, while it is the last one picked. Highlighted
    * in its place of `openFile`, which it does not replace: the pane is left
@@ -608,21 +611,27 @@ export default function App() {
    * list). Each goes to the side window when its setting says so, and only
    * there -- the pane is left as it was.
    */
-  const openPath = useCallback((path: string, as: ViewerMode) => {
+  const openPath = useCallback((path: string, as: ViewerMode, line?: number) => {
     const { diffDisplay, fileDisplay } = settings().layout;
     if ((as === "diff" ? diffDisplay : fileDisplay) === "window") {
-      void openViewerWindow(path, as);
+      void openViewerWindow(path, as, line);
       setDiffFile(path);
       return;
     }
     setDiffFile(null);
     setOpenFile(path);
     setOpenedAs(as);
+    // A fresh token even for the same line: the user may have scrolled away.
+    setOpenLine(line === undefined ? null : { line, token: Date.now() });
     const ws = workspaceRef.current;
     if (ws) saveProjectState(ws, { openFile: path });
   }, []);
   const openFromTree = useCallback((path: string) => openPath(path, "file"), [openPath]);
   const openFromGit = useCallback((path: string) => openPath(path, "diff"), [openPath]);
+  const openFromTerminal = useCallback(
+    (path: string, line?: number) => openPath(path, "file", line),
+    [openPath],
+  );
 
   const closeFile = useCallback(() => {
     setOpenFile(null);
@@ -687,6 +696,7 @@ export default function App() {
           generation={generation}
           focusToken={agentFocus}
           onExit={handleExit}
+          onOpenPath={openFromTerminal}
         />
         {exitCode !== undefined && (
           <div className="exit-overlay">
@@ -886,6 +896,7 @@ export default function App() {
                     refreshToken={refreshToken}
                     diffInWindow={diffInWindow}
                     openedAs={openedAs}
+                    target={openLine}
                     onClose={closeFile}
                   />
                 ) : null
@@ -921,7 +932,7 @@ export default function App() {
                 }}
               />
               <aside className="insight" style={{ width: insightWidth }}>
-                <AgentSessions
+                <InsightPanel
                   agent={active}
                   workspace={workspace}
                   // Both are monotonic, so the sum changes whenever either does.

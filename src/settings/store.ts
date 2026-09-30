@@ -212,6 +212,10 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
         typeof layout.insightWidth === "number"
           ? layout.insightWidth
           : DEFAULTS.layout.insightWidth,
+      insightTab:
+        layout.insightTab === "info" || layout.insightTab === "tasks"
+          ? layout.insightTab
+          : DEFAULTS.layout.insightTab,
       diffLayout:
         layout.diffLayout === "split" || layout.diffLayout === "unified"
           ? layout.diffLayout
@@ -230,6 +234,10 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
       src.keyboardMode === "standard" || src.keyboardMode === "vim"
         ? src.keyboardMode
         : DEFAULTS.keyboardMode,
+    terminalFileLinks:
+      typeof src.terminalFileLinks === "boolean"
+        ? src.terminalFileLinks
+        : DEFAULTS.terminalFileLinks,
     settingsTab:
       src.settingsTab === "general" ||
       src.settingsTab === "templates" ||

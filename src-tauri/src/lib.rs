@@ -2,6 +2,7 @@ mod accounts;
 mod agents;
 mod fs;
 mod git;
+mod mcp;
 mod pty;
 mod settings;
 
@@ -17,6 +18,10 @@ pub fn run() {
         .manage(Arc::new(pty::PtyRegistry::default()))
         .manage(fs::Workspace::default())
         .manage(agents::AgentState::default())
+        .setup(|app| {
+            app.manage(mcp::start(app.handle().clone())?);
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_write,
@@ -29,6 +34,7 @@ pub fn run() {
             fs::read_file,
             fs::fs_debounce_ms,
             fs::dirs_exist,
+            fs::resolve_file_links,
             git::git_status,
             git::git_diff,
             git::git_stage,
@@ -48,6 +54,7 @@ pub fn run() {
             accounts::claude_account_forget,
             settings::settings_read,
             settings::settings_write,
+            mcp::mcp_tasks,
         ])
         // Agents run in their own process groups, so closing the window does not
         // hang them up -- without this they survive the app that spawned them.

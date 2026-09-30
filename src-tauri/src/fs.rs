@@ -203,3 +203,42 @@ pub fn fs_debounce_ms() -> u64 {
 pub fn dirs_exist(paths: Vec<String>) -> Vec<bool> {
     paths.iter().map(|p| Path::new(p).is_dir()).collect()
 }
+
+/// Which of these path-like strings, printed by the agent, name a real file in
+/// the workspace -- the canonical absolute path for each, or None.
+///
+/// This is what decides whether the terminal underlines a token, so a false
+/// positive like `e.g.` or `v1.2.3` is simply a miss here. Relative candidates
+/// resolve against the workspace root, which is the agent's cwd. The same
+/// inside-the-workspace rule as `read_file` applies, since a link to a file the
+/// viewer would refuse is no use.
+///
+/// Called on hover, so it runs off the main thread: a sync command would stall
+/// the webview (and the agent's output with it) for every stat.
+#[tauri::command]
+pub async fn resolve_file_links(
+    ws: State<'_, Workspace>,
+    candidates: Vec<String>,
+) -> Result<Vec<Option<String>>, String> {
+    let root = workspace_root(&ws)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        candidates
+            .iter()
+            .map(|c| {
+                resolve_link(&root, c).or_else(|| {
+                    // `a/src/x.ts` / `b/src/x.ts`, as git diff prints them.
+                    c.strip_prefix("a/")
+                        .or_else(|| c.strip_prefix("b/"))
+                        .and_then(|rest| resolve_link(&root, rest))
+                })
+            })
+            .collect()
+    })
+    .await
+    .map_err(|e| format!("link lookup did not finish: {e}"))
+}
+
+fn resolve_link(root: &Path, candidate: &str) -> Option<String> {
+    let file = root.join(candidate).canonicalize().ok()?;
+    (file.starts_with(root) && file.is_file()).then(|| file.to_string_lossy().to_string())
+}

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
 export interface AgentInfo {
@@ -68,12 +69,28 @@ const REAPED = "__aditorOrphansReaped";
  */
 const ACTIVE = "__aditorActiveSession";
 
+/** Fired on `window` whenever the active session changes. */
+const ACTIVE_CHANGED = "aditor:active-session";
+
 export function setActiveSession(id: string | null): void {
   (window as unknown as Record<string, string | null>)[ACTIVE] = id;
+  window.dispatchEvent(new Event(ACTIVE_CHANGED));
 }
 
 export const activeSession = (): string | null =>
   (window as unknown as Record<string, string | null>)[ACTIVE] ?? null;
+
+/** `activeSession()` as state, for UI that follows the agent across respawns. */
+export function useActiveSession(): string | null {
+  const [id, setId] = useState(activeSession);
+  useEffect(() => {
+    const sync = () => setId(activeSession());
+    sync();
+    window.addEventListener(ACTIVE_CHANGED, sync);
+    return () => window.removeEventListener(ACTIVE_CHANGED, sync);
+  }, []);
+  return id;
+}
 
 /**
  * Type `text` into the running agent, as a paste rather than as keystrokes.

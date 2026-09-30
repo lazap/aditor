@@ -112,6 +112,8 @@ export type ViewerMode = "diff" | "file";
 export interface ViewerTarget {
   path: string;
   mode: ViewerMode;
+  /** 1-based line to show, when opened from a `path:line` in the terminal. */
+  line?: number;
 }
 
 /**
@@ -120,8 +122,13 @@ export interface ViewerTarget {
  * Only one: opening another file retargets it, the way the template picker is
  * handed a new context rather than a second window.
  */
-export async function openViewerWindow(path: string, mode: ViewerMode): Promise<void> {
-  const url = `index.html?view=diff&path=${encodeURIComponent(path)}&mode=${mode}`;
+export async function openViewerWindow(
+  path: string,
+  mode: ViewerMode,
+  line?: number,
+): Promise<void> {
+  const at = line === undefined ? "" : `&line=${line}`;
+  const url = `index.html?view=diff&path=${encodeURIComponent(path)}&mode=${mode}${at}`;
   const created = await showWindow("diff", url, {
     title: basename(path),
     width: 1000,
@@ -130,7 +137,7 @@ export async function openViewerWindow(path: string, mode: ViewerMode): Promise<
     minHeight: 360,
   });
   if (!created) {
-    await emitTo("diff", DIFF_PATH, { path, mode } satisfies ViewerTarget);
+    await emitTo("diff", DIFF_PATH, { path, mode, line } satisfies ViewerTarget);
     return;
   }
   // Main hears when it goes, so the highlight in the tree can follow.
