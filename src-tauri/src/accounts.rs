@@ -369,6 +369,32 @@ fn live_write(credential: &str) -> Result<(), String> {
     }
 }
 
+/// The live OAuth access token, for `agents::agent_refresh_limits` -- the one
+/// place a credential leaves this process, and only in a request to Anthropic.
+/// It never crosses the IPC boundary.
+///
+/// Read only, so an expired token is reported rather than refreshed: rotating
+/// it is Claude Code's job, and doing it here would race Claude Code's own
+/// refresh and could invalidate the refresh token it holds.
+pub(crate) fn live_access_token() -> Result<String, String> {
+    if let Some(reason) = unsupported_reason() {
+        return Err(reason);
+    }
+    // Held so the read cannot land halfway through a switch.
+    let _gate = GATE.lock().unwrap_or_else(|e| e.into_inner());
+    let raw = live_read()?.ok_or_else(|| "Not signed in to Claude Code.".to_string())?;
+    let v: Value = serde_json::from_str(&raw)
+        .map_err(|_| "The stored Claude Code login is unreadable.".to_string())?;
+    let oauth = &v["claudeAiOauth"];
+    if oauth["expiresAt"].as_i64().is_some_and(|t| t <= now_ms()) {
+        return Err("The Claude Code login token has expired. Send a message in Claude to renew it, then refresh.".into());
+    }
+    oauth["accessToken"]
+        .as_str()
+        .map(str::to_string)
+        .ok_or_else(|| "Claude Code isn't signed in with a Claude account.".to_string())
+}
+
 /// How long a running agent can take to pick a swap up. Claude Code caches
 /// Keychain reads for about 30s; a file store is read per request.
 fn settle_seconds() -> u32 {

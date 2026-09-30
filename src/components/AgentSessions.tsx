@@ -3,6 +3,7 @@ import type { AgentInfo } from "../pty/api";
 import { AccountSwitcher } from "./AccountSwitcher";
 import { Section } from "./Section";
 import {
+  agentRefreshLimits,
   agentSessions,
   approx,
   formatElapsed,
@@ -154,8 +155,9 @@ function Row({ session, open, onToggle }: { session: SessionSummary; open: boole
  * What the coding agent has been doing in this project: its sessions, which one
  * is live, and what they cost.
  *
- * Everything shown is read off the agent's own files -- nothing here calls an
- * API or spends anything, which is why it can refresh as freely as the tree.
+ * Everything shown is read off the agent's own files, which is why it can
+ * refresh as freely as the tree. The one exception is the Limits refresh
+ * button, which asks Anthropic directly and only when pressed.
  */
 export function AgentSessions({
   agent,
@@ -167,6 +169,8 @@ export function AgentSessions({
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
+  const [refreshing, setRefreshing] = useState(false);
+  const [limitsError, setLimitsError] = useState<string | null>(null);
 
   const agentId = agent?.id ?? null;
 
@@ -185,8 +189,23 @@ export function AgentSessions({
     };
   }, [agentId, workspace, refreshToken]);
 
+  // The backend keeps what it fetched, so later `agentSessions` calls return it
+  // too; patching it in here just avoids waiting for the next one.
+  const refreshLimits = async () => {
+    if (!agentId) return;
+    setRefreshing(true);
+    setLimitsError(null);
+    try {
+      const limits = await agentRefreshLimits(agentId);
+      setData((d) => d && { ...d, limits });
+    } catch (e) {
+      setLimitsError(String(e));
+    } finally {
+      setRefreshing(false);
+    }
+  };
+
   const sessions = data?.sessions ?? [];
-  const live = useMemo(() => sessions.filter((s) => s.live), [sessions]);
   const project = useMemo(() => sum(sessions), [sessions]);
   const today = useMemo(() => {
     const since = startOfToday();
@@ -223,27 +242,21 @@ export function AgentSessions({
 
       {data?.supported && (
         <>
-          {/* Titled, or a row of name + status + elapsed sitting flush under
-              the account list above reads as another account. */}
-          {live.length > 0 && (
-            <Section id="running" title="Current sessions" count={live.length}>
-              <div className="insight-now">
-                {live.map((s) => (
-                  <div className="now-row" key={s.id}>
-                    <span className="isession-dot" aria-hidden />
-                    <span className="now-name">
-                      {s.live?.name ?? s.title ?? s.id.slice(0, 8)}
-                    </span>
-                    <span className="now-status">{statusLabel(s.live!)}</span>
-                    <span className="now-elapsed">{formatElapsed(s.startedAt)}</span>
-                  </div>
-                ))}
-              </div>
-            </Section>
-          )}
-
           {data.limits && (
-            <Section id="limits" title="Limits">
+            <Section
+              id="limits"
+              title="Limits"
+              actions={
+                <button
+                  className="section-action"
+                  onClick={() => void refreshLimits()}
+                  disabled={refreshing}
+                  title="Fetch current usage from Anthropic"
+                >
+                  {refreshing ? "Refreshing…" : "Refresh"}
+                </button>
+              }
+            >
               <Meter
                 label="5 hours"
                 pct={data.limits.fiveHourPct}
@@ -260,6 +273,7 @@ export function AgentSessions({
                   ? formatRelative(data.limits.fetchedAtMs)
                   : "unknown"}
               </div>
+              {limitsError && <div className="tree-error">{limitsError}</div>}
             </Section>
           )}
 

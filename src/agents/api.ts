@@ -60,6 +60,10 @@ export interface AgentSessions {
 export const agentSessions = (agentId: string) =>
   invoke<AgentSessions>("agent_sessions", { agentId });
 
+/** Fetch the account's limits live. The panel's only network call. */
+export const agentRefreshLimits = (agentId: string) =>
+  invoke<UsageLimits>("agent_refresh_limits", { agentId });
+
 export const agentWatch = (agentId: string) =>
   invoke<void>("agent_watch", { agentId });
 

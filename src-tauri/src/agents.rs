@@ -3,7 +3,8 @@
 //!
 //! Everything here is read off the agent's own on-disk state -- no API calls,
 //! no network, no subprocess -- so the panel is free to refresh as often as the
-//! frontend likes.
+//! frontend likes. The one exception is `agent_refresh_limits`, which only runs
+//! when the user asks for it.
 //!
 //! Only Claude Code is implemented. `sessions_for` is the single dispatch
 //! point: another agent is a new arm there plus a reader module, because the
@@ -19,7 +20,7 @@ use std::sync::Mutex;
 use notify::{EventKind, RecursiveMode, Watcher, recommended_watcher};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::fs::{Workspace, workspace_root};
 
@@ -103,10 +104,10 @@ pub struct SessionSummary {
     totals: Totals,
 }
 
-/// Account-wide rate-limit headroom. Cached by the agent at startup, so it goes
-/// stale between launches -- `fetched_at_ms` is shown alongside it for that
-/// reason.
-#[derive(Serialize)]
+/// Account-wide rate-limit headroom. The agent caches it only at startup and on
+/// `/status`, so it goes stale between those -- `fetched_at_ms` is shown
+/// alongside it for that reason, and `agent_refresh_limits` fetches it live.
+#[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 pub struct UsageLimits {
     five_hour_pct: f64,
@@ -276,6 +277,17 @@ pub struct AgentState {
     watcher: Mutex<Option<Box<dyn Watcher + Send>>>,
     /// What the live watcher currently covers, so a repeat call is a no-op.
     watching: Mutex<Option<PathBuf>>,
+    /// The last limits fetched by `agent_refresh_limits`. Kept here rather than
+    /// written into the agent's config, which is not ours to write, so the next
+    /// panel refresh does not fall back to the older cached figures.
+    fetched_limits: Mutex<Option<FetchedLimits>>,
+}
+
+struct FetchedLimits {
+    /// Whose limits these are. A switch or a `/login` makes them someone
+    /// else's, and they stop being shown.
+    account: Option<String>,
+    limits: UsageLimits,
 }
 
 // --------------------------------------------------------------- folding ---
@@ -576,21 +588,46 @@ fn live_sessions(root: &Path) -> HashMap<String, Live> {
     out
 }
 
-/// Account-wide rate-limit headroom, cached by the agent in its own config.
+/// One window of the agent's utilization block, which has the same shape in its
+/// config cache and in the usage endpoint's response.
+#[derive(Deserialize)]
+struct Window {
+    utilization: Option<f64>,
+    resets_at: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Utilization {
+    five_hour: Option<Window>,
+    seven_day: Option<Window>,
+}
+
+impl UsageLimits {
+    fn new(u: &Utilization, fetched_at_ms: i64) -> Self {
+        let pct = |w: &Option<Window>| w.as_ref().and_then(|w| w.utilization).unwrap_or(0.0);
+        let reset = |w: &Option<Window>| w.as_ref().and_then(|w| w.resets_at.clone());
+        UsageLimits {
+            five_hour_pct: pct(&u.five_hour),
+            five_hour_resets_at: reset(&u.five_hour),
+            seven_day_pct: pct(&u.seven_day),
+            seven_day_resets_at: reset(&u.seven_day),
+            fetched_at_ms,
+        }
+    }
+}
+
+/// What the agent's config says about limits: whose login is live, and the
+/// headroom it last cached.
 ///
 /// That file also holds account identity and machine identifiers. Only the
-/// utilization block is deserialized, and only these five fields leave here.
-fn usage_limits() -> Option<UsageLimits> {
-    #[derive(Deserialize)]
-    struct Window {
-        utilization: Option<f64>,
-        resets_at: Option<String>,
-    }
-    #[derive(Deserialize)]
-    struct Utilization {
-        five_hour: Option<Window>,
-        seven_day: Option<Window>,
-    }
+/// account id and the utilization block are deserialized, and only the five
+/// `UsageLimits` fields leave here.
+struct ConfigLimits {
+    account: Option<String>,
+    cached: Option<UsageLimits>,
+}
+
+fn config_limits() -> Option<ConfigLimits> {
     #[derive(Deserialize)]
     struct Cached {
         #[serde(rename = "fetchedAtMs")]
@@ -598,23 +635,80 @@ fn usage_limits() -> Option<UsageLimits> {
         utilization: Option<Utilization>,
     }
     #[derive(Deserialize)]
+    struct Account {
+        #[serde(rename = "accountUuid")]
+        uuid: Option<String>,
+    }
+    #[derive(Deserialize)]
     struct Config {
         #[serde(rename = "cachedUsageUtilization")]
         cached: Option<Cached>,
+        #[serde(rename = "oauthAccount")]
+        account: Option<Account>,
     }
 
     let text = std::fs::read_to_string(home()?.join(".claude.json")).ok()?;
-    let cached = serde_json::from_str::<Config>(&text).ok()?.cached?;
-    let u = cached.utilization?;
-    let pct = |w: &Option<Window>| w.as_ref().and_then(|w| w.utilization).unwrap_or(0.0);
-    let reset = |w: &Option<Window>| w.as_ref().and_then(|w| w.resets_at.clone());
-    Some(UsageLimits {
-        five_hour_pct: pct(&u.five_hour),
-        five_hour_resets_at: reset(&u.five_hour),
-        seven_day_pct: pct(&u.seven_day),
-        seven_day_resets_at: reset(&u.seven_day),
-        fetched_at_ms: cached.fetched_at_ms.unwrap_or(0),
+    let config = serde_json::from_str::<Config>(&text).ok()?;
+    Some(ConfigLimits {
+        account: config.account.and_then(|a| a.uuid),
+        cached: config.cached.and_then(|c| {
+            let u = c.utilization?;
+            Some(UsageLimits::new(&u, c.fetched_at_ms.unwrap_or(0)))
+        }),
     })
+}
+
+/// The freshest limits we have for the live account: the agent's cache or our
+/// own last fetch, whichever is newer.
+fn usage_limits(state: &AgentState) -> Option<UsageLimits> {
+    let config = config_limits()?;
+    let fetched = state
+        .fetched_limits
+        .lock()
+        .unwrap()
+        .as_ref()
+        .filter(|f| f.account == config.account)
+        .map(|f| f.limits.clone());
+    match (config.cached, fetched) {
+        (Some(c), Some(f)) => Some(if f.fetched_at_ms > c.fetched_at_ms { f } else { c }),
+        (c, f) => c.or(f),
+    }
+}
+
+/// What Claude Code's `/usage` and `/status` ask for. Undocumented, so a
+/// change on Anthropic's side surfaces as an error on the refresh button and
+/// leaves the cached figures in place.
+const USAGE_URL: &str = "https://api.anthropic.com/api/oauth/usage";
+const OAUTH_BETA: &str = "oauth-2025-04-20";
+
+fn fetch_limits() -> Result<UsageLimits, String> {
+    let token = crate::accounts::live_access_token()?;
+    let agent = ureq::Agent::config_builder()
+        .timeout_global(Some(std::time::Duration::from_secs(15)))
+        .build()
+        .new_agent();
+    let mut resp = agent
+        .get(USAGE_URL)
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("anthropic-beta", OAUTH_BETA)
+        .call()
+        .map_err(|e| match e {
+            ureq::Error::StatusCode(401 | 403) => {
+                "Anthropic rejected the login token. Send a message in Claude to renew it, then refresh.".to_string()
+            }
+            ureq::Error::StatusCode(429) => "Too many refreshes. Try again in a minute.".to_string(),
+            ureq::Error::StatusCode(code) => format!("The usage request failed (HTTP {code})."),
+            e => format!("Couldn't reach Anthropic: {e}"),
+        })?;
+    let u: Utilization = resp
+        .body_mut()
+        .read_json()
+        .map_err(|e| format!("Unexpected usage response: {e}"))?;
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0);
+    Ok(UsageLimits::new(&u, now))
 }
 
 /// Everything that passed through the model, cache included.
@@ -675,7 +769,7 @@ fn summarize(id: String, acc: &Accum, live: Option<Live>, fallback_ts: i64) -> S
 }
 
 fn claude_sessions(root: &Path, state: &AgentState) -> AgentSessions {
-    let limits = usage_limits();
+    let limits = usage_limits(state);
     let mut live = live_sessions(root);
     let dir = match project_dir(root, state) {
         Some(d) => d,
@@ -769,6 +863,25 @@ pub fn agent_sessions(
         "claude" => claude_sessions(&root, &state),
         _ => AgentSessions::unsupported(),
     })
+}
+
+/// Fetch the account's limits live, rather than waiting for the agent to
+/// re-cache them. The panel's one network call, made only on request.
+///
+/// Async so the Keychain read and the request run off the UI thread.
+#[tauri::command]
+pub async fn agent_refresh_limits(app: AppHandle, agent_id: String) -> Result<UsageLimits, String> {
+    if agent_id != "claude" {
+        return Err("Limits aren't available for this agent.".into());
+    }
+    // Whose token is about to be used, read before it is.
+    let account = config_limits().and_then(|c| c.account);
+    let limits = tauri::async_runtime::spawn_blocking(fetch_limits)
+        .await
+        .map_err(|e| format!("the refresh did not finish: {e}"))??;
+    *app.state::<AgentState>().fetched_limits.lock().unwrap() =
+        Some(FetchedLimits { account, limits: limits.clone() });
+    Ok(limits)
 }
 
 /// Watch the agent's state so the panel refreshes itself during a turn.

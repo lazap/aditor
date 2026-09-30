@@ -1367,39 +1367,6 @@ button.cwd:hover {
   line-height: 1.5;
 }
 
-/* ---- live strip ---- */
-
-.insight-now {
-  padding: 8px 12px;
-  background: #223046;
-  box-shadow: inset 2px 0 0 var(--accent);
-}
-
-.now-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
-}
-
-.now-row + .now-row {
-  margin-top: 6px;
-}
-
-.now-name {
-  flex: 1 1 auto;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.now-status,
-.now-elapsed {
-  flex: 0 0 auto;
-  color: var(--fg-dim);
-  font-size: 11px;
-}
-
 .isession-dot {
   flex: 0 0 auto;
   width: 6px;
@@ -1444,7 +1411,8 @@ button.cwd:hover {
 
 /* ---- account switcher ---- */
 
-.iaccount-add {
+.iaccount-add,
+.section-action {
   margin-left: auto;
   appearance: none;
   border: none;
@@ -1460,13 +1428,16 @@ button.cwd:hover {
 }
 
 .iaccount-add:hover:not(:disabled),
-.iaccount-add:focus-visible {
+.iaccount-add:focus-visible,
+.section-action:hover:not(:disabled),
+.section-action:focus-visible {
   background: #22262f;
   color: var(--fg);
   outline: none;
 }
 
-.iaccount-add:disabled {
+.iaccount-add:disabled,
+.section-action:disabled {
   opacity: 0.5;
   cursor: default;
 }

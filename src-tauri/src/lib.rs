@@ -40,6 +40,7 @@ pub fn run() {
             git::git_push,
             agents::agent_sessions,
             agents::agent_watch,
+            agents::agent_refresh_limits,
             accounts::claude_accounts,
             accounts::claude_account_save,
             accounts::claude_account_switch,
