@@ -56,25 +56,25 @@ const WINDOW_BG = "#14161a";
  *
  * One of each, ever: a second Settings window would be two editors of the same
  * document. `parent` keeps it above the editor on macOS, the way a dialog sits.
+ * Resolves to the new window, or null when one was already open.
  */
 async function showWindow(
   label: string,
   url: string,
   options: { title: string; width: number; height: number; minWidth: number; minHeight: number },
-): Promise<boolean> {
+): Promise<WebviewWindow | null> {
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
     await existing.setFocus();
-    return false;
+    return null;
   }
-  new WebviewWindow(label, {
+  return new WebviewWindow(label, {
     url,
     ...options,
     center: true,
     parent: "main",
     backgroundColor: WINDOW_BG,
   });
-  return true;
 }
 
 export async function openSettingsWindow(): Promise<void> {
@@ -120,7 +120,19 @@ export async function openDiffWindow(path: string): Promise<void> {
     minWidth: 560,
     minHeight: 360,
   });
-  if (!created) await emitTo("diff", DIFF_PATH, path);
+  if (!created) {
+    await emitTo("diff", DIFF_PATH, path);
+    return;
+  }
+  // Main hears when it goes, so the highlight in the tree can follow.
+  void created.once("tauri://destroyed", () => diffClosed?.());
+}
+
+let diffClosed: (() => void) | null = null;
+
+/** Called whenever a diff window opened from here is destroyed. */
+export function onDiffWindowClosed(fn: () => void): void {
+  diffClosed = fn;
 }
 
 /** Close the diff window, if there is one -- its path belongs to one project. */

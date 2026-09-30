@@ -44,6 +44,7 @@ import { contextFrom } from "./templates/placeholders";
 import {
   closeDiffWindow,
   growWindowToEditor,
+  onDiffWindowClosed,
   openDiffWindow,
   openSettingsWindow,
   openTemplatesWindow,
@@ -129,6 +130,13 @@ export default function App() {
   const [pickError, setPickError] = useState<string | null>(null);
 
   const [openFile, setOpenFile] = useState<string | null>(null);
+  /**
+   * The file in the diff window, while it is the last one picked. Highlighted
+   * in its place of `openFile`, which it does not replace: the pane is left
+   * alone, and this is not restored with the project.
+   */
+  const [diffFile, setDiffFile] = useState<string | null>(null);
+  useEffect(() => onDiffWindowClosed(() => setDiffFile(null)), []);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
   const [refreshToken, setRefreshToken] = useState(0);
   const [repo, setRepo] = useState<RepoStatus | null>(null);
@@ -378,6 +386,7 @@ export default function App() {
     });
     setPickError(null);
     setOpenFile(state.openFile);
+    setDiffFile(null);
     setExpanded(new Set(state.expandedDirs));
     setRecentAt(new Map());
     setRepo(null);
@@ -597,8 +606,10 @@ export default function App() {
     // and only there -- the pane is left as it was.
     if (settings().layout.diffDisplay === "window" && statusesRef.current.has(path)) {
       void openDiffWindow(path);
+      setDiffFile(path);
       return;
     }
+    setDiffFile(null);
     setOpenFile(path);
     const ws = workspaceRef.current;
     if (ws) saveProjectState(ws, { openFile: path });
@@ -793,7 +804,7 @@ export default function App() {
                   <div hidden={railTab !== "files"}>
                     <FileTree
                       root={workspace}
-                      selected={openFile}
+                      selected={diffFile ?? openFile}
                       onSelect={selectFile}
                       refreshToken={refreshToken}
                       expanded={expanded}
@@ -814,7 +825,7 @@ export default function App() {
                       upstream={repo?.upstream ?? null}
                       ahead={repo?.ahead ?? 0}
                       behind={repo?.behind ?? 0}
-                      selected={openFile}
+                      selected={diffFile ?? openFile}
                       recent={recent}
                       onSelect={selectFile}
                       message={commitMessage}
