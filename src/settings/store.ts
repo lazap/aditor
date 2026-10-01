@@ -234,6 +234,10 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
       src.keyboardMode === "standard" || src.keyboardMode === "vim"
         ? src.keyboardMode
         : DEFAULTS.keyboardMode,
+    appearance:
+      src.appearance === "system" || src.appearance === "light" || src.appearance === "dark"
+        ? src.appearance
+        : DEFAULTS.appearance,
     terminalFileLinks:
       typeof src.terminalFileLinks === "boolean"
         ? src.terminalFileLinks

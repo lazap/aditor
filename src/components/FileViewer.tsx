@@ -2,11 +2,12 @@ import { useEffect, useRef, useState } from "react";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { readFile, type FileContents } from "../fs/api";
-import { aditorEditorTheme, aditorHighlighting } from "../editor/theme";
+import { aditorEditorTheme, aditorHighlighting, darkMode, darkModeFor } from "../editor/theme";
 import { loadLanguage } from "../editor/language";
 import { vimMode, vimMotions } from "../editor/vim";
 import { jumpLine, jumpToLine } from "../editor/jumpLine";
 import { useSetting } from "../settings/store";
+import { useTheme } from "../theme";
 
 /**
  * A line to show. `token` changes on every request, so asking for the same
@@ -43,6 +44,10 @@ export function FileViewer({ path, refreshToken, autoFocus, target }: Props) {
   // reconfigures the live view below instead of rebuilding it.
   const vimRef = useRef(vim);
   vimRef.current = vim;
+  // Same arrangement for the theme.
+  const theme = useTheme();
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const autoFocusRef = useRef(autoFocus);
   autoFocusRef.current = autoFocus;
 
@@ -104,6 +109,7 @@ export function FileViewer({ path, refreshToken, autoFocus, target }: Props) {
         // Read-only for now; writable buffers are bucket 4.
         EditorState.readOnly.of(true),
         vimMode.of(vimMotions(vimRef.current)),
+        darkMode.of(darkModeFor(themeRef.current)),
         jumpLine,
         ...lang,
       ];
@@ -131,6 +137,10 @@ export function FileViewer({ path, refreshToken, autoFocus, target }: Props) {
   useEffect(() => {
     viewRef.current?.dispatch({ effects: vimMode.reconfigure(vimMotions(vim)) });
   }, [vim]);
+
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: darkMode.reconfigure(darkModeFor(theme)) });
+  }, [theme]);
 
   useEffect(
     () => () => {

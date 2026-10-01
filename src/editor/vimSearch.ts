@@ -199,8 +199,8 @@ const lastSearch = ViewPlugin.fromClass(
 );
 
 const promptTheme = EditorView.theme({
-  ".cm-panels": { backgroundColor: "#1a1d23", color: "#d7dae0" },
-  ".cm-panels-bottom": { borderTop: "1px solid #262a33" },
+  ".cm-panels": { backgroundColor: "var(--bg-raised)", color: "var(--fg)" },
+  ".cm-panels-bottom": { borderTop: "1px solid var(--border)" },
   ".cm-vim-search": {
     display: "flex",
     padding: "2px 8px",
@@ -216,7 +216,7 @@ const promptTheme = EditorView.theme({
     color: "inherit",
     font: "inherit",
   },
-  ".cm-searchMatch": { backgroundColor: "rgba(224, 175, 104, 0.3)" },
+  ".cm-searchMatch": { backgroundColor: "var(--search-match)" },
 });
 
 export const searchBindings: KeyBinding[] = [

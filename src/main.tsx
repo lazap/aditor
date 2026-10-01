@@ -8,6 +8,7 @@ import { TemplatesWindow } from "./components/TemplatePicker";
 import { DiffWindow } from "./components/DiffWindow";
 import { flush, hydrate, syncWithPeers } from "./settings/store";
 import { adopt } from "./shortcuts/store";
+import { watchTheme } from "./theme";
 
 /**
  * Every window loads this same page; `?view=` says which one it is. Only the
@@ -45,6 +46,8 @@ void hydrate().then(() => {
   // A rebinding made in the Settings window reaches the keymap -- and through
   // it the menu's accelerators -- here.
   syncWithPeers(adopt);
+  // After hydrate, so the first paint is already in the saved theme.
+  watchTheme();
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     root(),
   );
