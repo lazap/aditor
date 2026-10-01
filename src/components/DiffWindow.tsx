@@ -3,7 +3,9 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { DiffViewer } from "./DiffViewer";
 import { FileViewer, type LineTarget } from "./FileViewer";
-import { DiffLayoutToggle } from "./BottomPane";
+import { AnnotateToggle, DiffLayoutToggle } from "./BottomPane";
+import { eventChord } from "../shortcuts/keys";
+import { chordFor } from "../shortcuts/store";
 import { BADGE, gitStatus, type ChangeKind } from "../git/api";
 import { fsDebounceMs } from "../fs/api";
 import { useSetting } from "../settings/store";
@@ -37,6 +39,9 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
   const layout = useSetting((s) => s.layout.diffLayout);
   const vim = useSetting((s) => s.keyboardMode === "vim");
   const closeRef = useRef<HTMLButtonElement>(null);
+  const [annotate, setAnnotate] = useState(false);
+  const [annotateError, setAnnotateError] = useState<string | null>(null);
+  useEffect(() => setAnnotateError(null), [annotate, path]);
 
   // Somewhere for the keyboard to land, so Escape works straight away.
   useEffect(() => closeRef.current?.focus(), []);
@@ -46,6 +51,15 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
   // handler there would never see the key.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
+      // The app's dispatcher lives in the main window; this one answers the
+      // one command that is about what it shows.
+      const chord = eventChord(e);
+      if (chord !== null && chord === chordFor("git.annotate")) {
+        e.preventDefault();
+        setMode("file");
+        setAnnotate((a) => !a);
+        return;
+      }
       if (e.key !== "Escape") return;
       e.preventDefault();
       onClose();
@@ -125,6 +139,12 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
           </button>
         </div>
         {mode === "diff" && status && <DiffLayoutToggle />}
+        {mode === "file" && (
+          <AnnotateToggle on={annotate} onToggle={() => setAnnotate((a) => !a)} />
+        )}
+        {annotate && annotateError && (
+          <span className="viewer-message error viewer-inline">{annotateError}</span>
+        )}
         <span className="viewer-badge">read-only</span>
         <button
           className="viewer-close"
@@ -142,6 +162,8 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
           refreshToken={refreshToken}
           target={target}
           autoFocus
+          annotate={annotate}
+          onAnnotateError={setAnnotateError}
         />
       )}
       {mode === "diff" && status === null && (

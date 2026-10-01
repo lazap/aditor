@@ -1,8 +1,24 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
-import { BADGE, type ChangeKind, type FileStatus } from "../git/api";
+import { BADGE, type ChangeKind, type FileStatus, type RepoOperation } from "../git/api";
+import { formatChord } from "../shortcuts/keys";
+import { chordFor, chordHint } from "../shortcuts/store";
+import { ContextMenu, type MenuAt } from "./ContextMenu";
 
 /** The git write in flight, if any. One at a time, as the backend enforces. */
-export type GitOp = "stage" | "commit" | "pull" | "push" | "checkout" | "fetch";
+export type GitOp =
+  | "stage"
+  | "commit"
+  | "pull"
+  | "push"
+  | "checkout"
+  | "fetch"
+  | "rollback"
+  | "branch"
+  | "merge"
+  | "rebase"
+  | "history"
+  | "tag"
+  | "operation";
 
 const BUSY_LABEL: Record<GitOp, string> = {
   stage: "Staging…",
@@ -11,7 +27,27 @@ const BUSY_LABEL: Record<GitOp, string> = {
   push: "Pushing…",
   checkout: "Switching branch…",
   fetch: "Fetching…",
+  rollback: "Rolling back…",
+  branch: "Updating branches…",
+  merge: "Merging…",
+  rebase: "Rebasing…",
+  history: "Rewriting history…",
+  tag: "Tagging…",
+  operation: "Finishing…",
 };
+
+const OPERATION_LABEL: Record<RepoOperation, string> = {
+  merge: "Merge",
+  rebase: "Rebase",
+  cherryPick: "Cherry-pick",
+  revert: "Revert",
+};
+
+/** A shortcut request from App, aimed at whatever the list's cursor is on. */
+export interface ListRequest {
+  kind: "rollback" | "diff";
+  token: number;
+}
 
 interface Props {
   files: FileStatus[];
@@ -43,6 +79,17 @@ interface Props {
   onCommit(): void;
   onPull(rebase: boolean): void;
   onPush(): void;
+  onRollback(files: FileStatus[]): void;
+  /** The log, filtered to this file's history. */
+  onHistory(path: string): void;
+  /** A merge/rebase/cherry-pick/revert waiting on the user, if any. */
+  operation: RepoOperation | null;
+  onContinue(): void;
+  onAbort(): void;
+  /** ⌘⌥Z / ⌘D: act on the row under the cursor when the list has focus. */
+  request: ListRequest | null;
+  /** Nothing in the list to act on: App falls back to the open file. */
+  onRequestUnhandled(kind: ListRequest["kind"]): void;
 }
 
 /**
@@ -75,8 +122,17 @@ export function ChangesList({
   onCommit,
   onPull,
   onPush,
+  onRollback,
+  onHistory,
+  operation,
+  onContinue,
+  onAbort,
+  request,
+  onRequestUnhandled,
 }: Props) {
   const [pullMenu, setPullMenu] = useState(false);
+  const [menu, setMenu] = useState<MenuAt | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
   const box = useRef<HTMLTextAreaElement>(null);
 
   const staged = files.filter((f) => f.staged !== null);
@@ -150,6 +206,45 @@ export function ChangesList({
     // `tabTarget` is read, not depended on: this must fire on the token alone.
   }, [focusToken]);
 
+  // ⌘⌥Z and ⌘D, as in IntelliJ's commit window: on the row under the cursor
+  // while the list has focus. Anywhere else App picks the target.
+  const lastRequest = useRef(request?.token ?? 0);
+  useEffect(() => {
+    if (!request || request.token === lastRequest.current) return;
+    lastRequest.current = request.token;
+    const focused = !!listRef.current?.contains(document.activeElement);
+    const at = focused ? rows.find((r) => r.key === tabTarget) : undefined;
+    if (request.kind === "diff") {
+      if (at) onSelect(at.f.path);
+      else onRequestUnhandled("diff");
+    } else if (at) onRollback([at.f]);
+    else onRequestUnhandled("rollback");
+    // Fires on the token alone; everything else is read as it is now.
+  }, [request]);
+
+  const openMenu = (e: React.MouseEvent, f: FileStatus, key: string, staged: boolean) => {
+    e.preventDefault();
+    setCursor(key);
+    setMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [
+        { label: "Show Diff", hint: hint("git.showDiff"), run: () => onSelect(f.path) },
+        {
+          label: "Rollback…",
+          hint: hint("git.rollback"),
+          disabled: busy !== null,
+          run: () => onRollback([f]),
+        },
+        staged
+          ? { label: "Unstage", disabled: busy !== null, run: () => onUnstage(f) }
+          : { label: "Stage", disabled: busy !== null, run: () => onStage(f) },
+        "separator",
+        { label: "Show History", run: () => onHistory(f.path) },
+      ],
+    });
+  };
+
   const onKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     // Enter on a row's stage button is the button's.
@@ -207,12 +302,25 @@ export function ChangesList({
         e.currentTarget.focus();
         onSelect(f.path);
       }}
+      onContextMenu={(e) => openMenu(e, f, key, key.startsWith("s:"))}
       title={f.oldPath ? `${rel(f.oldPath)} → ${f.path}` : f.path}
     >
       <span className="tree-status" data-status={kind}>
         {BADGE[kind]}
       </span>
       <span className="changes-path">{rel(f.path)}</span>
+      <button
+        className="changes-act"
+        title="Rollback"
+        aria-label={`Rollback: ${rel(f.path)}`}
+        disabled={busy !== null}
+        onClick={(e) => {
+          e.stopPropagation();
+          onRollback([f]);
+        }}
+      >
+        ↺
+      </button>
       <button
         className="changes-act"
         title={act.title}
@@ -233,7 +341,37 @@ export function ChangesList({
       <div className="changes-header" role="heading" aria-level={2}>
         Changes
         {isRepo && <span className="changes-count">{files.length}</span>}
+        {isRepo && files.length > 0 && (
+          <button
+            className="changes-act changes-header-act"
+            title={tip("Rollback all changes", "git.rollback")}
+            aria-label="Rollback all changes"
+            disabled={busy !== null}
+            onClick={() => onRollback(files)}
+          >
+            ↺
+          </button>
+        )}
       </div>
+
+      {operation && (
+        <div className="changes-operation" role="status">
+          <span>
+            {OPERATION_LABEL[operation]} in progress
+            {files.some((f) => f.status === "conflicted")
+              ? " — resolve the conflicts (!) and stage them."
+              : "."}
+          </span>
+          <div className="changes-operation-actions">
+            <button disabled={busy !== null} onClick={onContinue}>
+              Continue
+            </button>
+            <button disabled={busy !== null} onClick={onAbort}>
+              Abort
+            </button>
+          </div>
+        </div>
+      )}
 
       <div
         className="changes-body"
@@ -304,7 +442,7 @@ export function ChangesList({
           <textarea
             ref={box}
             className="changes-message"
-            placeholder="Commit message (⌘⏎ to commit)"
+            placeholder={`Commit message (${formatChord("mod+enter")} to commit)`}
             rows={2}
             value={message}
             spellCheck={false}
@@ -322,7 +460,9 @@ export function ChangesList({
               className="changes-commit-btn"
               disabled={!canCommit}
               title={
-                staged.length === 0 ? "Stage changes to commit them" : "Commit"
+                staged.length === 0
+                  ? "Stage changes to commit them"
+                  : tip("Commit", "git.commit")
               }
               onClick={onCommit}
             >
@@ -332,7 +472,7 @@ export function ChangesList({
               <button
                 className="changes-tool"
                 disabled={busy !== null}
-                title={upstream ? `Pull from ${upstream}` : "Pull"}
+                title={tip(upstream ? `Pull from ${upstream}` : "Pull", "git.pull")}
                 onClick={() => onPull(false)}
               >
                 ↓{behind > 0 && <span className="changes-tally">{behind}</span>}
@@ -378,7 +518,10 @@ export function ChangesList({
             <button
               className="changes-tool"
               disabled={busy !== null}
-              title={upstream ? `Push to ${upstream}` : "Push and set upstream"}
+              title={tip(
+                upstream ? `Push to ${upstream}…` : "Push and set upstream…",
+                "git.push",
+              )}
               onClick={onPush}
             >
               ↑{ahead > 0 && <span className="changes-tally">{ahead}</span>}
@@ -386,6 +529,15 @@ export function ChangesList({
           </div>
         </div>
       )}
+      {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
     </div>
   );
 }
+
+/** A chord's glyphs for a menu row, or nothing when the command is unbound. */
+function hint(id: Parameters<typeof chordFor>[0]): string | undefined {
+  const chord = chordFor(id);
+  return chord ? formatChord(chord) : undefined;
+}
+
+const tip = chordHint;

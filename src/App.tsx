@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { AgentPicker } from "./components/AgentPicker";
@@ -8,7 +8,10 @@ import { InsightPanel } from "./components/InsightPanel";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { TerminalPane } from "./components/TerminalPane";
 import { FileTree } from "./components/FileTree";
-import { ChangesList, type GitOp } from "./components/ChangesList";
+import { ChangesList, type GitOp, type ListRequest } from "./components/ChangesList";
+import { GIT_CHANGED } from "./components/LogWindow";
+import { PushDialog } from "./components/PushDialog";
+import { refNameError, useDialogs } from "./components/Modal";
 import { BottomPane } from "./components/BottomPane";
 import type { LineTarget } from "./components/FileViewer";
 import { SplitPane } from "./components/SplitPane";
@@ -25,14 +28,24 @@ import {
 } from "./pty/api";
 import { dirsExist, fsDebounceMs, openWorkspace } from "./fs/api";
 import {
+  gitBranchCreate,
+  gitBranchDelete,
+  gitBranchRename,
   gitCheckout,
   gitCommit,
   gitFetch,
+  gitLog,
+  gitMerge,
+  gitOperationAbort,
+  gitOperationContinue,
   gitPull,
   gitPush,
+  gitRebase,
+  gitRollback,
   gitStage,
   gitStageAll,
   gitStatus,
+  gitTagCreate,
   gitUnstage,
   gitUnstageAll,
   pathsOf,
@@ -40,6 +53,7 @@ import {
   type FileStatus,
   type RepoStatus,
 } from "./git/api";
+import type { BranchAction } from "./components/BranchPicker";
 import { agentWatch } from "./agents/api";
 import { patch, patchLayout, settings, useSetting } from "./settings/store";
 import type { RailTab } from "./settings/schema";
@@ -48,6 +62,7 @@ import {
   closeDiffWindow,
   growWindowToEditor,
   onDiffWindowClosed,
+  openLogWindow,
   openViewerWindow,
   openSettingsWindow,
   openTemplatesWindow,
@@ -146,6 +161,14 @@ export default function App() {
   const [commitMessage, setCommitMessage] = useState("");
   /** Bumped by the commit shortcut; see ChangesList. */
   const [commitRequest, setCommitRequest] = useState(0);
+  /** ⌘⌥Z / ⌘D, aimed at the changes list's cursor. */
+  const [listRequest, setListRequest] = useState<ListRequest | null>(null);
+  /** Bumped by the annotate command; the bottom pane toggles its gutter. */
+  const [annotateRequest, setAnnotateRequest] = useState(0);
+  /** Bumped by Branches…: the topbar's branch menu opens. */
+  const [branchesRequest, setBranchesRequest] = useState(0);
+  const [pushing, setPushing] = useState(false);
+  const [dialogs, ask] = useDialogs();
   /** path -> when the watcher last saw it move. */
   const [recentAt, setRecentAt] = useState<Map<string, number>>(new Map());
   const splitFraction = useRef(settings().layout.splitFraction);
@@ -243,6 +266,12 @@ export default function App() {
       window.clearTimeout(timer);
       void unlisten.then((u) => u());
     };
+  }, []);
+
+  // The log window rewrites history too; the changes list must follow.
+  useEffect(() => {
+    const unlisten = listen(GIT_CHANGED, () => setRefreshToken((t) => t + 1));
+    return () => void unlisten.then((u) => u());
   }, []);
 
   // Expire accents. Only ticks while something is actually accented.
@@ -441,6 +470,8 @@ export default function App() {
         gitBusyRef.current = false;
         setGitBusy(null);
         setRefreshToken((t) => t + 1);
+        // The log window, if open, re-reads too.
+        void emit(GIT_CHANGED);
       }
     },
     [showToast],
@@ -475,14 +506,129 @@ export default function App() {
       }),
     [runGit, showToast],
   );
+  /** The push dialog's answer: what it showed is what goes. */
   const push = useCallback(
-    () =>
+    (opts: { force: boolean; tags: boolean }) => {
+      setPushing(false);
       void runGit("push", async () => {
-        await gitPush();
-        showToast("Pushed.");
+        await gitPush(opts);
+        showToast(opts.force ? "Force-pushed." : "Pushed.");
+      });
+    },
+    [runGit, showToast],
+  );
+  const openPush = useCallback(() => setPushing(true), []);
+
+  /**
+   * IntelliJ's Rollback: confirm what goes back to HEAD, and whether files
+   * HEAD never had are deleted or merely unstaged.
+   */
+  const rollback = useCallback(
+    async (files: FileStatus[]) => {
+      if (files.length === 0) return;
+      const ws = workspaceRef.current ?? "";
+      const rel = (p: string) => (p.startsWith(ws) ? p.slice(ws.length + 1) : p);
+      const added = files.some((f) => f.status === "added");
+      const r = await ask({
+        title: "Rollback Changes",
+        body: (
+          <>
+            {files.length === 1 ? (
+              <>
+                Revert <code>{rel(files[0].path)}</code> to its last committed state?
+              </>
+            ) : (
+              <>Revert {files.length} files to their last committed state?</>
+            )}
+            {files.length > 1 && (
+              <ul className="modal-files">
+                {files.slice(0, 12).map((f) => (
+                  <li key={f.path}>{rel(f.path)}</li>
+                ))}
+                {files.length > 12 && <li>…and {files.length - 12} more</li>}
+              </ul>
+            )}
+          </>
+        ),
+        checks: added
+          ? [{ id: "delete", label: "Delete local copies of added files", initial: false }]
+          : [],
+        confirm: "Rollback",
+        danger: true,
+      });
+      if (!r) return;
+      const paths = files.flatMap(pathsOf);
+      void runGit("rollback", async () => {
+        await gitRollback(paths, !!r.checks.delete);
+        showToast(files.length === 1 ? "Rolled back." : `Rolled back ${files.length} files.`);
+      });
+    },
+    [ask, runGit, showToast],
+  );
+
+  const continueOperation = useCallback(
+    () => void runGit("operation", gitOperationContinue),
+    [runGit],
+  );
+  const abortOperation = useCallback(
+    () =>
+      void runGit("operation", async () => {
+        await gitOperationAbort();
+        showToast("Aborted.");
       }),
     [runGit, showToast],
   );
+
+  /** A new branch from `from` (HEAD when null), switched to unless unticked. */
+  const newBranch = useCallback(
+    async (from: string | null) => {
+      const r = await ask({
+        title: "Create New Branch",
+        body: from ? (
+          <>
+            From <code>{from}</code>
+          </>
+        ) : undefined,
+        input: { label: "New branch name", placeholder: "feature/…" },
+        checks: [{ id: "checkout", label: "Checkout branch", initial: true }],
+        confirm: "Create",
+        validate: refNameError,
+      });
+      if (!r) return;
+      void runGit("branch", async () => {
+        await gitBranchCreate(r.text, from, r.checks.checkout);
+        showToast(r.checks.checkout ? `Switched to new branch ${r.text}.` : `Created ${r.text}.`);
+      });
+    },
+    [ask, runGit, showToast],
+  );
+
+  const newTag = useCallback(async () => {
+    const head = (await gitLog(0, 1, { branch: "HEAD" }).catch(() => []))[0];
+    if (!head) {
+      showToast("There is no commit to tag yet.", "error");
+      return;
+    }
+    const r = await ask({
+      title: "Create New Tag",
+      body: (
+        <>
+          On <code>{head.shortId}</code> {head.subject}
+        </>
+      ),
+      input: { label: "Tag name", placeholder: "v1.0.0" },
+      message: { label: "Message (makes an annotated tag)", placeholder: "Optional" },
+      confirm: "Create Tag",
+      validate: refNameError,
+    });
+    if (!r) return;
+    void runGit("tag", async () => {
+      await gitTagCreate(r.text, head.id, r.message || null);
+      showToast(`Tagged ${head.shortId} as ${r.text}.`);
+    });
+  }, [ask, runGit, showToast]);
+
+
   const checkout = useCallback(
     (b: BranchInfo) =>
       void runGit("checkout", async () => {
@@ -494,6 +640,80 @@ export default function App() {
     [runGit, showToast],
   );
   const fetchRemotes = useCallback(() => runGit("fetch", gitFetch), [runGit]);
+
+  /** Everything the branch popup's submenu can do. */
+  const branchAction = useCallback(
+    async (action: BranchAction, b: BranchInfo) => {
+      const current = repo?.branch ?? "HEAD";
+      switch (action) {
+        case "checkout":
+          return checkout(b);
+        case "newFrom":
+          return newBranch(b.name);
+        case "compare":
+          // IntelliJ's "Compare with Current", as the log of what that
+          // branch has and the current one does not.
+          void openLogWindow({ branch: `${current}..${b.name}` });
+          return;
+        case "showLog":
+          void openLogWindow({ branch: b.name });
+          return;
+        case "merge":
+          return void runGit("merge", async () => {
+            const out = await gitMerge(b.name);
+            showToast(/up to date/i.test(out) ? "Already up to date." : `Merged ${b.name} into ${current}.`);
+          });
+        case "rebase":
+          return void runGit("rebase", async () => {
+            await gitRebase(b.name);
+            showToast(`Rebased ${current} onto ${b.name}.`);
+          });
+        case "pull":
+          // Only offered for the current branch, which is what pull updates.
+          return pull(false);
+        case "push":
+          return openPush();
+        case "rename": {
+          const r = await ask({
+            title: `Rename Branch ${b.name}`,
+            input: { label: "New name", initial: b.name },
+            confirm: "Rename",
+            validate: (t) => (t === b.name ? "That is its name already." : refNameError(t)),
+          });
+          if (!r) return;
+          return void runGit("branch", async () => {
+            await gitBranchRename(b.name, r.text);
+            showToast(`Renamed ${b.name} to ${r.text}.`);
+          });
+        }
+        case "delete": {
+          const r = await ask({
+            title: b.remote ? "Delete Remote Branch" : "Delete Branch",
+            body: b.remote ? (
+              <>
+                Delete <code>{b.name}</code> on the remote? Everyone loses it.
+              </>
+            ) : (
+              <>
+                Delete <code>{b.name}</code>?
+              </>
+            ),
+            checks: b.remote
+              ? []
+              : [{ id: "force", label: "Delete even if not fully merged", initial: false }],
+            confirm: "Delete",
+            danger: true,
+          });
+          if (!r) return;
+          return void runGit("branch", async () => {
+            await gitBranchDelete(b, !!r.checks.force);
+            showToast(`Deleted ${b.name}.`);
+          });
+        }
+      }
+    },
+    [repo?.branch, checkout, newBranch, runGit, showToast, pull, openPush, ask],
+  );
 
   // Every shortcut the app has. The chords themselves live in the registry,
   // which is also what stops TerminalPane forwarding them to the agent --
@@ -595,7 +815,44 @@ export default function App() {
       if (gitReady()) pull(true);
     },
     "git.push": () => {
-      if (gitReady()) push();
+      if (gitReady()) openPush();
+    },
+    "git.rollback": () => {
+      if (!gitReady()) return;
+      setRailTab("git");
+      setListRequest({ kind: "rollback", token: Date.now() });
+    },
+    "git.showDiff": () => {
+      if (!gitReady()) return;
+      setListRequest({ kind: "diff", token: Date.now() });
+    },
+    "git.log": () => {
+      if (!gitReady()) return;
+      void openLogWindow().catch(() => showToast("Could not open the git log.", "error"));
+    },
+    "git.annotate": () => {
+      if (!gitReady()) return;
+      if (!openFile) {
+        showToast("Open a file to annotate it.", "error");
+        return;
+      }
+      setAnnotateRequest((t) => t + 1);
+    },
+    "git.branches": () => {
+      if (gitReady()) setBranchesRequest((t) => t + 1);
+    },
+    "git.newBranch": () => {
+      if (gitReady()) void newBranch(null);
+    },
+    "git.newTag": () => {
+      if (gitReady()) void newTag();
+    },
+    "git.fetch": () => {
+      if (!gitReady()) return;
+      void runGit("fetch", async () => {
+        await gitFetch();
+        showToast("Fetched.");
+      });
     },
   };
   useShortcuts(commands);
@@ -648,6 +905,24 @@ export default function App() {
   const openFromTerminal = useCallback(
     (path: string, line?: number) => openPath(path, "file", line),
     [openPath],
+  );
+
+  /**
+   * ⌘D / ⌘⌥Z with the changes list not focused: the open file, as IntelliJ's
+   * editor does. Rollback with no changed file open offers everything.
+   */
+  const listRequestUnhandled = useCallback(
+    (kind: ListRequest["kind"]) => {
+      const files = repo?.files ?? [];
+      const file = files.find((f) => f.path === (diffFile ?? openFile));
+      if (kind === "diff") {
+        if (file) openPath(file.path, "diff");
+        else showToast("No changed file selected to diff.", "error");
+      } else if (file) void rollback([file]);
+      else if (files.length > 0) void rollback(files);
+      else showToast("No changes to roll back.");
+    },
+    [repo, diffFile, openFile, openPath, showToast, rollback],
   );
 
   const closeFile = useCallback(() => {
@@ -773,8 +1048,13 @@ export default function App() {
               <BranchPicker
                 branch={repo.branch}
                 busy={gitBusy !== null}
+                ahead={repo.ahead}
+                behind={repo.behind}
+                openRequest={branchesRequest}
                 onCheckout={checkout}
                 onFetch={fetchRemotes}
+                onNewBranch={() => void newBranch(null)}
+                onAction={(a, b) => void branchAction(a, b)}
               />
             )}
           </div>
@@ -878,7 +1158,14 @@ export default function App() {
                       onUnstageAll={unstageAll}
                       onCommit={commit}
                       onPull={pull}
-                      onPush={push}
+                      onPush={openPush}
+                      onRollback={(files) => void rollback(files)}
+                      onHistory={(path) => void openLogWindow({ path })}
+                      operation={repo?.operation ?? null}
+                      onContinue={continueOperation}
+                      onAbort={abortOperation}
+                      request={listRequest}
+                      onRequestUnhandled={listRequestUnhandled}
                     />
                   </div>
                 </div>
@@ -917,6 +1204,8 @@ export default function App() {
                     diffInWindow={diffInWindow}
                     openedAs={openedAs}
                     target={openLine}
+                    annotateRequest={annotateRequest}
+                    isRepo={!!repo?.isRepo}
                     onClose={closeFile}
                   />
                 ) : null
@@ -979,6 +1268,8 @@ export default function App() {
         />
       )}
 
+      {pushing && <PushDialog onPush={push} onCancel={() => setPushing(false)} />}
+      {dialogs}
       <Toast message={toast} onDone={hideToast} />
     </>
   );

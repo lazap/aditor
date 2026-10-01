@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
-use git2::{Branch, BranchType, Repository, Status, StatusOptions};
+use git2::{Branch, BranchType, Repository, RepositoryState, Status, StatusOptions};
 use serde::Serialize;
 use tauri::State;
 
@@ -52,6 +52,42 @@ pub struct FileStatus {
     pub old_path: Option<String>,
 }
 
+/// A multi-step operation git stopped in the middle of, usually on a conflict.
+/// Until it is continued or aborted, the next merge or rebase is refused.
+#[derive(Serialize, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum RepoOperation {
+    Merge,
+    Rebase,
+    CherryPick,
+    Revert,
+}
+
+impl RepoOperation {
+    fn of(state: RepositoryState) -> Option<Self> {
+        use RepositoryState as S;
+        match state {
+            S::Merge => Some(Self::Merge),
+            S::Rebase | S::RebaseInteractive | S::RebaseMerge | S::ApplyMailboxOrRebase => {
+                Some(Self::Rebase)
+            }
+            S::CherryPick | S::CherryPickSequence => Some(Self::CherryPick),
+            S::Revert | S::RevertSequence => Some(Self::Revert),
+            _ => None,
+        }
+    }
+
+    /// The git subcommand that owns `--continue` / `--abort` for it.
+    fn command(self) -> &'static str {
+        match self {
+            Self::Merge => "merge",
+            Self::Rebase => "rebase",
+            Self::CherryPick => "cherry-pick",
+            Self::Revert => "revert",
+        }
+    }
+}
+
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoStatus {
@@ -64,6 +100,8 @@ pub struct RepoStatus {
     pub ahead: u32,
     pub behind: u32,
     pub files: Vec<FileStatus>,
+    /// A merge, rebase, cherry-pick or revert waiting to be continued.
+    pub operation: Option<RepoOperation>,
 }
 
 #[derive(Serialize)]
@@ -79,7 +117,7 @@ pub enum FileDiff {
 }
 
 /// The one boundary through which git work happens.
-fn with_repo<T>(
+pub(crate) fn with_repo<T>(
     ws: &Workspace,
     f: impl FnOnce(&Repository, &Path, &Path) -> Result<T, String>,
 ) -> Result<Option<T>, String> {
@@ -233,6 +271,7 @@ pub fn git_status(ws: State<'_, Workspace>) -> Result<RepoStatus, String> {
             ahead,
             behind,
             files,
+            operation: RepoOperation::of(repo.state()),
         })
     })?;
 
@@ -243,6 +282,7 @@ pub fn git_status(ws: State<'_, Workspace>) -> Result<RepoStatus, String> {
         ahead: 0,
         behind: 0,
         files: Vec::new(),
+        operation: None,
     }))
 }
 
@@ -254,6 +294,9 @@ pub struct BranchInfo {
     pub remote: bool,
     /// What a local branch tracks, e.g. `origin/feature`.
     pub upstream: Option<String>,
+    /// Commits this branch has that its upstream lacks, and the reverse.
+    pub ahead: u32,
+    pub behind: u32,
 }
 
 #[derive(Serialize)]
@@ -280,11 +323,21 @@ fn list_branches(repo: &Repository) -> Result<BranchList, String> {
         let Some(name) = branch.name().ok().flatten().map(str::to_string) else {
             continue;
         };
-        let upstream = branch
-            .upstream()
-            .ok()
+        let up = branch.upstream().ok();
+        let upstream = up
+            .as_ref()
             .and_then(|u| u.name().ok().flatten().map(str::to_string));
-        local.push(BranchInfo { name, remote: false, upstream });
+        let (ahead, behind) = match (branch.get().target(), up.and_then(|u| u.get().target())) {
+            (Some(l), Some(u)) => repo.graph_ahead_behind(l, u).unwrap_or((0, 0)),
+            _ => (0, 0),
+        };
+        local.push(BranchInfo {
+            name,
+            remote: false,
+            upstream,
+            ahead: ahead as u32,
+            behind: behind as u32,
+        });
     }
 
     let mut remote = Vec::new();
@@ -300,7 +353,7 @@ fn list_branches(repo: &Repository) -> Result<BranchList, String> {
         if name.ends_with("/HEAD") || local.iter().any(|l| l.upstream.as_deref() == Some(&name)) {
             continue;
         }
-        remote.push(BranchInfo { name, remote: true, upstream: None });
+        remote.push(BranchInfo { name, remote: true, upstream: None, ahead: 0, behind: 0 });
     }
 
     local.sort_by(|a, b| a.name.cmp(&b.name));
@@ -330,12 +383,37 @@ fn head_blob(repo: &Repository, rel: &Path) -> Result<Option<Vec<u8>>, String> {
         return Ok(None);
     };
     let tree = head.peel_to_tree().map_err(|e| e.to_string())?;
+    blob_at(repo, &tree, rel)
+}
+
+/// `rel`'s contents in `tree`, or None when the tree has no such file.
+pub(crate) fn blob_at(
+    repo: &Repository,
+    tree: &git2::Tree,
+    rel: &Path,
+) -> Result<Option<Vec<u8>>, String> {
     match tree.get_path(rel) {
         Ok(entry) => {
             let obj = entry.to_object(repo).map_err(|e| e.to_string())?;
             Ok(obj.as_blob().map(|b| b.content().to_vec()))
         }
         Err(_) => Ok(None),
+    }
+}
+
+/// Two versions of a file as the diff the frontend renders, or the reason it
+/// cannot be one.
+pub(crate) fn text_diff(old_bytes: Vec<u8>, new_bytes: Vec<u8>) -> FileDiff {
+    let total = (old_bytes.len() + new_bytes.len()) as u64;
+    if total > MAX_FILE_BYTES {
+        return FileDiff::TooLarge { bytes: total };
+    }
+    if looks_binary(&old_bytes) || looks_binary(&new_bytes) {
+        return FileDiff::Binary;
+    }
+    match (String::from_utf8(old_bytes), String::from_utf8(new_bytes)) {
+        (Ok(old), Ok(new)) => FileDiff::Text { old, new },
+        _ => FileDiff::Binary,
     }
 }
 
@@ -353,19 +431,7 @@ pub fn git_diff(ws: State<'_, Workspace>, path: String) -> Result<FileDiff, Stri
         let old_bytes = head_blob(repo, rel)?.unwrap_or_default();
         // Missing working file means deleted; that is a diff, not an error.
         let new_bytes = std::fs::read(&abs).unwrap_or_default();
-
-        let total = (old_bytes.len() + new_bytes.len()) as u64;
-        if total > MAX_FILE_BYTES {
-            return Ok(FileDiff::TooLarge { bytes: total });
-        }
-        if looks_binary(&old_bytes) || looks_binary(&new_bytes) {
-            return Ok(FileDiff::Binary);
-        }
-
-        match (String::from_utf8(old_bytes), String::from_utf8(new_bytes)) {
-            (Ok(old), Ok(new)) => Ok(FileDiff::Text { old, new }),
-            _ => Ok(FileDiff::Binary),
-        }
+        Ok(text_diff(old_bytes, new_bytes))
     })?;
 
     Ok(found.unwrap_or(FileDiff::NotRepo))
@@ -470,6 +536,9 @@ fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, St
         .args(args)
         .current_dir(root)
         .env("GIT_TERMINAL_PROMPT", "0")
+        // There is no terminal for an editor to open in. Merges, reverts and
+        // `--continue` take git's prepared message instead of waiting forever.
+        .env("GIT_EDITOR", "true")
         .stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
@@ -585,38 +654,49 @@ pub async fn git_pull(ws: State<'_, Workspace>, rebase: bool) -> Result<String, 
     off_thread(move || run_git(&root, &["pull", mode], None)).await
 }
 
+/// The remote a branch with no upstream goes to: `origin`, or the only one.
+fn default_remote(repo: &Repository) -> Result<String, String> {
+    let remotes: Vec<String> = repo
+        .remotes()
+        .map_err(|e| e.to_string())?
+        .iter()
+        .filter_map(|r| r.ok().flatten().map(str::to_string))
+        .collect();
+    if remotes.iter().any(|r| r == "origin") {
+        return Ok("origin".to_string());
+    }
+    match remotes.as_slice() {
+        [only] => Ok(only.clone()),
+        [] => Err("This repository has no remote to push to.".into()),
+        _ => Err("This branch tracks no upstream and there is no `origin` to pick.".into()),
+    }
+}
+
 /// Push, setting up tracking on the first push of a branch: a plain `git push`
 /// would refuse with advice the user cannot act on from here.
+///
+/// `force` is `--force-with-lease`, never a bare `--force`: it still refuses
+/// when the remote moved since the last fetch, so nobody else's work is lost.
 #[tauri::command]
-pub async fn git_push(ws: State<'_, Workspace>) -> Result<String, String> {
+pub async fn git_push(ws: State<'_, Workspace>, force: bool, tags: bool) -> Result<String, String> {
     let root = workspace_root(&ws)?;
     off_thread(move || {
         let repo = Repository::discover(&root).map_err(|e| e.to_string())?;
         let (upstream, _, _) = tracking(&repo);
-        if upstream.is_some() {
-            return run_git(&root, &["push"], None);
+        let mut args = vec!["push"];
+        if force {
+            args.push("--force-with-lease");
         }
-        let remotes: Vec<String> = repo
-            .remotes()
-            .map_err(|e| e.to_string())?
-            .iter()
-            .filter_map(|r| r.ok().flatten().map(str::to_string))
-            .collect();
-        let remote = if remotes.iter().any(|r| r == "origin") {
-            "origin".to_string()
-        } else {
-            match remotes.as_slice() {
-                [only] => only.clone(),
-                [] => return Err("This repository has no remote to push to.".into()),
-                _ => {
-                    return Err(
-                        "This branch tracks no upstream and there is no `origin` to pick.".into(),
-                    );
-                }
-            }
-        };
+        if tags {
+            args.push("--follow-tags");
+        }
+        if upstream.is_some() {
+            return run_git(&root, &args, None);
+        }
+        let remote = default_remote(&repo)?;
         drop(repo);
-        run_git(&root, &["push", "-u", &remote, "HEAD"], None)
+        args.extend(["-u", &remote, "HEAD"]);
+        run_git(&root, &args, None)
     })
     .await
 }
@@ -657,4 +737,356 @@ pub async fn git_checkout(
 pub async fn git_fetch(ws: State<'_, Workspace>) -> Result<(), String> {
     let root = workspace_root(&ws)?;
     off_thread(move || run_git(&root, &["fetch", "--all", "--prune"], None).map(drop)).await
+}
+
+// ---- branches, history and recovery ----
+
+/// A name git will take as a ref or revision rather than as an option: these
+/// all reach commands where a leading dash would be parsed as a flag.
+fn check_name(name: &str, what: &str) -> Result<(), String> {
+    if name.trim().is_empty() || name.starts_with('-') || name.chars().any(char::is_whitespace) {
+        return Err(format!("{name:?} is not a valid {what}."));
+    }
+    Ok(())
+}
+
+/// A commit id as the log hands it over: hex, nothing else.
+fn check_id(id: &str) -> Result<(), String> {
+    if id.len() < 4 || id.len() > 64 || !id.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(format!("{id:?} is not a commit id."));
+    }
+    Ok(())
+}
+
+/// Put `paths` back to how HEAD has them, in the index and on disk -- IntelliJ's
+/// Rollback. A path HEAD does not have (added, or untracked) is dropped from
+/// the index, and its file deleted only when `delete_untracked` asks for it.
+#[tauri::command]
+pub async fn git_rollback(
+    ws: State<'_, Workspace>,
+    paths: Vec<String>,
+    delete_untracked: bool,
+) -> Result<(), String> {
+    let root = workspace_root(&ws)?;
+    check_paths(&root, &paths)?;
+    off_thread(move || rollback(&root, &paths, delete_untracked)).await
+}
+
+fn rollback(root: &Path, paths: &[String], delete_untracked: bool) -> Result<(), String> {
+    let repo = Repository::discover(root).map_err(|e| e.to_string())?;
+    let workdir = repo.workdir().ok_or("This repository has no working tree.")?.to_path_buf();
+    let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+    let (tracked, added): (Vec<&String>, Vec<&String>) = paths.iter().partition(|p| {
+        let rel = Path::new(p.as_str()).strip_prefix(&workdir).unwrap_or(Path::new(p.as_str()));
+        head_tree.as_ref().is_some_and(|t| t.get_path(rel).is_ok())
+    });
+    drop(head_tree);
+    drop(repo);
+
+    if !tracked.is_empty() {
+        let mut args = vec!["restore", "--source=HEAD", "--staged", "--worktree", "--"];
+        args.extend(tracked.iter().map(|p| p.as_str()));
+        run_git(root, &args, None)?;
+    }
+    if !added.is_empty() {
+        let mut args = vec!["rm", "--cached", "-q", "-r", "--ignore-unmatch", "--"];
+        args.extend(added.iter().map(|p| p.as_str()));
+        run_git(root, &args, None)?;
+        if delete_untracked {
+            for p in added {
+                let path = Path::new(p.as_str());
+                if path.is_file() || path.is_symlink() {
+                    std::fs::remove_file(path).map_err(|e| format!("could not delete {p}: {e}"))?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// A new branch at `from` (HEAD when None), switched to when `checkout` is set.
+#[tauri::command]
+pub async fn git_branch_create(
+    ws: State<'_, Workspace>,
+    name: String,
+    from: Option<String>,
+    checkout: bool,
+) -> Result<(), String> {
+    check_name(&name, "branch name")?;
+    if let Some(f) = &from {
+        check_name(f, "revision")?;
+    }
+    let root = workspace_root(&ws)?;
+    off_thread(move || {
+        let mut args = if checkout { vec!["switch", "-c", &name] } else { vec!["branch", &name] };
+        if let Some(f) = &from {
+            args.push(f);
+        }
+        run_git(&root, &args, None).map(drop)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_branch_rename(
+    ws: State<'_, Workspace>,
+    name: String,
+    to: String,
+) -> Result<(), String> {
+    check_name(&name, "branch name")?;
+    check_name(&to, "branch name")?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || run_git(&root, &["branch", "-m", &name, &to], None).map(drop)).await
+}
+
+/// Delete a local branch, or a remote one on its remote. `-d` refuses an
+/// unmerged branch with git's own explanation; `force` is the `-D` that follows.
+#[tauri::command]
+pub async fn git_branch_delete(
+    ws: State<'_, Workspace>,
+    name: String,
+    remote: bool,
+    force: bool,
+) -> Result<(), String> {
+    check_name(&name, "branch name")?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || {
+        if !remote {
+            let flag = if force { "-D" } else { "-d" };
+            return run_git(&root, &["branch", flag, &name], None).map(drop);
+        }
+        let (remote, branch) = name
+            .split_once('/')
+            .ok_or_else(|| format!("{name:?} does not name a remote branch."))?;
+        run_git(&root, &["push", remote, "--delete", branch], None).map(drop)
+    })
+    .await
+}
+
+/// Merge `name` into the current branch. A conflict comes back as git's error
+/// and leaves the merge in progress, for `git_operation_*` to finish.
+#[tauri::command]
+pub async fn git_merge(ws: State<'_, Workspace>, name: String) -> Result<String, String> {
+    check_name(&name, "branch name")?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || run_git(&root, &["merge", "--no-edit", &name], None)).await
+}
+
+#[tauri::command]
+pub async fn git_rebase(ws: State<'_, Workspace>, onto: String) -> Result<String, String> {
+    check_name(&onto, "branch name")?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || run_git(&root, &["rebase", &onto], None)).await
+}
+
+#[tauri::command]
+pub async fn git_cherry_pick(ws: State<'_, Workspace>, id: String) -> Result<String, String> {
+    check_id(&id)?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || run_git(&root, &["cherry-pick", &id], None)).await
+}
+
+#[tauri::command]
+pub async fn git_revert(ws: State<'_, Workspace>, id: String) -> Result<String, String> {
+    check_id(&id)?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || run_git(&root, &["revert", "--no-edit", &id], None)).await
+}
+
+/// Move the current branch to `id`. `mode` is soft, mixed or hard, as in
+/// IntelliJ's Reset dialog.
+#[tauri::command]
+pub async fn git_reset(ws: State<'_, Workspace>, id: String, mode: String) -> Result<(), String> {
+    check_id(&id)?;
+    let flag = match mode.as_str() {
+        "soft" => "--soft",
+        "mixed" => "--mixed",
+        "hard" => "--hard",
+        _ => return Err(format!("{mode:?} is not a reset mode.")),
+    };
+    let root = workspace_root(&ws)?;
+    off_thread(move || run_git(&root, &["reset", "-q", flag, &id], None).map(drop)).await
+}
+
+/// Check out a commit itself, leaving HEAD detached.
+#[tauri::command]
+pub async fn git_checkout_revision(ws: State<'_, Workspace>, id: String) -> Result<(), String> {
+    check_id(&id)?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || run_git(&root, &["switch", "--detach", &id], None).map(drop)).await
+}
+
+/// A tag on `id`: annotated when there is a message, lightweight otherwise.
+#[tauri::command]
+pub async fn git_tag_create(
+    ws: State<'_, Workspace>,
+    name: String,
+    id: String,
+    message: Option<String>,
+) -> Result<(), String> {
+    check_name(&name, "tag name")?;
+    check_id(&id)?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || match message.filter(|m| !m.trim().is_empty()) {
+        Some(m) => run_git(&root, &["tag", "-a", &name, "-F", "-", &id], Some(&m)).map(drop),
+        None => run_git(&root, &["tag", &name, &id], None).map(drop),
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_tag_delete(ws: State<'_, Workspace>, name: String) -> Result<(), String> {
+    check_name(&name, "tag name")?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || run_git(&root, &["tag", "-d", &name], None).map(drop)).await
+}
+
+/// Push one tag to the branch's remote (or the default one).
+#[tauri::command]
+pub async fn git_push_tag(ws: State<'_, Workspace>, name: String) -> Result<String, String> {
+    check_name(&name, "tag name")?;
+    let root = workspace_root(&ws)?;
+    off_thread(move || {
+        let repo = Repository::discover(&root).map_err(|e| e.to_string())?;
+        let remote = tracking(&repo)
+            .0
+            .and_then(|u| u.split_once('/').map(|(r, _)| r.to_string()))
+            .map_or_else(|| default_remote(&repo), Ok)?;
+        drop(repo);
+        let refspec = format!("refs/tags/{name}");
+        run_git(&root, &["push", &remote, &refspec], None)
+    })
+    .await
+}
+
+/// The operation git is stopped in, or an error saying there is none.
+fn pending_operation(root: &Path) -> Result<RepoOperation, String> {
+    let repo = Repository::discover(root).map_err(|e| e.to_string())?;
+    RepoOperation::of(repo.state()).ok_or_else(|| "There is no operation in progress.".into())
+}
+
+/// Carry on with the stopped merge, rebase, cherry-pick or revert, once its
+/// conflicts are resolved and staged.
+#[tauri::command]
+pub async fn git_operation_continue(ws: State<'_, Workspace>) -> Result<String, String> {
+    let root = workspace_root(&ws)?;
+    off_thread(move || {
+        let op = pending_operation(&root)?;
+        run_git(&root, &[op.command(), "--continue"], None)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn git_operation_abort(ws: State<'_, Workspace>) -> Result<(), String> {
+    let root = workspace_root(&ws)?;
+    off_thread(move || {
+        let op = pending_operation(&root)?;
+        run_git(&root, &[op.command(), "--abort"], None).map(drop)
+    })
+    .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A throwaway repo with a fixed identity, built with the real git CLI.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir = std::env::temp_dir().join(format!("aditor-git-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            std::fs::create_dir_all(&dir).unwrap();
+            // Canonical, as `workspace_root` hands it over: /var is /private/var.
+            let s = Scratch(dir.canonicalize().unwrap());
+            for args in [
+                &["init", "-q", "-b", "main"][..],
+                &["config", "user.name", "Test"],
+                &["config", "user.email", "t@example.com"],
+                &["config", "commit.gpgsign", "false"],
+            ] {
+                s.git(args);
+            }
+            s
+        }
+        fn git(&self, args: &[&str]) -> String {
+            run_git(&self.0, args, None).unwrap()
+        }
+        fn path(&self, rel: &str) -> String {
+            self.0.join(rel).to_string_lossy().to_string()
+        }
+        fn write(&self, rel: &str, text: &str) {
+            std::fs::write(self.0.join(rel), text).unwrap();
+        }
+        fn read(&self, rel: &str) -> Option<String> {
+            std::fs::read_to_string(self.0.join(rel)).ok()
+        }
+        fn commit(&self, rel: &str, text: &str, msg: &str) {
+            self.write(rel, text);
+            self.git(&["add", "-A"]);
+            self.git(&["commit", "-q", "-m", msg]);
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    #[test]
+    fn rollback_restores_tracked_and_keeps_untracked_unless_asked() {
+        let s = Scratch::new("rollback");
+        s.commit("a.txt", "one\n", "first");
+        s.write("a.txt", "changed\n");
+        s.git(&["add", "a.txt"]);
+        s.write("new.txt", "fresh\n");
+        s.git(&["add", "new.txt"]);
+
+        rollback(&s.0, &[s.path("a.txt"), s.path("new.txt")], false).unwrap();
+        assert_eq!(s.read("a.txt").as_deref(), Some("one\n"));
+        // Unstaged, but still on disk.
+        assert_eq!(s.read("new.txt").as_deref(), Some("fresh\n"));
+        assert_eq!(s.git(&["status", "--porcelain"]), "?? new.txt");
+
+        rollback(&s.0, &[s.path("new.txt")], true).unwrap();
+        assert_eq!(s.read("new.txt"), None);
+        assert_eq!(s.git(&["status", "--porcelain"]), "");
+    }
+
+    #[test]
+    fn rollback_brings_back_a_deleted_file() {
+        let s = Scratch::new("rollback-deleted");
+        s.commit("a.txt", "one\n", "first");
+        std::fs::remove_file(s.0.join("a.txt")).unwrap();
+        rollback(&s.0, &[s.path("a.txt")], false).unwrap();
+        assert_eq!(s.read("a.txt").as_deref(), Some("one\n"));
+    }
+
+    #[test]
+    fn a_conflicted_merge_is_an_operation_until_aborted() {
+        let s = Scratch::new("merge");
+        s.commit("a.txt", "base\n", "base");
+        s.git(&["switch", "-q", "-c", "other"]);
+        s.commit("a.txt", "theirs\n", "theirs");
+        s.git(&["switch", "-q", "main"]);
+        s.commit("a.txt", "ours\n", "ours");
+        assert!(run_git(&s.0, &["merge", "--no-edit", "other"], None).is_err());
+
+        assert_eq!(pending_operation(&s.0), Ok(RepoOperation::Merge));
+        run_git(&s.0, &["merge", "--abort"], None).unwrap();
+        assert!(pending_operation(&s.0).is_err());
+        assert_eq!(s.read("a.txt").as_deref(), Some("ours\n"));
+    }
+
+    #[test]
+    fn names_that_look_like_options_are_refused() {
+        assert!(check_name("-D", "branch name").is_err());
+        assert!(check_name("feature x", "branch name").is_err());
+        assert!(check_name("feature/x", "branch name").is_ok());
+        assert!(check_id("--hard").is_err());
+        assert!(check_id("a1b2c3d").is_ok());
+    }
 }

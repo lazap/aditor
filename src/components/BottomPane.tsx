@@ -1,8 +1,9 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FileViewer, type LineTarget } from "./FileViewer";
 import { DiffViewer, type DiffLayout } from "./DiffViewer";
 import { BADGE, type ChangeKind } from "../git/api";
 import { patchLayout, useSetting } from "../settings/store";
+import { chordHint } from "../shortcuts/store";
 import { basename, openViewerWindow, type ViewerMode as Mode } from "../window";
 
 interface Props {
@@ -16,7 +17,33 @@ interface Props {
   openedAs: Mode;
   /** A line to show, from a `path:line` clicked in the terminal. */
   target: LineTarget | null;
+  /** Bumped by the annotate command: toggles the blame gutter. */
+  annotateRequest: number;
+  isRepo: boolean;
   onClose(): void;
+}
+
+/** The blame toggle in a viewer bar, shared with the diff window. */
+export function AnnotateToggle({
+  on,
+  disabled,
+  onToggle,
+}: {
+  on: boolean;
+  disabled?: boolean;
+  onToggle(): void;
+}) {
+  return (
+    <button
+      className="seg-btn viewer-toggle"
+      data-active={on}
+      disabled={disabled}
+      onClick={onToggle}
+      title={chordHint(on ? "Hide git blame" : "Annotate with git blame", "git.annotate")}
+    >
+      Annotate
+    </button>
+  );
 }
 
 /**
@@ -56,8 +83,12 @@ export function BottomPane({
   diffInWindow,
   openedAs,
   target,
+  annotateRequest,
+  isRepo,
   onClose,
 }: Props) {
+  const [annotate, setAnnotate] = useState(false);
+  const [annotateError, setAnnotateError] = useState<string | null>(null);
   const pick = (): Mode =>
     openedAs === "diff" && status && !diffInWindow ? "diff" : "file";
   const [mode, setMode] = useState<Mode>(pick);
@@ -69,6 +100,17 @@ export function BottomPane({
     setMode(pick());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [path, openedAs, diffInWindow]);
+
+  // The command shows the file and toggles the gutter on it.
+  const lastAnnotate = useRef(annotateRequest);
+  useEffect(() => {
+    if (annotateRequest === lastAnnotate.current) return;
+    lastAnnotate.current = annotateRequest;
+    setMode("file");
+    setAnnotate((a) => !a);
+  }, [annotateRequest]);
+
+  useEffect(() => setAnnotateError(null), [annotate, path]);
 
   // A line only means something in the file: show it even if the diff was up.
   useEffect(() => {
@@ -113,6 +155,12 @@ export function BottomPane({
         </div>
 
         {mode === "diff" && status && <DiffLayoutToggle />}
+        {mode === "file" && isRepo && (
+          <AnnotateToggle on={annotate} onToggle={() => setAnnotate((a) => !a)} />
+        )}
+        {annotate && annotateError && (
+          <span className="viewer-message error viewer-inline">{annotateError}</span>
+        )}
 
         <span className="viewer-badge">read-only</span>
         <button className="viewer-close" onClick={onClose} title="Close file">
@@ -123,7 +171,13 @@ export function BottomPane({
       {mode === "diff" && status ? (
         <DiffViewer path={path} layout={layout} refreshToken={refreshToken} />
       ) : (
-        <FileViewer path={path} refreshToken={refreshToken} target={target} />
+        <FileViewer
+          path={path}
+          refreshToken={refreshToken}
+          target={target}
+          annotate={annotate && isRepo}
+          onAnnotateError={setAnnotateError}
+        />
       )}
     </div>
   );

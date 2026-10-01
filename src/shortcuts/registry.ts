@@ -21,7 +21,15 @@ export type CommandId =
   | "git.pull"
   | "git.pullRebase"
   | "git.push"
-  | "git.stageAll";
+  | "git.stageAll"
+  | "git.rollback"
+  | "git.showDiff"
+  | "git.log"
+  | "git.annotate"
+  | "git.branches"
+  | "git.newBranch"
+  | "git.newTag"
+  | "git.fetch";
 
 export interface ShortcutCommand {
   id: CommandId;
@@ -58,16 +66,33 @@ export const COMMANDS: readonly ShortcutCommand[] = [
     chord: "mod+shift+p",
     label: "Prompt templates…",
   },
-  { id: "git.commit", group: "Git", chord: "mod+alt+c", label: "Commit" },
-  { id: "git.stageAll", group: "Git", chord: null, label: "Stage all changes" },
-  { id: "git.pull", group: "Git", chord: "mod+alt+l", label: "Pull" },
+  // Git chords follow IntelliJ's default keymap: ⌘K commit, ⌘⇧K push, ⌘T
+  // update, ⌘⌥Z rollback, ⌘D diff, ⌘9 log. What IntelliJ ships unbound ships
+  // unbound here too. Its branch and VCS popups sit on Ctrl chords, which on
+  // macOS belong to the agent, so Branches… waits for the user to pick one.
+  { id: "git.commit", group: "Git", chord: "mod+k", label: "Commit" },
+  { id: "git.push", group: "Git", chord: "mod+shift+k", label: "Push…" },
+  { id: "git.pull", group: "Git", chord: "mod+t", label: "Update project (pull)" },
   {
     id: "git.pullRebase",
     group: "Git",
     chord: null,
     label: "Pull with rebase",
   },
-  { id: "git.push", group: "Git", chord: "mod+alt+p", label: "Push" },
+  { id: "git.rollback", group: "Git", chord: "mod+alt+z", label: "Rollback…" },
+  { id: "git.showDiff", group: "Git", chord: "mod+d", label: "Show diff" },
+  { id: "git.log", group: "Git", chord: "mod+9", label: "Show git log" },
+  {
+    id: "git.annotate",
+    group: "Git",
+    chord: null,
+    label: "Annotate with git blame",
+  },
+  { id: "git.branches", group: "Git", chord: null, label: "Branches…" },
+  { id: "git.newBranch", group: "Git", chord: null, label: "New branch…" },
+  { id: "git.newTag", group: "Git", chord: null, label: "New tag…" },
+  { id: "git.fetch", group: "Git", chord: null, label: "Fetch" },
+  { id: "git.stageAll", group: "Git", chord: null, label: "Stage all changes" },
   { id: "project.open", group: "App", chord: "mod+o", label: "Open project…" },
   { id: "app.settings", group: "App", chord: "mod+,", label: "Settings…" },
 ];

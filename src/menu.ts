@@ -20,11 +20,22 @@ const IN_MENU: readonly CommandId[] = ["app.settings", "prompt.templates"];
 /** The Git submenu, in order; null is a separator. */
 const GIT_MENU: readonly (CommandId | null)[] = [
   "git.commit",
-  "git.stageAll",
-  null,
+  "git.push",
   "git.pull",
   "git.pullRebase",
-  "git.push",
+  null,
+  "git.rollback",
+  "git.showDiff",
+  "git.annotate",
+  null,
+  "git.log",
+  null,
+  "git.branches",
+  "git.newBranch",
+  "git.newTag",
+  "git.fetch",
+  null,
+  "git.stageAll",
 ];
 
 /**

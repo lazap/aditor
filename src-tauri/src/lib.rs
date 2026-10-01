@@ -2,6 +2,7 @@ mod accounts;
 mod agents;
 mod fs;
 mod git;
+mod git_log;
 mod mcp;
 mod pty;
 mod settings;
@@ -47,6 +48,26 @@ pub fn run() {
             git::git_branches,
             git::git_checkout,
             git::git_fetch,
+            git::git_rollback,
+            git::git_branch_create,
+            git::git_branch_rename,
+            git::git_branch_delete,
+            git::git_merge,
+            git::git_rebase,
+            git::git_cherry_pick,
+            git::git_revert,
+            git::git_reset,
+            git::git_checkout_revision,
+            git::git_tag_create,
+            git::git_tag_delete,
+            git::git_push_tag,
+            git::git_operation_continue,
+            git::git_operation_abort,
+            git_log::git_log,
+            git_log::git_commit_details,
+            git_log::git_commit_file_diff,
+            git_log::git_blame,
+            git_log::git_outgoing,
             agents::agent_sessions,
             agents::agent_watch,
             agents::agent_refresh_limits,

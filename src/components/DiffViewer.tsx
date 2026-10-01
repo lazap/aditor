@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { MergeView, unifiedMergeView } from "@codemirror/merge";
-import { gitDiff, type FileDiff } from "../git/api";
+import { gitCommitFileDiff, gitDiff, type FileDiff } from "../git/api";
 import { aditorEditorTheme, aditorHighlighting, darkMode, darkModeFor } from "../editor/theme";
 import { loadLanguage } from "../editor/language";
 import { vimMode, vimMotions } from "../editor/vim";
@@ -18,6 +18,11 @@ interface Props {
   refreshToken: number;
   /** Take focus once built, so vim motions work without a click first. */
   autoFocus?: boolean;
+  /**
+   * Show what this commit did to the file (its first parent against it)
+   * instead of HEAD against the working tree.
+   */
+  commit?: { id: string; oldPath: string | null };
 }
 
 function formatBytes(n: number): string {
@@ -32,7 +37,7 @@ function editorsOf(instance: EditorView | MergeView | null): EditorView[] {
   return instance instanceof MergeView ? [instance.b, instance.a] : [instance];
 }
 
-export function DiffViewer({ path, layout, refreshToken, autoFocus }: Props) {
+export function DiffViewer({ path, layout, refreshToken, autoFocus, commit }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<EditorView | MergeView | null>(null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
@@ -52,13 +57,16 @@ export function DiffViewer({ path, layout, refreshToken, autoFocus }: Props) {
   useEffect(() => {
     let stale = false;
     setError(null);
-    gitDiff(path)
+    const load = commit
+      ? gitCommitFileDiff(commit.id, { path, oldPath: commit.oldPath })
+      : gitDiff(path);
+    load
       .then((d) => !stale && setDiff(d))
       .catch((e) => !stale && setError(String(e)));
     return () => {
       stale = true;
     };
-  }, [path, refreshToken]);
+  }, [path, refreshToken, commit?.id, commit?.oldPath]);
 
   useEffect(() => {
     const host = hostRef.current;

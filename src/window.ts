@@ -155,6 +155,37 @@ export async function closeDiffWindow(): Promise<void> {
   await (await WebviewWindow.getByLabel("diff"))?.close();
 }
 
+/** What the log window should show: a filter, and/or a commit to select. */
+export interface LogTarget {
+  /** A revision or `a..b` range to walk. */
+  branch?: string;
+  /** Only the history of this absolute path. */
+  path?: string;
+  /** Select this commit once it is loaded. */
+  select?: string;
+  /** With `select`: open this file's diff in that commit. */
+  file?: string;
+}
+
+/**
+ * The git log, IntelliJ's ⌘9, in a window of its own: a graph wants the width
+ * the rail cannot give it. One only; asking again retargets it.
+ */
+export async function openLogWindow(target: LogTarget = {}): Promise<void> {
+  const url = `index.html?view=log&target=${encodeURIComponent(JSON.stringify(target))}`;
+  const created = await showWindow("log", url, {
+    title: "Git Log",
+    width: 1200,
+    height: 760,
+    minWidth: 720,
+    minHeight: 400,
+  });
+  if (!created) await emitTo("log", LOG_TARGET, target);
+}
+
+/** Main or viewer -> log window: show this instead. */
+export const LOG_TARGET = "log://target";
+
 export const basename = (path: string): string => path.split("/").pop() || path;
 
 /** Main -> viewer window: show this path, in this mode, instead. */

@@ -6,6 +6,9 @@ import { aditorEditorTheme, aditorHighlighting, darkMode, darkModeFor } from "..
 import { loadLanguage } from "../editor/language";
 import { vimMode, vimMotions } from "../editor/vim";
 import { jumpLine, jumpToLine } from "../editor/jumpLine";
+import { blame, blameGutter } from "../editor/blame";
+import { gitBlame, type BlameHunk } from "../git/api";
+import { openLogWindow } from "../window";
 import { useSetting } from "../settings/store";
 import { useTheme } from "../theme";
 
@@ -26,6 +29,10 @@ interface Props {
   autoFocus?: boolean;
   /** Scroll to and mark this line once the file is up. */
   target?: LineTarget | null;
+  /** Show the blame gutter. */
+  annotate?: boolean;
+  /** Blame could not be read (not committed, not a repo): the owner says so. */
+  onAnnotateError?(message: string): void;
 }
 
 function formatBytes(n: number): string {
@@ -34,7 +41,14 @@ function formatBytes(n: number): string {
     : `${Math.round(n / 1024)} KB`;
 }
 
-export function FileViewer({ path, refreshToken, autoFocus, target }: Props) {
+export function FileViewer({
+  path,
+  refreshToken,
+  autoFocus,
+  target,
+  annotate,
+  onAnnotateError,
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [contents, setContents] = useState<FileContents | null>(null);
@@ -50,6 +64,30 @@ export function FileViewer({ path, refreshToken, autoFocus, target }: Props) {
   themeRef.current = theme;
   const autoFocusRef = useRef(autoFocus);
   autoFocusRef.current = autoFocus;
+  const [hunks, setHunks] = useState<BlameHunk[] | null>(null);
+  const hunksRef = useRef(hunks);
+  hunksRef.current = hunks;
+  const onAnnotateErrorRef = useRef(onAnnotateError);
+  onAnnotateErrorRef.current = onAnnotateError;
+
+  // Re-read with the file: blame is of the working copy, so an edit moves it.
+  useEffect(() => {
+    if (!annotate) {
+      setHunks(null);
+      return;
+    }
+    let stale = false;
+    gitBlame(path)
+      .then((h) => !stale && setHunks(h))
+      .catch((e) => {
+        if (stale) return;
+        setHunks(null);
+        onAnnotateErrorRef.current?.(String(e).replace(/^Error:\s*/, ""));
+      });
+    return () => {
+      stale = true;
+    };
+  }, [annotate, path, refreshToken]);
 
   // A target belongs to the path it arrived with, and must land on that file's
   // view -- not on the previous file's, still up while the new one loads. So
@@ -111,6 +149,7 @@ export function FileViewer({ path, refreshToken, autoFocus, target }: Props) {
         vimMode.of(vimMotions(vimRef.current)),
         darkMode.of(darkModeFor(themeRef.current)),
         jumpLine,
+        blame.of(gutterFor(hunksRef.current, path)),
         ...lang,
       ];
 
@@ -142,6 +181,10 @@ export function FileViewer({ path, refreshToken, autoFocus, target }: Props) {
     viewRef.current?.dispatch({ effects: darkMode.reconfigure(darkModeFor(theme)) });
   }, [theme]);
 
+  useEffect(() => {
+    viewRef.current?.dispatch({ effects: blame.reconfigure(gutterFor(hunks, pathRef.current)) });
+  }, [hunks]);
+
   useEffect(
     () => () => {
       viewRef.current?.destroy();
@@ -169,3 +212,7 @@ export function FileViewer({ path, refreshToken, autoFocus, target }: Props) {
     </>
   );
 }
+
+/** A click opens the commit in the log, with this file's diff in it. */
+const gutterFor = (hunks: BlameHunk[] | null, path: string): Extension =>
+  hunks ? blameGutter(hunks, (id) => void openLogWindow({ select: id, file: path })) : [];

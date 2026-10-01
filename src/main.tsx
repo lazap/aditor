@@ -6,6 +6,7 @@ import App from "./App";
 import { Settings } from "./components/Settings";
 import { TemplatesWindow } from "./components/TemplatePicker";
 import { DiffWindow } from "./components/DiffWindow";
+import { LogWindow } from "./components/LogWindow";
 import { flush, hydrate, syncWithPeers } from "./settings/store";
 import { adopt } from "./shortcuts/store";
 import { watchTheme } from "./theme";
@@ -25,6 +26,7 @@ function root() {
   if (view === "settings") return <Settings onClose={close} />;
   if (view === "templates") return <TemplatesWindow onClose={close} />;
   if (view === "diff") return <DiffWindow onClose={close} />;
+  if (view === "log") return <LogWindow onClose={close} />;
   return <App />;
 }
 
