@@ -190,6 +190,10 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
       ? (src.recents as Settings["recents"]).filter((r) => typeof r?.path === "string")
       : DEFAULTS.recents,
     projects: isObject(src.projects) ? (src.projects as Settings["projects"]) : DEFAULTS.projects,
+    openTabs: Array.isArray(src.openTabs)
+      ? src.openTabs.filter((t): t is string => typeof t === "string")
+      : DEFAULTS.openTabs,
+    activeTab: typeof src.activeTab === "string" ? src.activeTab : null,
     lastAgent: typeof src.lastAgent === "string" ? src.lastAgent : null,
     layout: {
       splitFraction:

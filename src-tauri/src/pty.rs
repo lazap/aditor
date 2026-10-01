@@ -20,7 +20,7 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use crate::mcp::McpServer;
 
@@ -41,6 +41,9 @@ pub struct PtySession {
     /// pane. The killer lets `pty_kill` signal the child directly while the
     /// reader thread keeps the `Child` itself for `wait()`.
     killer: Box<dyn ChildKiller + Send + Sync>,
+    /// Label of the window whose pane spawned it. Several editor windows can be
+    /// open, and reloading or closing one must reap only its own agents.
+    window: String,
 }
 
 #[derive(Default)]
@@ -247,6 +250,7 @@ fn agent_args(command: Option<&str>, id: &str, mcp: &McpServer) -> String {
 #[tauri::command]
 pub fn pty_spawn(
     app: AppHandle,
+    window: WebviewWindow,
     registry: State<'_, Arc<PtyRegistry>>,
     mcp: State<'_, McpServer>,
     command: Option<String>,
@@ -288,6 +292,7 @@ pub fn pty_spawn(
             writer,
             master: pair.master,
             killer: child.clone_killer(),
+            window: window.label().to_string(),
         },
     );
 
@@ -395,25 +400,41 @@ pub fn pty_kill(
     Ok(())
 }
 
-/// Reap every session.
+/// Reap the sessions one window spawned, returning their ids.
 ///
 /// The frontend cannot be the only thing responsible for cleanup: a full page
 /// reload throws away the JS context *without* running React's effect cleanups,
 /// so no `pty_kill` is ever sent and the agent outlives the page that owned it.
-/// Same on window close. So the app calls this once at startup -- any session
-/// alive before the first spawn is an orphan from a previous page -- and the
-/// window-destroyed handler calls it on the way out.
-pub fn kill_all(registry: &PtyRegistry) {
+/// Same on window close. So each editor window calls this once at startup --
+/// any session it owned before its first spawn is an orphan from a previous
+/// page -- and the window-destroyed handler calls it on the way out. Scoped to
+/// the window, so every other editor window's agents carry on.
+pub fn kill_window(registry: &PtyRegistry, label: &str) -> Vec<String> {
     let mut sessions = registry.sessions.lock().unwrap();
-    for (_, session) in sessions.iter_mut() {
-        let _ = session.killer.kill();
+    let ids: Vec<String> = sessions
+        .iter()
+        .filter(|(_, s)| s.window == label)
+        .map(|(id, _)| id.clone())
+        .collect();
+    for id in &ids {
+        if let Some(mut session) = sessions.remove(id) {
+            let _ = session.killer.kill();
+        }
     }
-    sessions.clear();
+    ids
 }
 
+/// The calling window's orphans: called once per page load, before the first
+/// spawn, so a reload does not leave the previous page's agents running.
 #[tauri::command]
-pub fn pty_kill_all(registry: State<'_, Arc<PtyRegistry>>) -> Result<(), String> {
-    kill_all(&registry);
+pub fn pty_kill_window(
+    window: WebviewWindow,
+    registry: State<'_, Arc<PtyRegistry>>,
+    mcp: State<'_, McpServer>,
+) -> Result<(), String> {
+    for id in kill_window(&registry, window.label()) {
+        mcp.clear(&id);
+    }
     Ok(())
 }
 

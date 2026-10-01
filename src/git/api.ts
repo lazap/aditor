@@ -39,19 +39,21 @@ export type FileDiff =
   | { kind: "tooLarge"; bytes: number }
   | { kind: "notRepo" };
 
-export const gitStatus = () => invoke<RepoStatus>("git_status");
-export const gitDiff = (path: string) => invoke<FileDiff>("git_diff", { path });
+export const gitStatus = (root: string) => invoke<RepoStatus>("git_status", { root });
+export const gitDiff = (root: string, path: string) => invoke<FileDiff>("git_diff", { root, path });
 
-export const gitStage = (paths: string[]) => invoke<void>("git_stage", { paths });
-export const gitUnstage = (paths: string[]) =>
-  invoke<void>("git_unstage", { paths });
-export const gitStageAll = () => invoke<void>("git_stage_all");
-export const gitUnstageAll = () => invoke<void>("git_unstage_all");
-export const gitCommit = (message: string) =>
-  invoke<void>("git_commit", { message });
-export const gitPull = (rebase: boolean) => invoke<string>("git_pull", { rebase });
-export const gitPush = (opts: { force?: boolean; tags?: boolean } = {}) =>
-  invoke<string>("git_push", { force: !!opts.force, tags: !!opts.tags });
+export const gitStage = (root: string, paths: string[]) =>
+  invoke<void>("git_stage", { root, paths });
+export const gitUnstage = (root: string, paths: string[]) =>
+  invoke<void>("git_unstage", { root, paths });
+export const gitStageAll = (root: string) => invoke<void>("git_stage_all", { root });
+export const gitUnstageAll = (root: string) => invoke<void>("git_unstage_all", { root });
+export const gitCommit = (root: string, message: string) =>
+  invoke<void>("git_commit", { root, message });
+export const gitPull = (root: string, rebase: boolean) =>
+  invoke<string>("git_pull", { root, rebase });
+export const gitPush = (root: string, opts: { force?: boolean; tags?: boolean } = {}) =>
+  invoke<string>("git_push", { root, force: !!opts.force, tags: !!opts.tags });
 
 export interface BranchInfo {
   /** `feature` locally, `origin/feature` for a remote branch. */
@@ -72,40 +74,45 @@ export interface BranchList {
   remote: BranchInfo[];
 }
 
-export const gitBranches = () => invoke<BranchList>("git_branches");
+export const gitBranches = (root: string) => invoke<BranchList>("git_branches", { root });
 /** A remote branch is switched to by creating the local branch tracking it. */
-export const gitCheckout = (b: BranchInfo) =>
-  invoke<void>("git_checkout", { name: b.name, remote: b.remote });
-export const gitFetch = () => invoke<void>("git_fetch");
+export const gitCheckout = (root: string, b: BranchInfo) =>
+  invoke<void>("git_checkout", { root, name: b.name, remote: b.remote });
+export const gitFetch = (root: string) => invoke<void>("git_fetch", { root });
 
 /**
  * Put files back the way HEAD has them. Files HEAD does not have are only
  * unstaged, unless `deleteUntracked` says to delete them too.
  */
-export const gitRollback = (paths: string[], deleteUntracked: boolean) =>
-  invoke<void>("git_rollback", { paths, deleteUntracked });
+export const gitRollback = (root: string, paths: string[], deleteUntracked: boolean) =>
+  invoke<void>("git_rollback", { root, paths, deleteUntracked });
 
-export const gitBranchCreate = (name: string, from: string | null, checkout: boolean) =>
-  invoke<void>("git_branch_create", { name, from, checkout });
-export const gitBranchRename = (name: string, to: string) =>
-  invoke<void>("git_branch_rename", { name, to });
-export const gitBranchDelete = (b: BranchInfo, force: boolean) =>
-  invoke<void>("git_branch_delete", { name: b.name, remote: b.remote, force });
-export const gitMerge = (name: string) => invoke<string>("git_merge", { name });
-export const gitRebase = (onto: string) => invoke<string>("git_rebase", { onto });
-export const gitCherryPick = (id: string) => invoke<string>("git_cherry_pick", { id });
-export const gitRevert = (id: string) => invoke<string>("git_revert", { id });
+export const gitBranchCreate = (root: string, name: string, from: string | null, checkout: boolean) =>
+  invoke<void>("git_branch_create", { root, name, from, checkout });
+export const gitBranchRename = (root: string, name: string, to: string) =>
+  invoke<void>("git_branch_rename", { root, name, to });
+export const gitBranchDelete = (root: string, b: BranchInfo, force: boolean) =>
+  invoke<void>("git_branch_delete", { root, name: b.name, remote: b.remote, force });
+export const gitMerge = (root: string, name: string) => invoke<string>("git_merge", { root, name });
+export const gitRebase = (root: string, onto: string) =>
+  invoke<string>("git_rebase", { root, onto });
+export const gitCherryPick = (root: string, id: string) =>
+  invoke<string>("git_cherry_pick", { root, id });
+export const gitRevert = (root: string, id: string) => invoke<string>("git_revert", { root, id });
 export type ResetMode = "soft" | "mixed" | "hard";
-export const gitReset = (id: string, mode: ResetMode) =>
-  invoke<void>("git_reset", { id, mode });
-export const gitCheckoutRevision = (id: string) =>
-  invoke<void>("git_checkout_revision", { id });
-export const gitTagCreate = (name: string, id: string, message: string | null) =>
-  invoke<void>("git_tag_create", { name, id, message });
-export const gitTagDelete = (name: string) => invoke<void>("git_tag_delete", { name });
-export const gitPushTag = (name: string) => invoke<string>("git_push_tag", { name });
-export const gitOperationContinue = () => invoke<string>("git_operation_continue");
-export const gitOperationAbort = () => invoke<void>("git_operation_abort");
+export const gitReset = (root: string, id: string, mode: ResetMode) =>
+  invoke<void>("git_reset", { root, id, mode });
+export const gitCheckoutRevision = (root: string, id: string) =>
+  invoke<void>("git_checkout_revision", { root, id });
+export const gitTagCreate = (root: string, name: string, id: string, message: string | null) =>
+  invoke<void>("git_tag_create", { root, name, id, message });
+export const gitTagDelete = (root: string, name: string) =>
+  invoke<void>("git_tag_delete", { root, name });
+export const gitPushTag = (root: string, name: string) =>
+  invoke<string>("git_push_tag", { root, name });
+export const gitOperationContinue = (root: string) =>
+  invoke<string>("git_operation_continue", { root });
+export const gitOperationAbort = (root: string) => invoke<void>("git_operation_abort", { root });
 
 // ---- history ----
 
@@ -158,18 +165,19 @@ export interface LogQuery {
   path?: string | null;
 }
 
-export const gitLog = (skip: number, limit: number, q: LogQuery = {}) =>
+export const gitLog = (root: string, skip: number, limit: number, q: LogQuery = {}) =>
   invoke<CommitInfo[]>("git_log", {
+    root,
     skip,
     limit,
     branch: q.branch || null,
     text: q.text || null,
     path: q.path || null,
   });
-export const gitCommitDetails = (id: string) =>
-  invoke<CommitDetails>("git_commit_details", { id });
-export const gitCommitFileDiff = (id: string, f: Pick<CommitFile, "path" | "oldPath">) =>
-  invoke<FileDiff>("git_commit_file_diff", { id, path: f.path, oldPath: f.oldPath });
+export const gitCommitDetails = (root: string, id: string) =>
+  invoke<CommitDetails>("git_commit_details", { root, id });
+export const gitCommitFileDiff = (root: string, id: string, f: Pick<CommitFile, "path" | "oldPath">) =>
+  invoke<FileDiff>("git_commit_file_diff", { root, id, path: f.path, oldPath: f.oldPath });
 
 export interface BlameHunk {
   /** 1-based first line in the working file. */
@@ -184,7 +192,8 @@ export interface BlameHunk {
 }
 
 export const UNCOMMITTED = "0".repeat(40);
-export const gitBlame = (path: string) => invoke<BlameHunk[]>("git_blame", { path });
+export const gitBlame = (root: string, path: string) =>
+  invoke<BlameHunk[]>("git_blame", { root, path });
 
 export interface Outgoing {
   branch: string | null;
@@ -193,7 +202,7 @@ export interface Outgoing {
   commits: CommitInfo[];
 }
 
-export const gitOutgoing = () => invoke<Outgoing>("git_outgoing");
+export const gitOutgoing = (root: string) => invoke<Outgoing>("git_outgoing", { root });
 
 /** The paths a stage/unstage of this entry must name: both ends of a rename. */
 export const pathsOf = (f: FileStatus): string[] =>

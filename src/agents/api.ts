@@ -57,15 +57,20 @@ export interface AgentSessions {
   limits: UsageLimits | null;
 }
 
-export const agentSessions = (agentId: string) =>
-  invoke<AgentSessions>("agent_sessions", { agentId });
+export const agentSessions = (root: string, agentId: string) =>
+  invoke<AgentSessions>("agent_sessions", { root, agentId });
 
 /** Fetch the account's limits live. The panel's only network call. */
 export const agentRefreshLimits = (agentId: string) =>
   invoke<UsageLimits>("agent_refresh_limits", { agentId });
 
-export const agentWatch = (agentId: string) =>
-  invoke<void>("agent_watch", { agentId });
+export const agentWatch = (root: string, agentId: string) =>
+  invoke<void>("agent_watch", { root, agentId });
+
+/** `agents://changed`: the project whose agent panel should refresh. */
+export interface AgentsChanged {
+  root: string;
+}
 
 /** Everything the session pushed through the model, cache included. */
 export const totalTokens = (c: Counters) =>

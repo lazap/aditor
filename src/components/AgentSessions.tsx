@@ -175,7 +175,7 @@ export function AgentSessions({
   useEffect(() => {
     if (!agentId) return;
     let stale = false;
-    agentSessions(agentId)
+    agentSessions(workspace, agentId)
       .then((d) => {
         if (stale) return;
         setData(d);

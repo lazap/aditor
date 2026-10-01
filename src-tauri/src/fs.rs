@@ -1,6 +1,7 @@
 //! Reading the workspace: gitignore-aware directory listing, guarded file
 //! reads, and a filesystem watcher so the view reflects what the agent just did.
 
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 use std::time::Duration;
@@ -8,7 +9,7 @@ use std::time::Duration;
 use ignore::WalkBuilder;
 use notify::{EventKind, RecursiveMode, Watcher, recommended_watcher};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 /// Refuse anything larger. A stray log or minified bundle would otherwise lock
 /// the UI while CodeMirror tried to lay it out. Shared with `git`, so a diff
@@ -46,13 +47,40 @@ pub enum FileContents {
     Binary,
 }
 
-/// The workspace currently open. Every path from the webview is checked against
-/// it -- the frontend asks for files by string, so without this a bug or a
-/// crafted path could read anything on disk.
+/// The workspaces currently open -- one per project tab, across every window --
+/// each with its watcher. Every command names the root it acts on, and every
+/// path from the webview is checked against that root: the frontend asks for
+/// files by string, so without this a bug or a crafted path could read
+/// anything on disk. A root only gets in through `open_workspace`, which is the
+/// user picking a folder.
 #[derive(Default)]
 pub struct Workspace {
-    root: Mutex<Option<PathBuf>>,
-    watcher: Mutex<Option<Box<dyn Watcher + Send>>>,
+    open: Mutex<HashMap<PathBuf, Open>>,
+}
+
+struct Open {
+    /// Dropping it stops it.
+    _watcher: Box<dyn Watcher + Send>,
+    /// Editor windows with a tab on this root. The same folder can be open in
+    /// two windows, and closing it in one must not pull it from under the other.
+    windows: HashSet<String>,
+}
+
+impl Workspace {
+    /// An editor window has gone: release every root it held.
+    pub fn release_window(&self, label: &str) {
+        self.open.lock().unwrap().retain(|_, o| {
+            o.windows.remove(label);
+            !o.windows.is_empty()
+        });
+    }
+}
+
+/// `fs://changed`: which workspace, and what moved in it.
+#[derive(Clone, Serialize)]
+struct Changed {
+    root: String,
+    paths: Vec<String>,
 }
 
 /// Sniff for NUL in the head of a buffer. Shared with `git` so a file and its
@@ -61,17 +89,20 @@ pub fn looks_binary(bytes: &[u8]) -> bool {
     bytes[..bytes.len().min(SNIFF_BYTES)].contains(&0)
 }
 
-pub fn workspace_root(ws: &Workspace) -> Result<PathBuf, String> {
-    ws.root
-        .lock()
-        .unwrap()
-        .clone()
-        .ok_or_else(|| "no workspace open".to_string())
+/// `root` as an open workspace, or an error. The frontend hands back the
+/// canonical string `open_workspace` returned, so this is an exact lookup.
+pub fn workspace_root(ws: &Workspace, root: &str) -> Result<PathBuf, String> {
+    let root = PathBuf::from(root);
+    if ws.open.lock().unwrap().contains_key(&root) {
+        Ok(root)
+    } else {
+        Err(format!("{} is not an open workspace", root.display()))
+    }
 }
 
-/// Resolve `path` and assert it stays inside the workspace root.
-fn resolve_in_workspace(ws: &Workspace, path: &str) -> Result<PathBuf, String> {
-    let root = workspace_root(ws)?;
+/// Resolve `path` and assert it stays inside the workspace `root`.
+fn resolve_in_workspace(ws: &Workspace, root: &str, path: &str) -> Result<PathBuf, String> {
+    let root = workspace_root(ws, root)?;
     let candidate = Path::new(path)
         .canonicalize()
         .map_err(|e| format!("{path}: {e}"))?;
@@ -84,6 +115,7 @@ fn resolve_in_workspace(ws: &Workspace, path: &str) -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn open_workspace(
     app: AppHandle,
+    window: WebviewWindow,
     ws: State<'_, Workspace>,
     path: String,
 ) -> Result<String, String> {
@@ -93,12 +125,20 @@ pub fn open_workspace(
     if !root.is_dir() {
         return Err(format!("{path} is not a directory"));
     }
+    let root_str = root.to_string_lossy().to_string();
+    // Already open -- in another window, or this one before a reload. One
+    // watcher serves them all.
+    if let Some(open) = ws.open.lock().unwrap().get_mut(&root) {
+        open.windows.insert(window.label().to_string());
+        return Ok(root_str);
+    }
 
     // One recursive watcher for the whole workspace. Events are coarse on
     // purpose -- the frontend debounces per path and refetches what it cares
     // about, which is far simpler than trying to interpret rename/atomic-save
     // sequences here.
     let emitter = app.clone();
+    let tag = root_str.clone();
     let mut watcher = recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             if matches!(
@@ -112,7 +152,13 @@ pub fn open_workspace(
                     .map(|p| p.to_string_lossy().to_string())
                     .collect();
                 if !paths.is_empty() {
-                    let _ = emitter.emit("fs://changed", paths);
+                    let _ = emitter.emit(
+                        "fs://changed",
+                        Changed {
+                            root: tag.clone(),
+                            paths,
+                        },
+                    );
                 }
             }
         }
@@ -123,21 +169,49 @@ pub fn open_workspace(
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
 
-    *ws.root.lock().unwrap() = Some(root.clone());
-    // Replacing the previous watcher drops it, which stops it.
-    *ws.watcher.lock().unwrap() = Some(Box::new(watcher));
+    ws.open.lock().unwrap().insert(
+        root,
+        Open {
+            _watcher: Box::new(watcher),
+            windows: HashSet::from([window.label().to_string()]),
+        },
+    );
+    Ok(root_str)
+}
 
-    Ok(root.to_string_lossy().to_string())
+/// This window closed its tab on `root`. Once no window holds it, its watcher
+/// stops and the agent watcher for the same root goes with it.
+#[tauri::command]
+pub fn close_workspace(
+    window: WebviewWindow,
+    ws: State<'_, Workspace>,
+    agents: State<'_, crate::agents::AgentState>,
+    root: String,
+) {
+    let root = PathBuf::from(root);
+    let mut open = ws.open.lock().unwrap();
+    let Some(entry) = open.get_mut(&root) else {
+        return;
+    };
+    entry.windows.remove(window.label());
+    if entry.windows.is_empty() {
+        open.remove(&root);
+        agents.forget(&root);
+    }
 }
 
 /// List one level of `path`. Lazy rather than a full walk: the tree stays
 /// instant on a large repo, and ignored trees like `node_modules` and `target`
 /// are never enumerated at all.
 #[tauri::command]
-pub fn list_dir(ws: State<'_, Workspace>, path: Option<String>) -> Result<Vec<DirEntry>, String> {
+pub fn list_dir(
+    ws: State<'_, Workspace>,
+    root: String,
+    path: Option<String>,
+) -> Result<Vec<DirEntry>, String> {
     let dir = match path {
-        Some(p) => resolve_in_workspace(&ws, &p)?,
-        None => workspace_root(&ws)?,
+        Some(p) => resolve_in_workspace(&ws, &root, &p)?,
+        None => workspace_root(&ws, &root)?,
     };
 
     let mut entries: Vec<DirEntry> = WalkBuilder::new(&dir)
@@ -165,8 +239,12 @@ pub fn list_dir(ws: State<'_, Workspace>, path: Option<String>) -> Result<Vec<Di
 }
 
 #[tauri::command]
-pub fn read_file(ws: State<'_, Workspace>, path: String) -> Result<FileContents, String> {
-    let file = resolve_in_workspace(&ws, &path)?;
+pub fn read_file(
+    ws: State<'_, Workspace>,
+    root: String,
+    path: String,
+) -> Result<FileContents, String> {
+    let file = resolve_in_workspace(&ws, &root, &path)?;
     let meta = std::fs::metadata(&file).map_err(|e| e.to_string())?;
     if meta.len() > MAX_FILE_BYTES {
         return Ok(FileContents::TooLarge { bytes: meta.len() });
@@ -183,6 +261,67 @@ pub fn read_file(ws: State<'_, Workspace>, path: String) -> Result<FileContents,
         // treating them as binary is better than guessing an encoding.
         Err(_) => Ok(FileContents::Binary),
     }
+}
+
+/// Save the editor's text over a file the user has made writable. Same rule as
+/// `read_file`: the file must already exist inside the workspace, so this can
+/// only ever overwrite something the viewer could show.
+#[tauri::command]
+pub fn write_file(
+    ws: State<'_, Workspace>,
+    root: String,
+    path: String,
+    text: String,
+) -> Result<(), String> {
+    let file = resolve_in_workspace(&ws, &root, &path)?;
+    if !file.is_file() {
+        return Err(format!("{path} is not a file"));
+    }
+    std::fs::write(&file, text).map_err(|e| format!("{path}: {e}"))
+}
+
+/// Create an empty file at `rel`, relative to the workspace root, making any
+/// missing parent directories. Returns its absolute path.
+///
+/// The file does not exist yet, so it cannot be canonicalized the way every
+/// other path here is. Instead `..` is refused outright, and the parent --
+/// which does exist once created -- is canonicalized and checked, which also
+/// catches a symlinked directory that points out of the workspace.
+#[tauri::command]
+pub fn create_file(ws: State<'_, Workspace>, root: String, rel: String) -> Result<String, String> {
+    let root = workspace_root(&ws, &root)?;
+    create_in(&root, &rel).map(|f| f.to_string_lossy().to_string())
+}
+
+fn create_in(root: &Path, rel: &str) -> Result<PathBuf, String> {
+    let rel_path = Path::new(rel.trim());
+    let name = rel_path
+        .file_name()
+        .ok_or_else(|| "A new file needs a name.".to_string())?
+        .to_owned();
+    if rel_path.is_absolute()
+        || rel_path
+            .components()
+            .any(|c| !matches!(c, std::path::Component::Normal(_)))
+    {
+        return Err("Give a path inside the project, without `..`.".into());
+    }
+    let parent = root.join(rel_path.parent().unwrap_or(Path::new("")));
+    std::fs::create_dir_all(&parent).map_err(|e| format!("{}: {e}", parent.display()))?;
+    let parent = parent.canonicalize().map_err(|e| e.to_string())?;
+    if !parent.starts_with(root) {
+        return Err(format!("{rel} is outside the workspace"));
+    }
+    let file = parent.join(name);
+    std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&file)
+        .map_err(|e| match e.kind() {
+            std::io::ErrorKind::AlreadyExists => format!("{rel} already exists."),
+            _ => format!("{rel}: {e}"),
+        })?;
+    Ok(file)
 }
 
 /// Debounce window the frontend should use when coalescing `fs://changed`.
@@ -218,9 +357,10 @@ pub fn dirs_exist(paths: Vec<String>) -> Vec<bool> {
 #[tauri::command]
 pub async fn resolve_file_links(
     ws: State<'_, Workspace>,
+    root: String,
     candidates: Vec<String>,
 ) -> Result<Vec<Option<String>>, String> {
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     tauri::async_runtime::spawn_blocking(move || {
         candidates
             .iter()
@@ -241,4 +381,52 @@ pub async fn resolve_file_links(
 fn resolve_link(root: &Path, candidate: &str) -> Option<String> {
     let file = root.join(candidate).canonicalize().ok()?;
     (file.starts_with(root) && file.is_file()).then(|| file.to_string_lossy().to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(name: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("aditor-fs-{name}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        // Canonical, as `workspace_root` hands it over: /var is /private/var.
+        dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn creates_nested_files_inside_the_root() {
+        let root = scratch("nested");
+        let file = create_in(&root, "config/local/.env").unwrap();
+        assert_eq!(file, root.join("config/local/.env"));
+        assert!(file.is_file());
+    }
+
+    #[test]
+    fn refuses_to_leave_the_root() {
+        let root = scratch("escape");
+        assert!(create_in(&root, "../outside.txt").is_err());
+        assert!(create_in(&root, "a/../../outside.txt").is_err());
+        assert!(create_in(&root, "/tmp/outside.txt").is_err());
+        assert!(create_in(&root, "").is_err());
+    }
+
+    #[test]
+    fn refuses_a_symlinked_directory_out_of_the_root() {
+        let root = scratch("symlink");
+        let outside = scratch("symlink-target");
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        assert!(create_in(&root, "link/x.txt").is_err());
+        assert!(!outside.join("x.txt").exists());
+    }
+
+    #[test]
+    fn never_overwrites_an_existing_file() {
+        let root = scratch("exists");
+        std::fs::write(root.join(".env"), "KEEP=1").unwrap();
+        let err = create_in(&root, ".env").unwrap_err();
+        assert!(err.contains("already exists"));
+        assert_eq!(std::fs::read_to_string(root.join(".env")).unwrap(), "KEEP=1");
+    }
 }

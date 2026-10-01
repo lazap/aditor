@@ -129,7 +129,7 @@ function Tree({
     if (todo.length === 0) return;
     for (const d of todo) inflight.current.add(d);
 
-    void Promise.allSettled(todo.map((d) => listDir(d))).then((results) => {
+    void Promise.allSettled(todo.map((d) => listDir(root, d))).then((results) => {
       for (const d of todo) inflight.current.delete(d);
       const ok: Array<[string, DirEntry[]]> = [];
       const bad: Array<[string, string]> = [];
@@ -167,7 +167,7 @@ function Tree({
     if (dirs.length === 0) return;
     let stale = false;
 
-    void Promise.allSettled(dirs.map((d) => listDir(d))).then((results) => {
+    void Promise.allSettled(dirs.map((d) => listDir(root, d))).then((results) => {
       if (stale) return; // a newer refresh already won
       setCache((prev) => {
         const next = new Map(prev);

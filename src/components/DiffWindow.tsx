@@ -3,13 +3,17 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { DiffViewer } from "./DiffViewer";
 import { FileViewer, type LineTarget } from "./FileViewer";
-import { AnnotateToggle, DiffLayoutToggle } from "./BottomPane";
+import { AnnotateToggle, DiffLayoutToggle, EditToggle } from "./BottomPane";
+import { useWritable } from "../projects";
 import { eventChord } from "../shortcuts/keys";
 import { chordFor } from "../shortcuts/store";
 import { BADGE, gitStatus, type ChangeKind } from "../git/api";
-import { fsDebounceMs } from "../fs/api";
+import { fsDebounceMs, type FsChanged } from "../fs/api";
 import { useSetting } from "../settings/store";
-import { basename, DIFF_PATH, type ViewerMode, type ViewerTarget } from "../window";
+import { basename, DIFF_PATH, viewerTitle, type ViewerMode, type ViewerTarget } from "../window";
+
+const initialRoot = (): string =>
+  new URLSearchParams(location.search).get("root") ?? "";
 
 const initialPath = (): string =>
   new URLSearchParams(location.search).get("path") ?? "";
@@ -26,11 +30,13 @@ const initialTarget = (): LineTarget | null => {
  * One file -- its diff, or the file itself -- in a window of its own.
  *
  * It keeps itself current rather than being fed by App: the watcher's
- * `fs://changed` reaches every window, and `git_diff` / `git_status` answer
- * against the one open workspace whichever window asks.
+ * `fs://changed` reaches every window, tagged with its workspace, and
+ * `git_diff` / `git_status` answer for whichever root this window was given.
  */
 export function DiffWindow({ onClose }: { onClose(): void }) {
+  const [root, setRoot] = useState(initialRoot);
   const [path, setPath] = useState(initialPath);
+  const editable = useWritable(root, path);
   const [mode, setMode] = useState(initialMode);
   const [target, setTarget] = useState(initialTarget);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -61,22 +67,26 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
         return;
       }
       if (e.key !== "Escape") return;
+      // Escape inside a file being edited is the editor's (vim users reach for
+      // it constantly); closing the window on it would be a nasty surprise.
+      if ((e.target as HTMLElement | null)?.isContentEditable && editable) return;
       e.preventDefault();
       onClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [onClose, editable]);
 
   useEffect(() => {
     const unlisten = listen<ViewerTarget>(DIFF_PATH, ({ payload }) => {
+      setRoot(payload.root);
       setPath(payload.path);
       setMode(payload.mode);
       setTarget(
         payload.line ? { line: payload.line, token: Date.now() } : null,
       );
       setStatus(undefined);
-      void getCurrentWindow().setTitle(basename(payload.path));
+      void getCurrentWindow().setTitle(viewerTitle(payload.root, payload.path));
     });
     return () => void unlisten.then((u) => u());
   }, []);
@@ -87,7 +97,8 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
     let debounce = 150;
     void fsDebounceMs().then((ms) => (debounce = ms));
 
-    const unlisten = listen<string[]>("fs://changed", () => {
+    const unlisten = listen<FsChanged>("fs://changed", ({ payload }) => {
+      if (payload.root !== root) return;
       window.clearTimeout(timer);
       timer = window.setTimeout(() => setRefreshToken((t) => t + 1), debounce);
     });
@@ -95,11 +106,11 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
       window.clearTimeout(timer);
       void unlisten.then((u) => u());
     };
-  }, []);
+  }, [root]);
 
   useEffect(() => {
     let stale = false;
-    gitStatus()
+    gitStatus(root)
       .then((s) => {
         if (!stale) setStatus(s.files.find((f) => f.path === path)?.status ?? null);
       })
@@ -107,7 +118,7 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
     return () => {
       stale = true;
     };
-  }, [path, refreshToken]);
+  }, [root, path, refreshToken]);
 
   return (
     <div className="viewer diff-page">
@@ -145,7 +156,7 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
         {annotate && annotateError && (
           <span className="viewer-message error viewer-inline">{annotateError}</span>
         )}
-        <span className="viewer-badge">read-only</span>
+        <EditToggle root={root} path={path} disabled={mode !== "file"} />
         <button
           className="viewer-close"
           ref={closeRef}
@@ -158,12 +169,14 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
 
       {mode === "file" && (
         <FileViewer
+          root={root}
           path={path}
           refreshToken={refreshToken}
           target={target}
           autoFocus
           annotate={annotate}
           onAnnotateError={setAnnotateError}
+          editable={editable}
         />
       )}
       {mode === "diff" && status === null && (
@@ -171,6 +184,7 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
       )}
       {mode === "diff" && status && (
         <DiffViewer
+          root={root}
           path={path}
           layout={layout}
           refreshToken={refreshToken}

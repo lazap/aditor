@@ -5,8 +5,11 @@ import { BADGE, type ChangeKind } from "../git/api";
 import { patchLayout, useSetting } from "../settings/store";
 import { chordHint } from "../shortcuts/store";
 import { basename, openViewerWindow, type ViewerMode as Mode } from "../window";
+import { setWritable, useWritable } from "../projects";
 
 interface Props {
+  /** Workspace the file belongs to; every read is checked against it. */
+  root: string;
   path: string;
   /** git status for this path, or null when unchanged / not a repo. */
   status: ChangeKind | null;
@@ -21,6 +24,38 @@ interface Props {
   annotateRequest: number;
   isRepo: boolean;
   onClose(): void;
+}
+
+/**
+ * Read-only or editable, for one file -- the viewer bar's lock. Unlocked files
+ * save themselves as you type, and stay unlocked until locked again. Shared
+ * with the file window, and read from settings so both agree.
+ */
+export function EditToggle({
+  root,
+  path,
+  disabled,
+}: {
+  root: string;
+  path: string;
+  disabled?: boolean;
+}) {
+  const on = useWritable(root, path);
+  return (
+    <button
+      className="viewer-badge viewer-lock"
+      data-on={on}
+      disabled={disabled}
+      onClick={() => setWritable(root, path, !on)}
+      title={
+        on
+          ? "Editable: changes save automatically. Click to make it read-only again."
+          : "Read-only: the agent edits this file. Click to edit it yourself."
+      }
+    >
+      {on ? "editing" : "read-only"}
+    </button>
+  );
 }
 
 /** The blame toggle in a viewer bar, shared with the diff window. */
@@ -77,6 +112,7 @@ export function DiffLayoutToggle() {
 }
 
 export function BottomPane({
+  root,
   path,
   status,
   refreshToken,
@@ -93,6 +129,7 @@ export function BottomPane({
     openedAs === "diff" && status && !diffInWindow ? "diff" : "file";
   const [mode, setMode] = useState<Mode>(pick);
   const layout = useSetting((s) => s.layout.diffLayout);
+  const editable = useWritable(root, path);
 
   // Re-pick the default when a different file is opened, but not on every
   // watcher refresh -- an explicit choice should survive the agent's edits.
@@ -134,7 +171,7 @@ export function BottomPane({
             className="seg-btn"
             data-active={mode === "diff"}
             disabled={!status}
-            onClick={() => (diffInWindow ? void openViewerWindow(path, "diff") : setMode("diff"))}
+            onClick={() => (diffInWindow ? void openViewerWindow(root, path, "diff") : setMode("diff"))}
             title={
               !status
                 ? "No changes to diff"
@@ -162,21 +199,23 @@ export function BottomPane({
           <span className="viewer-message error viewer-inline">{annotateError}</span>
         )}
 
-        <span className="viewer-badge">read-only</span>
+        <EditToggle root={root} path={path} disabled={mode !== "file"} />
         <button className="viewer-close" onClick={onClose} title="Close file">
           ✕
         </button>
       </div>
 
       {mode === "diff" && status ? (
-        <DiffViewer path={path} layout={layout} refreshToken={refreshToken} />
+        <DiffViewer root={root} path={path} layout={layout} refreshToken={refreshToken} />
       ) : (
         <FileViewer
+          root={root}
           path={path}
           refreshToken={refreshToken}
           target={target}
           annotate={annotate && isRepo}
           onAnnotateError={setAnnotateError}
+          editable={editable}
         />
       )}
     </div>

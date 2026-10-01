@@ -9,7 +9,7 @@
  * the reads stay synchronous because the document is hydrated before React
  * mounts.
  */
-import { patch, settings } from "./settings/store";
+import { patch, settings, useSetting } from "./settings/store";
 import { EMPTY_PROJECT_STATE, type ProjectState, type RecentProject } from "./settings/schema";
 
 export type { ProjectState, RecentProject };
@@ -57,3 +57,17 @@ export function saveProjectState(path: string, update: Partial<ProjectState>): v
     },
   });
 }
+
+/** Unlock or lock one file for editing. */
+export function setWritable(root: string, path: string, on: boolean): void {
+  const current = loadProjectState(root).writable;
+  const rest = current.filter((p) => p !== path);
+  saveProjectState(root, { writable: on ? [...rest, path] : rest });
+}
+
+/**
+ * Whether `path` is unlocked, as state. Read from settings, so the pane and the
+ * file window -- each with its own copy of the store -- always agree.
+ */
+export const useWritable = (root: string, path: string): boolean =>
+  useSetting((s) => (s.projects[root]?.writable ?? []).includes(path));

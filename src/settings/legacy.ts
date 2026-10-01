@@ -74,6 +74,7 @@ export function readLegacy(): Partial<Settings> {
         openFile: loadJSON<string | null>(STORAGE.legacyOpenFile, null),
         expandedDirs: loadJSON<string[]>(STORAGE.legacyExpandedDirs, []),
         lastAgent: loadJSON<string | null>(STORAGE.lastAgent, null),
+        writable: [],
       },
     };
   }

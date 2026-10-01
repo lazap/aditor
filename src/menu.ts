@@ -111,8 +111,10 @@ export function accelerator(chord: string | null): string | null {
  */
 let dispatch: ((id: CommandId) => void) | null = null;
 
-/** The menu is app-wide and built once, however many times this is called. */
+/** The menu is built once per page, however many times this is called. */
 let installing: Promise<void> | null = null;
+/** This page's menu, once built. */
+let built: Menu | null = null;
 
 export function installAppMenu(run: (id: CommandId) => void): Promise<void> {
   dispatch = run;
@@ -122,6 +124,16 @@ export function installAppMenu(run: (id: CommandId) => void): Promise<void> {
     console.error("could not install the application menu", e);
   });
   return installing;
+}
+
+/**
+ * Make this page's menu the app's again. macOS has one menu bar for every
+ * window, and a menu's actions run in the page that built it -- so each
+ * editor window takes the bar back when it gains focus, or a click there would
+ * run the commands of whichever window built the menu last.
+ */
+export function claimAppMenu(): void {
+  void installing?.then(() => built?.setAsAppMenu()).catch(() => {});
 }
 
 async function build(): Promise<void> {
@@ -177,6 +189,7 @@ async function build(): Promise<void> {
   else await menu.append(gitMenu);
 
   await menu.setAsAppMenu();
+  built = menu;
 
   // Rebinding is rare, so resetting the accelerators in place costs nothing
   // and avoids tearing the menu down and building it again.

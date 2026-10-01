@@ -25,7 +25,7 @@ import {
 import { fullDate, relativeTime } from "../git/format";
 import { GRAPH_COLORS, layoutGraph, type GraphRow } from "../git/graph";
 import { useSetting } from "../settings/store";
-import { basename, LOG_TARGET, type LogTarget } from "../window";
+import { basename, LOG_TARGET, logTitle, type LogTarget } from "../window";
 import { ContextMenu, type MenuAt } from "./ContextMenu";
 import { DiffViewer } from "./DiffViewer";
 import { DiffLayoutToggle } from "./BottomPane";
@@ -34,6 +34,11 @@ import { Toast, type ToastMessage } from "./Toast";
 
 /** Any window -> every window: a git write landed, re-read what you show. */
 export const GIT_CHANGED = "git://changed";
+
+/** `git://changed`: a write landed in this workspace. */
+export interface GitChanged {
+  root: string;
+}
 
 const PAGE = 300;
 const ROW_H = 24;
@@ -47,9 +52,16 @@ const initialTarget = (): LogTarget => {
   try {
     return JSON.parse(new URLSearchParams(location.search).get("target") ?? "{}");
   } catch {
-    return {};
+    return { root: "" };
   }
 };
+
+/**
+ * The workspace this page reads, fixed for its lifetime. A retarget at another
+ * project reloads the page instead (see the LOG_TARGET listener), so nothing
+ * below has to reset itself when the root changes.
+ */
+const ROOT = initialTarget().root;
 
 const errorText = (e: unknown) => String(e).replace(/^Error:\s*/, "");
 
@@ -94,6 +106,10 @@ export function LogWindow({ onClose }: { onClose(): void }) {
   // Retargeted from another window: a file's history, or a commit to show.
   useEffect(() => {
     const unlisten = listen<LogTarget>(LOG_TARGET, ({ payload }) => {
+      if (payload.root !== ROOT) {
+        location.search = `?view=log&target=${encodeURIComponent(JSON.stringify(payload))}`;
+        return;
+      }
       setTarget(payload);
       setBranch(payload.branch ?? "");
       setPath(payload.path ?? null);
@@ -103,7 +119,9 @@ export function LogWindow({ onClose }: { onClose(): void }) {
   }, []);
 
   useEffect(() => {
-    void getCurrentWindow().setTitle(path ? `History: ${basename(path)}` : "Git Log");
+    void getCurrentWindow().setTitle(
+      path ? `History: ${basename(path)} — ${basename(ROOT)}` : logTitle(ROOT),
+    );
   }, [path]);
 
   // Typing filters after a pause, not per keystroke: each query is a walk.
@@ -116,7 +134,9 @@ export function LogWindow({ onClose }: { onClose(): void }) {
   // after working elsewhere, may have moved any ref.
   useEffect(() => {
     const bump = () => setReload((r) => r + 1);
-    const unGit = listen(GIT_CHANGED, bump);
+    const unGit = listen<GitChanged>(GIT_CHANGED, ({ payload }) => {
+      if (payload.root === ROOT) bump();
+    });
     const unFocus = getCurrentWindow().onFocusChanged(({ payload }) => payload && bump());
     return () => {
       void unGit.then((u) => u());
@@ -125,7 +145,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
   }, []);
 
   useEffect(() => {
-    void gitBranches().then(setBranches).catch(() => {});
+    void gitBranches(ROOT).then(setBranches).catch(() => {});
   }, [reload]);
 
   const filter = useMemo(
@@ -142,7 +162,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
     setLoading(true);
     setError(null);
     const want = Math.max(PAGE, loadedRef.current);
-    gitLog(0, want, filter)
+    gitLog(ROOT, 0, want, filter)
       .then((page) => {
         if (stale) return;
         setCommits(page);
@@ -164,7 +184,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
   const loadMore = useCallback(() => {
     if (loading || done) return;
     setLoading(true);
-    gitLog(commits.length, PAGE, filter)
+    gitLog(ROOT, commits.length, PAGE, filter)
       .then((page) => {
         setCommits((prev) => [...prev, ...page]);
         setDone(page.length < PAGE);
@@ -200,7 +220,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
       return;
     }
     let stale = false;
-    gitCommitDetails(selected)
+    gitCommitDetails(ROOT, selected)
       .then((d) => {
         if (stale) return;
         setDetails(d);
@@ -304,7 +324,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
     } finally {
       setBusy(false);
       setReload((r) => r + 1);
-      void emit(GIT_CHANGED);
+      void emit(GIT_CHANGED, { root: ROOT } satisfies GitChanged);
     }
   };
 
@@ -317,7 +337,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
       confirm: "Create",
       validate: refNameError,
     });
-    if (r) void run(() => gitBranchCreate(r.text, c.id, r.checks.checkout), `Created ${r.text}.`);
+    if (r) void run(() => gitBranchCreate(ROOT, r.text, c.id, r.checks.checkout), `Created ${r.text}.`);
   };
 
   const newTag = async (c: CommitInfo) => {
@@ -329,7 +349,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
       confirm: "Create Tag",
       validate: refNameError,
     });
-    if (r) void run(() => gitTagCreate(r.text, c.id, r.message || null), `Tagged ${r.text}.`);
+    if (r) void run(() => gitTagCreate(ROOT, r.text, c.id, r.message || null), `Tagged ${r.text}.`);
   };
 
   const reset = async (c: CommitInfo) => {
@@ -350,7 +370,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
       confirm: "Reset",
     });
     if (!r?.choice) return;
-    void run(() => gitReset(c.id, r.choice as ResetMode), `Reset ${current} to ${c.shortId}.`);
+    void run(() => gitReset(ROOT, c.id, r.choice as ResetMode), `Reset ${current} to ${c.shortId}.`);
   };
 
   const commitMenu = (e: React.MouseEvent, c: CommitInfo) => {
@@ -371,7 +391,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
         {
           label: "Checkout Revision",
           disabled: busy,
-          run: () => void run(() => gitCheckoutRevision(c.id), `HEAD is now at ${c.shortId}.`),
+          run: () => void run(() => gitCheckoutRevision(ROOT, c.id), `HEAD is now at ${c.shortId}.`),
         },
         "separator",
         { label: "New Branch…", disabled: busy, run: () => void newBranch(c) },
@@ -380,12 +400,12 @@ export function LogWindow({ onClose }: { onClose(): void }) {
         {
           label: "Cherry-Pick",
           disabled: busy || c.parents.length > 1,
-          run: () => void run(() => gitCherryPick(c.id), `Cherry-picked ${c.shortId}.`),
+          run: () => void run(() => gitCherryPick(ROOT, c.id), `Cherry-picked ${c.shortId}.`),
         },
         {
           label: "Revert Commit",
           disabled: busy || c.parents.length > 1,
-          run: () => void run(() => gitRevert(c.id), `Reverted ${c.shortId}.`),
+          run: () => void run(() => gitRevert(ROOT, c.id), `Reverted ${c.shortId}.`),
         },
         {
           label: "Reset Current Branch to Here…",
@@ -408,13 +428,13 @@ export function LogWindow({ onClose }: { onClose(): void }) {
           {
             label: `Push Tag '${r.name}'`,
             disabled: busy,
-            run: () => void run(() => gitPushTag(r.name), `Pushed ${r.name}.`),
+            run: () => void run(() => gitPushTag(ROOT, r.name), `Pushed ${r.name}.`),
           },
           {
             label: `Delete Tag '${r.name}'`,
             danger: true,
             disabled: busy,
-            run: () => void run(() => gitTagDelete(r.name), `Deleted tag ${r.name}.`),
+            run: () => void run(() => gitTagDelete(ROOT, r.name), `Deleted tag ${r.name}.`),
           },
         ],
       });
@@ -428,7 +448,14 @@ export function LogWindow({ onClose }: { onClose(): void }) {
             disabled: busy || r.current,
             run: () =>
               void run(
-                () => gitCheckout({ name: r.name, remote: r.kind === "remote", upstream: null, ahead: 0, behind: 0 }),
+                () =>
+                  gitCheckout(ROOT, {
+                    name: r.name,
+                    remote: r.kind === "remote",
+                    upstream: null,
+                    ahead: 0,
+                    behind: 0,
+                  }),
                 `Switched to ${r.name}.`,
               ),
           },
@@ -625,6 +652,7 @@ export function LogWindow({ onClose }: { onClose(): void }) {
             </button>
           </div>
           <DiffViewer
+            root={ROOT}
             path={file.path}
             layout={layout}
             refreshToken={0}

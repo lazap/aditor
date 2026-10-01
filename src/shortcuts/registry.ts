@@ -16,6 +16,14 @@ export type CommandId =
   | "account.next"
   | "prompt.templates"
   | "project.open"
+  | "file.new"
+  | "project.close"
+  | "project.next"
+  | "project.prev"
+  | "session.new"
+  | "session.close"
+  | "session.next"
+  | "session.prev"
   | "app.settings"
   | "git.commit"
   | "git.pull"
@@ -35,7 +43,7 @@ export interface ShortcutCommand {
   id: CommandId;
   /** Shown in the shortcuts panel. */
   label: string;
-  group: "Focus" | "Account" | "Prompt" | "Git" | "App";
+  group: "Focus" | "Tabs" | "Account" | "Prompt" | "Git" | "App";
   /**
    * The binding shipped with the app; the user may override it. Null ships
    * the command unbound, for the user to give a chord in Settings.
@@ -54,6 +62,15 @@ export const COMMANDS: readonly ShortcutCommand[] = [
     label: "Show agent info",
   },
   { id: "focus.agentTasks", group: "Focus", chord: "mod+4", label: "Show tasks" },
+  // Sessions take IntelliJ's next/previous-tab chords, being the tabs used most;
+  // projects sit one modifier over. ⌘W stays the window's own.
+  { id: "session.new", group: "Tabs", chord: "mod+shift+t", label: "New agent session" },
+  { id: "session.close", group: "Tabs", chord: "mod+shift+w", label: "Close agent session" },
+  { id: "session.next", group: "Tabs", chord: "mod+shift+]", label: "Next agent session" },
+  { id: "session.prev", group: "Tabs", chord: "mod+shift+[", label: "Previous agent session" },
+  { id: "project.next", group: "Tabs", chord: "mod+alt+]", label: "Next project tab" },
+  { id: "project.prev", group: "Tabs", chord: "mod+alt+[", label: "Previous project tab" },
+  { id: "project.close", group: "Tabs", chord: null, label: "Close project tab" },
   {
     id: "account.next",
     group: "Account",
@@ -94,11 +111,13 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   { id: "git.fetch", group: "Git", chord: null, label: "Fetch" },
   { id: "git.stageAll", group: "Git", chord: null, label: "Stage all changes" },
   { id: "project.open", group: "App", chord: "mod+o", label: "Open project…" },
+  { id: "file.new", group: "App", chord: "mod+n", label: "New file…" },
   { id: "app.settings", group: "App", chord: "mod+,", label: "Settings…" },
 ];
 
 export const GROUPS: ReadonlyArray<ShortcutCommand["group"]> = [
   "Focus",
+  "Tabs",
   "Account",
   "Prompt",
   "Git",

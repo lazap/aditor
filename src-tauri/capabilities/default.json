@@ -1,9 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Capability for the main window and its settings, template, diff and log windows",
+  "description": "Capability for the editor windows and their settings, template, diff and log windows",
   "windows": [
     "main",
+    "main-*",
     "settings",
     "templates",
     "diff",

@@ -27,6 +27,12 @@ interface Props {
   generation: number;
   /** Bumping this takes the caret, without touching the session. */
   focusToken: number;
+  /**
+   * On screen: its project tab and its session tab are both the active ones.
+   * Panes stay mounted while hidden -- unmounting kills the agent -- so this is
+   * what keeps a background session from taking focus or the active slot.
+   */
+  visible: boolean;
   onExit(code: number | null): void;
   /** A file path in the output was clicked; `line` when it carried one. */
   onOpenPath(path: string, line?: number): void;
@@ -37,6 +43,7 @@ export function TerminalPane({
   cwd,
   generation,
   focusToken,
+  visible,
   onExit,
   onOpenPath,
 }: Props) {
@@ -56,6 +63,11 @@ export function TerminalPane({
   // effect is one more way to kill and restart the agent.
   const onOpenPathRef = useRef(onOpenPath);
   onOpenPathRef.current = onOpenPath;
+  // Read by the spawn, not depended on, like the two above.
+  const visibleRef = useRef(visible);
+  visibleRef.current = visible;
+  /** This pane's PTY once spawned, for the visibility effect below. */
+  const sessionRef = useRef<string | null>(null);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -123,9 +135,11 @@ export function TerminalPane({
           return;
         }
         sessionId = id;
+        sessionRef.current = id;
         // Published so the prompt-template chooser can type into this session
-        // without a prop that would re-enter this component.
-        setActiveSession(id);
+        // without a prop that would re-enter this component. Only from the pane
+        // on screen: several spawn at once when a window restores its tabs.
+        if (visibleRef.current) setActiveSession(id);
 
         // A session can vanish underneath us (killed, or the agent exited);
         // pty://exit drives the UI, so swallow the write/resize rejection.
@@ -141,7 +155,7 @@ export function TerminalPane({
             if (ev.payload.id === id) onExit(ev.payload.code);
           }),
         );
-        term.focus();
+        if (visibleRef.current) term.focus();
       } catch (e) {
         if (!disposed) setError(String(e));
       }
@@ -176,6 +190,7 @@ export function TerminalPane({
       // pane's cleanup runs, and clearing unconditionally would blank it.
       if (sessionId && activeSession() === sessionId) setActiveSession(null);
       if (sessionId) void ptyKill(sessionId);
+      sessionRef.current = null;
       termRef.current = null;
       setLiveTerm(null);
       term.dispose();
@@ -188,12 +203,12 @@ export function TerminalPane({
   useEffect(() => {
     if (!liveTerm || !fileLinks) return;
     const provider = liveTerm.registerLinkProvider(
-      createFileLinkProvider(liveTerm, (path, line) =>
+      createFileLinkProvider(liveTerm, cwd, (path, line) =>
         onOpenPathRef.current(path, line),
       ),
     );
     return () => provider.dispose();
-  }, [liveTerm, fileLinks]);
+  }, [liveTerm, fileLinks, cwd]);
 
   useEffect(() => {
     if (!liveTerm) return;
@@ -204,9 +219,24 @@ export function TerminalPane({
   // Its own effect, and `focusToken` stays out of the spawn effect: adding it
   // there would tear down the PTY and restart the agent on every ⌘E.
   useEffect(() => {
-    if (focusToken === 0) return;
+    if (focusToken === 0 || !visibleRef.current) return;
     termRef.current?.focus();
   }, [focusToken]);
+
+  // The pane that comes on screen takes the active slot, and the caret with it,
+  // the way switching tabs in an IDE lands you in the tab. The one going off
+  // screen gives the slot up -- unless the newcomer already took it, which is
+  // why it checks before clearing.
+  useEffect(() => {
+    const id = sessionRef.current;
+    if (!id) return;
+    if (visible) {
+      setActiveSession(id);
+      termRef.current?.focus();
+    } else if (activeSession() === id) {
+      setActiveSession(null);
+    }
+  }, [visible]);
 
   return (
     <div className="terminal-wrap">

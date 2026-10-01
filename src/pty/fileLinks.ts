@@ -82,6 +82,8 @@ const CACHE_MAX = 500;
 
 export function createFileLinkProvider(
   term: Terminal,
+  /** The workspace the agent runs in: relative paths resolve against it. */
+  root: string,
   onOpen: (path: string, line?: number) => void,
 ): ILinkProvider {
   const cache = new Map<string, { abs: string | null; at: number }>();
@@ -96,7 +98,7 @@ export function createFileLinkProvider(
       else if (!missing.includes(p)) missing.push(p);
     }
     if (missing.length > 0) {
-      const resolved = await resolveFileLinks(missing);
+      const resolved = await resolveFileLinks(root, missing);
       if (cache.size > CACHE_MAX) cache.clear();
       missing.forEach((p, i) => {
         cache.set(p, { abs: resolved[i], at: now });

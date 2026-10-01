@@ -21,13 +21,31 @@ interface RawDirEntry {
 export const openWorkspace = (path: string) =>
   invoke<string>("open_workspace", { path });
 
-export const listDir = async (path?: string): Promise<DirEntry[]> => {
-  const raw = await invoke<RawDirEntry[]>("list_dir", { path: path ?? null });
+/** Forget a workspace when its last tab closes, stopping its watcher. */
+export const closeWorkspace = (root: string) =>
+  invoke<void>("close_workspace", { root });
+
+/** `fs://changed`: absolute paths that moved inside one open workspace. */
+export interface FsChanged {
+  root: string;
+  paths: string[];
+}
+
+export const listDir = async (root: string, path?: string): Promise<DirEntry[]> => {
+  const raw = await invoke<RawDirEntry[]>("list_dir", { root, path: path ?? null });
   return raw.map((e) => ({ name: e.name, path: e.path, isDir: e.is_dir }));
 };
 
-export const readFile = (path: string) =>
-  invoke<FileContents>("read_file", { path });
+export const readFile = (root: string, path: string) =>
+  invoke<FileContents>("read_file", { root, path });
+
+/** Save over a file the user made writable; it must exist in the workspace. */
+export const writeFile = (root: string, path: string, text: string) =>
+  invoke<void>("write_file", { root, path, text });
+
+/** Create an empty file at `rel` under the root; resolves to its absolute path. */
+export const createFile = (root: string, rel: string) =>
+  invoke<string>("create_file", { root, rel });
 
 export const fsDebounceMs = () => invoke<number>("fs_debounce_ms");
 
@@ -44,5 +62,5 @@ export const dirsExist = (paths: string[]) =>
  * the workspace file it names, or null. What the terminal's link provider asks
  * before underlining anything.
  */
-export const resolveFileLinks = (candidates: string[]) =>
-  invoke<(string | null)[]>("resolve_file_links", { candidates });
+export const resolveFileLinks = (root: string, candidates: string[]) =>
+  invoke<(string | null)[]>("resolve_file_links", { root, candidates });

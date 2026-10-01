@@ -19,6 +19,47 @@ interface Props {
    * leave the window alone.
    */
   fitWindow: boolean;
+  /**
+   * A folder picked while this window already has projects open: the card
+   * asks where it goes, as JetBrains does, before anything is opened.
+   */
+  pending: string | null;
+  onWhere(where: "tab" | "window"): void;
+  /** Back from the question to the list. */
+  onPendingCancel(): void;
+}
+
+/** Where a picked folder opens. "Tab" first: it is the common answer. */
+function WhereStep({
+  path,
+  onWhere,
+  onBack,
+}: {
+  path: string;
+  onWhere(where: "tab" | "window"): void;
+  onBack(): void;
+}) {
+  const { name, parent } = split(path);
+  return (
+    <>
+      <div className="picker-section-label">Open project</div>
+      <p className="picker-where" title={path}>
+        <span className="recent-name">{name}</span>
+        <span className="recent-path">{parent}</span>
+      </p>
+      <div className="picker-actions picker-where-actions">
+        <button className="picker-browse" onClick={() => onWhere("tab")}>
+          This window
+        </button>
+        <button className="picker-cancel" onClick={() => onWhere("window")}>
+          New window
+        </button>
+        <button className="picker-cancel" onClick={onBack}>
+          Cancel
+        </button>
+      </div>
+    </>
+  );
 }
 
 /** Must match `.picker-overlay`'s padding in theme.css. */
@@ -57,16 +98,20 @@ export function ProjectPicker({
   onBrowse,
   onCancel,
   fitWindow,
+  pending,
+  onWhere,
+  onPendingCancel,
 }: Props) {
   const cardRef = useRef<HTMLDivElement>(null);
 
   // Take focus off whatever had it -- in practice the terminal, whose xterm
   // key handler would otherwise swallow Escape and the arrow keys.
+  // Again for the where-to question, so Enter answers "This window".
   useEffect(() => {
     cardRef.current
       ?.querySelector<HTMLButtonElement>("button:not(:disabled)")
       ?.focus();
-  }, []);
+  }, [pending]);
 
   // Measure after layout, before paint, so the window is never briefly the
   // wrong size. Re-runs as the card grows or shrinks: removing the last recent
@@ -79,6 +124,11 @@ export function ProjectPicker({
   }, [fitWindow, recents.length, error]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === "Escape" && pending) {
+      e.preventDefault();
+      onPendingCancel();
+      return;
+    }
     if (e.key === "Escape" && onCancel) {
       e.preventDefault();
       onCancel();
@@ -111,61 +161,67 @@ export function ProjectPicker({
       <div className="picker-card" ref={cardRef}>
         <h1 className="picker-title">Aditor</h1>
 
-        {recents.length > 0 ? (
-          <>
-            <div className="picker-section-label">Recent</div>
-            <ul className="recent-list">
-              {recents.map((r) => {
-                const { name, parent } = split(r.path);
-                const gone = missing.has(r.path);
-                return (
-                  <li
-                    className="recent-row"
-                    key={r.path}
-                    data-missing={gone}
-                    title={r.path}
-                  >
-                    <button
-                      className="recent-open"
-                      disabled={gone}
-                      onClick={() => onOpen(r.path)}
-                    >
-                      <span className="recent-name">{name}</span>
-                      <span className="recent-path">
-                        {gone ? "missing" : parent}
-                      </span>
-                    </button>
-                    <button
-                      className="recent-forget"
-                      aria-label={`Remove ${name} from recents`}
-                      title="Remove from recents"
-                      onClick={() => onForget(r.path)}
-                    >
-                      ✕
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          </>
+        {pending ? (
+          <WhereStep path={pending} onWhere={onWhere} onBack={onPendingCancel} />
         ) : (
-          <p className="picker-empty">
-            No projects yet. Choose a folder to open it in Aditor.
-          </p>
+          <>
+            {recents.length > 0 ? (
+              <>
+                <div className="picker-section-label">Recent</div>
+                <ul className="recent-list">
+                  {recents.map((r) => {
+                    const { name, parent } = split(r.path);
+                    const gone = missing.has(r.path);
+                    return (
+                      <li
+                        className="recent-row"
+                        key={r.path}
+                        data-missing={gone}
+                        title={r.path}
+                      >
+                        <button
+                          className="recent-open"
+                          disabled={gone}
+                          onClick={() => onOpen(r.path)}
+                        >
+                          <span className="recent-name">{name}</span>
+                          <span className="recent-path">
+                            {gone ? "missing" : parent}
+                          </span>
+                        </button>
+                        <button
+                          className="recent-forget"
+                          aria-label={`Remove ${name} from recents`}
+                          title="Remove from recents"
+                          onClick={() => onForget(r.path)}
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </>
+            ) : (
+              <p className="picker-empty">
+                No projects yet. Choose a folder to open it in Aditor.
+              </p>
+            )}
+
+            {error && <p className="picker-error">{error}</p>}
+
+            <div className="picker-actions">
+              <button className="picker-browse" onClick={onBrowse}>
+                Open folder…
+              </button>
+              {onCancel && (
+                <button className="picker-cancel" onClick={onCancel}>
+                  Cancel
+                </button>
+              )}
+            </div>
+          </>
         )}
-
-        {error && <p className="picker-error">{error}</p>}
-
-        <div className="picker-actions">
-          <button className="picker-browse" onClick={onBrowse}>
-            Open folder…
-          </button>
-          {onCancel && (
-            <button className="picker-cancel" onClick={onCancel}>
-              Cancel
-            </button>
-          )}
-        </div>
       </div>
     </div>
   );

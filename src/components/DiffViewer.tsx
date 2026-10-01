@@ -12,6 +12,8 @@ import { useTheme } from "../theme";
 export type DiffLayout = "unified" | "split";
 
 interface Props {
+  /** Workspace the file belongs to; every read is checked against it. */
+  root: string;
   path: string;
   layout: DiffLayout;
   /** Bumped by the watcher, so the diff follows the agent's edits live. */
@@ -37,7 +39,7 @@ function editorsOf(instance: EditorView | MergeView | null): EditorView[] {
   return instance instanceof MergeView ? [instance.b, instance.a] : [instance];
 }
 
-export function DiffViewer({ path, layout, refreshToken, autoFocus, commit }: Props) {
+export function DiffViewer({ root, path, layout, refreshToken, autoFocus, commit }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<EditorView | MergeView | null>(null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
@@ -58,15 +60,15 @@ export function DiffViewer({ path, layout, refreshToken, autoFocus, commit }: Pr
     let stale = false;
     setError(null);
     const load = commit
-      ? gitCommitFileDiff(commit.id, { path, oldPath: commit.oldPath })
-      : gitDiff(path);
+      ? gitCommitFileDiff(root, commit.id, { path, oldPath: commit.oldPath })
+      : gitDiff(root, path);
     load
       .then((d) => !stale && setDiff(d))
       .catch((e) => !stale && setError(String(e)));
     return () => {
       stale = true;
     };
-  }, [path, refreshToken, commit?.id, commit?.oldPath]);
+  }, [root, path, refreshToken, commit?.id, commit?.oldPath]);
 
   useEffect(() => {
     const host = hostRef.current;

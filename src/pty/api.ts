@@ -10,6 +10,19 @@ export interface AgentInfo {
   version: string | null;
 }
 
+/**
+ * A plain terminal in the project folder, offered beside the agents when a
+ * session is added. Not an agent the backend probes: `command: null` is what
+ * spawns the user's interactive login shell.
+ */
+export const SHELL_SESSION: AgentInfo = {
+  id: "shell",
+  label: "Terminal",
+  command: null,
+  available: true,
+  version: null,
+};
+
 export interface PtyOutput {
   id: string;
   /** base64 of raw PTY bytes -- see note in pty.rs on why this is not a string. */
@@ -54,7 +67,8 @@ export const ptyResize = (id: string, cols: number, rows: number) =>
 
 export const ptyKill = (id: string) => invoke<void>("pty_kill", { id });
 
-const ptyKillAll = () => invoke<void>("pty_kill_all");
+/** Kill the sessions this window spawned; other editor windows keep theirs. */
+const ptyKillWindow = () => invoke<void>("pty_kill_window");
 
 /** Marker on `window`, which is fresh per page load but survives Fast Refresh. */
 const REAPED = "__aditorOrphansReaped";
@@ -120,14 +134,15 @@ export async function ptyWriteActive(text: string): Promise<boolean> {
  * Refresh re-runs effects while leaving TerminalPane's own effect alone, so an
  * unguarded version kills the live session and nothing respawns it. Hence the
  * flag on `window` rather than a module-scoped variable -- module scope is
- * re-evaluated by Fast Refresh, `window` is not.
+ * re-evaluated by Fast Refresh, `window` is not. Scoped to this window in Rust,
+ * so reloading one editor window leaves every other one's agents running.
  */
 export async function reapOrphansOnce(): Promise<void> {
   const w = window as unknown as Record<string, boolean>;
   if (w[REAPED]) return;
   w[REAPED] = true;
   try {
-    await ptyKillAll();
+    await ptyKillWindow();
   } catch {
     /* nothing to reap, or the backend is not ready yet */
   }

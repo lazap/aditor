@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { EditorState, type Extension } from "@codemirror/state";
+import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import { readFile, type FileContents } from "../fs/api";
+import { readFile, writeFile, type FileContents } from "../fs/api";
+import { AUTOSAVE_MS, trackEdits } from "../editor/autosave";
 import { aditorEditorTheme, aditorHighlighting, darkMode, darkModeFor } from "../editor/theme";
 import { loadLanguage } from "../editor/language";
 import { vimMode, vimMotions } from "../editor/vim";
@@ -22,6 +23,8 @@ export interface LineTarget {
 }
 
 interface Props {
+  /** Workspace the file belongs to; every read is checked against it. */
+  root: string;
   path: string;
   /** Bumped by the watcher; reloads when the agent rewrites the file. */
   refreshToken: number;
@@ -33,6 +36,22 @@ interface Props {
   annotate?: boolean;
   /** Blame could not be read (not committed, not a repo): the owner says so. */
   onAnnotateError?(message: string): void;
+  /** Unlocked by the user: typing edits the file, and it saves itself. */
+  editable?: boolean;
+}
+
+/** Marks a doc swap that came from disk, so it is not mistaken for typing. */
+const fromDisk = Annotation.define<boolean>();
+
+/** Read-only or not, swapped on the live view. */
+const editMode = new Compartment();
+const editFor = (on: boolean): Extension => EditorState.readOnly.of(!on);
+
+/** What is waiting to be written, and where. */
+interface Unsaved {
+  root: string;
+  path: string;
+  text: string;
 }
 
 function formatBytes(n: number): string {
@@ -42,18 +61,45 @@ function formatBytes(n: number): string {
 }
 
 export function FileViewer({
+  root,
   path,
   refreshToken,
   autoFocus,
   target,
   annotate,
   onAnnotateError,
+  editable = false,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
   const [contents, setContents] = useState<FileContents | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const vim = useSetting((s) => s.keyboardMode === "vim");
+  // Vim here is motions only, for reading: on an editable file j and k must
+  // type, so the motions step aside while it is unlocked.
+  const vim = useSetting((s) => s.keyboardMode === "vim") && !editable;
+  const editableRef = useRef(editable);
+  editableRef.current = editable;
+  const [saveError, setSaveError] = useState<string | null>(null);
+  /** Typed but not yet written. */
+  const unsavedRef = useRef<Unsaved | null>(null);
+  const saveTimer = useRef<number | undefined>(undefined);
+
+  /** Write whatever is waiting, now. Safe to call with nothing waiting. */
+  const flushRef = useRef(async () => {});
+  flushRef.current = async () => {
+    window.clearTimeout(saveTimer.current);
+    const job = unsavedRef.current;
+    if (!job) return;
+    unsavedRef.current = null;
+    try {
+      await writeFile(job.root, job.path, job.text);
+      setSaveError(null);
+    } catch (e) {
+      setSaveError(`Not saved: ${String(e).replace(/^Error:\s*/, "")}`);
+    }
+  };
+  // Registered once: the ref always holds this render's flush.
+  useEffect(() => trackEdits(() => flushRef.current()), []);
   // Read by the build effect rather than depended on: flipping the setting
   // reconfigures the live view below instead of rebuilding it.
   const vimRef = useRef(vim);
@@ -77,7 +123,7 @@ export function FileViewer({
       return;
     }
     let stale = false;
-    gitBlame(path)
+    gitBlame(root, path)
       .then((h) => !stale && setHunks(h))
       .catch((e) => {
         if (stale) return;
@@ -87,7 +133,7 @@ export function FileViewer({
     return () => {
       stale = true;
     };
-  }, [annotate, path, refreshToken]);
+  }, [annotate, root, path, refreshToken]);
 
   // A target belongs to the path it arrived with, and must land on that file's
   // view -- not on the previous file's, still up while the new one loads. So
@@ -113,7 +159,7 @@ export function FileViewer({
   useEffect(() => {
     let stale = false;
     setError(null);
-    readFile(path)
+    readFile(root, path)
       .then((c) => {
         if (stale) return;
         loadedPathRef.current = path;
@@ -123,7 +169,7 @@ export function FileViewer({
     return () => {
       stale = true;
     };
-  }, [path, refreshToken]);
+  }, [root, path, refreshToken]);
 
   useEffect(() => {
     const host = hostRef.current;
@@ -132,8 +178,25 @@ export function FileViewer({
     // the old text in the new file's language.
     if (loadedPathRef.current !== path) return;
 
-    let disposed = false;
     const text = contents.text;
+    // A refresh of the file already on screen: swap the text in place, which
+    // keeps the caret and the scroll. Not while typing is waiting to be saved
+    // -- the refresh is most likely our own save landing, and replacing the
+    // buffer would throw away what was typed since.
+    const live = viewRef.current;
+    if (live && viewPathRef.current === path) {
+      if (unsavedRef.current || live.state.doc.toString() === text) return;
+      const { anchor, head } = live.state.selection.main;
+      const clamp = (n: number) => Math.min(n, text.length);
+      live.dispatch({
+        changes: { from: 0, to: live.state.doc.length, insert: text },
+        selection: { anchor: clamp(anchor), head: clamp(head) },
+        annotations: fromDisk.of(true),
+      });
+      return;
+    }
+
+    let disposed = false;
 
     (async () => {
       const lang = await loadLanguage(path);
@@ -144,12 +207,20 @@ export function FileViewer({
         aditorEditorTheme,
         aditorHighlighting,
         EditorView.lineWrapping,
-        // Read-only for now; writable buffers are bucket 4.
-        EditorState.readOnly.of(true),
+        // Read-only unless the user unlocked this file.
+        editMode.of(editFor(editableRef.current)),
+        EditorView.updateListener.of((u) => {
+          if (!u.docChanged || u.transactions.some((t) => t.annotation(fromDisk))) return;
+          unsavedRef.current = { root, path, text: u.state.doc.toString() };
+          window.clearTimeout(saveTimer.current);
+          saveTimer.current = window.setTimeout(() => void flushRef.current(), AUTOSAVE_MS);
+        }),
+        // IntelliJ saves when focus leaves the editor; so does this.
+        EditorView.domEventHandlers({ blur: () => void flushRef.current() }),
         vimMode.of(vimMotions(vimRef.current)),
         darkMode.of(darkModeFor(themeRef.current)),
         jumpLine,
-        blame.of(gutterFor(hunksRef.current, path)),
+        blame.of(gutterFor(hunksRef.current, root, path)),
         ...lang,
       ];
 
@@ -178,12 +249,23 @@ export function FileViewer({
   }, [vim]);
 
   useEffect(() => {
+    viewRef.current?.dispatch({ effects: editMode.reconfigure(editFor(editable)) });
+    if (!editable) void flushRef.current();
+  }, [editable]);
+
+  // Switching to another file saves this one first; the next build replaces
+  // the view, and its text with it.
+  useEffect(() => () => void flushRef.current(), [root, path]);
+
+  useEffect(() => {
     viewRef.current?.dispatch({ effects: darkMode.reconfigure(darkModeFor(theme)) });
   }, [theme]);
 
   useEffect(() => {
-    viewRef.current?.dispatch({ effects: blame.reconfigure(gutterFor(hunks, pathRef.current)) });
-  }, [hunks]);
+    viewRef.current?.dispatch({
+      effects: blame.reconfigure(gutterFor(hunks, root, pathRef.current)),
+    });
+  }, [hunks, root]);
 
   useEffect(
     () => () => {
@@ -196,6 +278,7 @@ export function FileViewer({
   return (
     <>
       {error && <div className="viewer-message error">{error}</div>}
+      {saveError && <div className="viewer-message error">{saveError}</div>}
       {contents?.kind === "tooLarge" && (
         <div className="viewer-message">
           {formatBytes(contents.bytes)} — too large to display
@@ -214,5 +297,5 @@ export function FileViewer({
 }
 
 /** A click opens the commit in the log, with this file's diff in it. */
-const gutterFor = (hunks: BlameHunk[] | null, path: string): Extension =>
-  hunks ? blameGutter(hunks, (id) => void openLogWindow({ select: id, file: path })) : [];
+const gutterFor = (hunks: BlameHunk[] | null, root: string, path: string): Extension =>
+  hunks ? blameGutter(hunks, (id) => void openLogWindow({ root, select: id, file: path })) : [];

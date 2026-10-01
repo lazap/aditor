@@ -119,9 +119,10 @@ pub enum FileDiff {
 /// The one boundary through which git work happens.
 pub(crate) fn with_repo<T>(
     ws: &Workspace,
+    root: &str,
     f: impl FnOnce(&Repository, &Path, &Path) -> Result<T, String>,
 ) -> Result<Option<T>, String> {
-    let root = workspace_root(ws)?;
+    let root = workspace_root(ws, root)?;
     let repo = match Repository::discover(&root) {
         Ok(r) => r,
         Err(_) => return Ok(None),
@@ -218,8 +219,8 @@ fn tracking(repo: &Repository) -> (Option<String>, u32, u32) {
 }
 
 #[tauri::command]
-pub fn git_status(ws: State<'_, Workspace>) -> Result<RepoStatus, String> {
-    let found = with_repo(&ws, |repo, workdir, root| {
+pub fn git_status(ws: State<'_, Workspace>, root: String) -> Result<RepoStatus, String> {
+    let found = with_repo(&ws, &root, |repo, workdir, root| {
         let mut opts = StatusOptions::new();
         opts.include_untracked(true)
             .recurse_untracked_dirs(true)
@@ -364,8 +365,8 @@ fn list_branches(repo: &Repository) -> Result<BranchList, String> {
 /// Async and off the main thread: a repo with thousands of remote branches is
 /// a noticeable walk, and a sync command would freeze the webview for it.
 #[tauri::command]
-pub async fn git_branches(ws: State<'_, Workspace>) -> Result<BranchList, String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_branches(ws: State<'_, Workspace>, root: String) -> Result<BranchList, String> {
+    let root = workspace_root(&ws, &root)?;
     tauri::async_runtime::spawn_blocking(move || {
         let Ok(repo) = Repository::discover(&root) else {
             return Ok(BranchList { current: None, local: Vec::new(), remote: Vec::new() });
@@ -418,8 +419,8 @@ pub(crate) fn text_diff(old_bytes: Vec<u8>, new_bytes: Vec<u8>) -> FileDiff {
 }
 
 #[tauri::command]
-pub fn git_diff(ws: State<'_, Workspace>, path: String) -> Result<FileDiff, String> {
-    let found = with_repo(&ws, |repo, workdir, root| {
+pub fn git_diff(ws: State<'_, Workspace>, root: String, path: String) -> Result<FileDiff, String> {
+    let found = with_repo(&ws, &root, |repo, workdir, root| {
         let abs = PathBuf::from(&path);
         if !abs.starts_with(root) {
             return Err(format!("{path} is outside the workspace"));
@@ -599,8 +600,12 @@ fn unstage(root: &Path, paths: &[&str]) -> Result<String, String> {
 }
 
 #[tauri::command]
-pub async fn git_stage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result<(), String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_stage(
+    ws: State<'_, Workspace>,
+    root: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let root = workspace_root(&ws, &root)?;
     check_paths(&root, &paths)?;
     off_thread(move || {
         let mut args = vec!["add", "-A", "--"];
@@ -611,8 +616,12 @@ pub async fn git_stage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result<(
 }
 
 #[tauri::command]
-pub async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result<(), String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_unstage(
+    ws: State<'_, Workspace>,
+    root: String,
+    paths: Vec<String>,
+) -> Result<(), String> {
+    let root = workspace_root(&ws, &root)?;
     check_paths(&root, &paths)?;
     off_thread(move || {
         let paths: Vec<&str> = paths.iter().map(String::as_str).collect();
@@ -624,23 +633,27 @@ pub async fn git_unstage(ws: State<'_, Workspace>, paths: Vec<String>) -> Result
 /// The workspace root as the pathspec, so a subdirectory workspace stages only
 /// its own subtree.
 #[tauri::command]
-pub async fn git_stage_all(ws: State<'_, Workspace>) -> Result<(), String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_stage_all(ws: State<'_, Workspace>, root: String) -> Result<(), String> {
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["add", "-A", "--", "."], None).map(drop)).await
 }
 
 #[tauri::command]
-pub async fn git_unstage_all(ws: State<'_, Workspace>) -> Result<(), String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_unstage_all(ws: State<'_, Workspace>, root: String) -> Result<(), String> {
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || unstage(&root, &["."]).map(drop)).await
 }
 
 #[tauri::command]
-pub async fn git_commit(ws: State<'_, Workspace>, message: String) -> Result<(), String> {
+pub async fn git_commit(
+    ws: State<'_, Workspace>,
+    root: String,
+    message: String,
+) -> Result<(), String> {
     if message.trim().is_empty() {
         return Err("A commit needs a message.".into());
     }
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     // Through stdin rather than `-m`: a multi-line message survives intact, and
     // hooks and signing run exactly as they would in a terminal.
     off_thread(move || run_git(&root, &["commit", "-F", "-"], Some(&message)).map(drop)).await
@@ -648,8 +661,12 @@ pub async fn git_commit(ws: State<'_, Workspace>, message: String) -> Result<(),
 
 /// The explicit flag wins over `pull.rebase`, since the user picked one.
 #[tauri::command]
-pub async fn git_pull(ws: State<'_, Workspace>, rebase: bool) -> Result<String, String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_pull(
+    ws: State<'_, Workspace>,
+    root: String,
+    rebase: bool,
+) -> Result<String, String> {
+    let root = workspace_root(&ws, &root)?;
     let mode = if rebase { "--rebase" } else { "--no-rebase" };
     off_thread(move || run_git(&root, &["pull", mode], None)).await
 }
@@ -678,8 +695,13 @@ fn default_remote(repo: &Repository) -> Result<String, String> {
 /// `force` is `--force-with-lease`, never a bare `--force`: it still refuses
 /// when the remote moved since the last fetch, so nobody else's work is lost.
 #[tauri::command]
-pub async fn git_push(ws: State<'_, Workspace>, force: bool, tags: bool) -> Result<String, String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_push(
+    ws: State<'_, Workspace>,
+    root: String,
+    force: bool,
+    tags: bool,
+) -> Result<String, String> {
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || {
         let repo = Repository::discover(&root).map_err(|e| e.to_string())?;
         let (upstream, _, _) = tracking(&repo);
@@ -706,6 +728,7 @@ pub async fn git_push(ws: State<'_, Workspace>, force: bool, tags: bool) -> Resu
 #[tauri::command]
 pub async fn git_checkout(
     ws: State<'_, Workspace>,
+    root: String,
     name: String,
     remote: bool,
 ) -> Result<(), String> {
@@ -714,7 +737,7 @@ pub async fn git_checkout(
     if name.is_empty() || name.starts_with('-') {
         return Err(format!("{name:?} is not a branch name."));
     }
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || {
         if !remote {
             return run_git(&root, &["switch", &name], None).map(drop);
@@ -734,8 +757,8 @@ pub async fn git_checkout(
 
 /// Refresh every remote's branches, dropping the ones deleted upstream.
 #[tauri::command]
-pub async fn git_fetch(ws: State<'_, Workspace>) -> Result<(), String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_fetch(ws: State<'_, Workspace>, root: String) -> Result<(), String> {
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["fetch", "--all", "--prune"], None).map(drop)).await
 }
 
@@ -764,10 +787,11 @@ fn check_id(id: &str) -> Result<(), String> {
 #[tauri::command]
 pub async fn git_rollback(
     ws: State<'_, Workspace>,
+    root: String,
     paths: Vec<String>,
     delete_untracked: bool,
 ) -> Result<(), String> {
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     check_paths(&root, &paths)?;
     off_thread(move || rollback(&root, &paths, delete_untracked)).await
 }
@@ -808,6 +832,7 @@ fn rollback(root: &Path, paths: &[String], delete_untracked: bool) -> Result<(),
 #[tauri::command]
 pub async fn git_branch_create(
     ws: State<'_, Workspace>,
+    root: String,
     name: String,
     from: Option<String>,
     checkout: bool,
@@ -816,7 +841,7 @@ pub async fn git_branch_create(
     if let Some(f) = &from {
         check_name(f, "revision")?;
     }
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || {
         let mut args = if checkout { vec!["switch", "-c", &name] } else { vec!["branch", &name] };
         if let Some(f) = &from {
@@ -830,12 +855,13 @@ pub async fn git_branch_create(
 #[tauri::command]
 pub async fn git_branch_rename(
     ws: State<'_, Workspace>,
+    root: String,
     name: String,
     to: String,
 ) -> Result<(), String> {
     check_name(&name, "branch name")?;
     check_name(&to, "branch name")?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["branch", "-m", &name, &to], None).map(drop)).await
 }
 
@@ -844,12 +870,13 @@ pub async fn git_branch_rename(
 #[tauri::command]
 pub async fn git_branch_delete(
     ws: State<'_, Workspace>,
+    root: String,
     name: String,
     remote: bool,
     force: bool,
 ) -> Result<(), String> {
     check_name(&name, "branch name")?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || {
         if !remote {
             let flag = if force { "-D" } else { "-d" };
@@ -866,37 +893,58 @@ pub async fn git_branch_delete(
 /// Merge `name` into the current branch. A conflict comes back as git's error
 /// and leaves the merge in progress, for `git_operation_*` to finish.
 #[tauri::command]
-pub async fn git_merge(ws: State<'_, Workspace>, name: String) -> Result<String, String> {
+pub async fn git_merge(
+    ws: State<'_, Workspace>,
+    root: String,
+    name: String,
+) -> Result<String, String> {
     check_name(&name, "branch name")?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["merge", "--no-edit", &name], None)).await
 }
 
 #[tauri::command]
-pub async fn git_rebase(ws: State<'_, Workspace>, onto: String) -> Result<String, String> {
+pub async fn git_rebase(
+    ws: State<'_, Workspace>,
+    root: String,
+    onto: String,
+) -> Result<String, String> {
     check_name(&onto, "branch name")?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["rebase", &onto], None)).await
 }
 
 #[tauri::command]
-pub async fn git_cherry_pick(ws: State<'_, Workspace>, id: String) -> Result<String, String> {
+pub async fn git_cherry_pick(
+    ws: State<'_, Workspace>,
+    root: String,
+    id: String,
+) -> Result<String, String> {
     check_id(&id)?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["cherry-pick", &id], None)).await
 }
 
 #[tauri::command]
-pub async fn git_revert(ws: State<'_, Workspace>, id: String) -> Result<String, String> {
+pub async fn git_revert(
+    ws: State<'_, Workspace>,
+    root: String,
+    id: String,
+) -> Result<String, String> {
     check_id(&id)?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["revert", "--no-edit", &id], None)).await
 }
 
 /// Move the current branch to `id`. `mode` is soft, mixed or hard, as in
 /// IntelliJ's Reset dialog.
 #[tauri::command]
-pub async fn git_reset(ws: State<'_, Workspace>, id: String, mode: String) -> Result<(), String> {
+pub async fn git_reset(
+    ws: State<'_, Workspace>,
+    root: String,
+    id: String,
+    mode: String,
+) -> Result<(), String> {
     check_id(&id)?;
     let flag = match mode.as_str() {
         "soft" => "--soft",
@@ -904,15 +952,19 @@ pub async fn git_reset(ws: State<'_, Workspace>, id: String, mode: String) -> Re
         "hard" => "--hard",
         _ => return Err(format!("{mode:?} is not a reset mode.")),
     };
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["reset", "-q", flag, &id], None).map(drop)).await
 }
 
 /// Check out a commit itself, leaving HEAD detached.
 #[tauri::command]
-pub async fn git_checkout_revision(ws: State<'_, Workspace>, id: String) -> Result<(), String> {
+pub async fn git_checkout_revision(
+    ws: State<'_, Workspace>,
+    root: String,
+    id: String,
+) -> Result<(), String> {
     check_id(&id)?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["switch", "--detach", &id], None).map(drop)).await
 }
 
@@ -920,13 +972,14 @@ pub async fn git_checkout_revision(ws: State<'_, Workspace>, id: String) -> Resu
 #[tauri::command]
 pub async fn git_tag_create(
     ws: State<'_, Workspace>,
+    root: String,
     name: String,
     id: String,
     message: Option<String>,
 ) -> Result<(), String> {
     check_name(&name, "tag name")?;
     check_id(&id)?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || match message.filter(|m| !m.trim().is_empty()) {
         Some(m) => run_git(&root, &["tag", "-a", &name, "-F", "-", &id], Some(&m)).map(drop),
         None => run_git(&root, &["tag", &name, &id], None).map(drop),
@@ -935,17 +988,25 @@ pub async fn git_tag_create(
 }
 
 #[tauri::command]
-pub async fn git_tag_delete(ws: State<'_, Workspace>, name: String) -> Result<(), String> {
+pub async fn git_tag_delete(
+    ws: State<'_, Workspace>,
+    root: String,
+    name: String,
+) -> Result<(), String> {
     check_name(&name, "tag name")?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || run_git(&root, &["tag", "-d", &name], None).map(drop)).await
 }
 
 /// Push one tag to the branch's remote (or the default one).
 #[tauri::command]
-pub async fn git_push_tag(ws: State<'_, Workspace>, name: String) -> Result<String, String> {
+pub async fn git_push_tag(
+    ws: State<'_, Workspace>,
+    root: String,
+    name: String,
+) -> Result<String, String> {
     check_name(&name, "tag name")?;
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || {
         let repo = Repository::discover(&root).map_err(|e| e.to_string())?;
         let remote = tracking(&repo)
@@ -968,8 +1029,11 @@ fn pending_operation(root: &Path) -> Result<RepoOperation, String> {
 /// Carry on with the stopped merge, rebase, cherry-pick or revert, once its
 /// conflicts are resolved and staged.
 #[tauri::command]
-pub async fn git_operation_continue(ws: State<'_, Workspace>) -> Result<String, String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_operation_continue(
+    ws: State<'_, Workspace>,
+    root: String,
+) -> Result<String, String> {
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || {
         let op = pending_operation(&root)?;
         run_git(&root, &[op.command(), "--continue"], None)
@@ -978,8 +1042,8 @@ pub async fn git_operation_continue(ws: State<'_, Workspace>) -> Result<String, 
 }
 
 #[tauri::command]
-pub async fn git_operation_abort(ws: State<'_, Workspace>) -> Result<(), String> {
-    let root = workspace_root(&ws)?;
+pub async fn git_operation_abort(ws: State<'_, Workspace>, root: String) -> Result<(), String> {
+    let root = workspace_root(&ws, &root)?;
     off_thread(move || {
         let op = pending_operation(&root)?;
         run_git(&root, &[op.command(), "--abort"], None).map(drop)

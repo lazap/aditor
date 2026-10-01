@@ -1,0 +1,1400 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { emit, listen } from "@tauri-apps/api/event";
+import { AgentPicker } from "./AgentPicker";
+import { BranchPicker, type BranchAction } from "./BranchPicker";
+import { InsightPanel } from "./InsightPanel";
+import { TerminalPane } from "./TerminalPane";
+import { FileTree } from "./FileTree";
+import { ChangesList, type GitOp, type ListRequest } from "./ChangesList";
+import { GIT_CHANGED, type GitChanged } from "./LogWindow";
+import { PushDialog } from "./PushDialog";
+import { refNameError, useDialogs } from "./Modal";
+import { BottomPane } from "./BottomPane";
+import type { LineTarget } from "./FileViewer";
+import { SplitPane } from "./SplitPane";
+import { SessionTabs, type SessionTab } from "./SessionTabs";
+import type { ToastMessage } from "./Toast";
+import type { Handlers } from "../shortcuts/useShortcuts";
+import { chordHint } from "../shortcuts/store";
+import { switchToNextAccount } from "../accounts/next";
+import { ptyWriteActive, SHELL_SESSION, type AgentInfo } from "../pty/api";
+import { createFile, fsDebounceMs, type FsChanged } from "../fs/api";
+import {
+  gitBranchCreate,
+  gitBranchDelete,
+  gitBranchRename,
+  gitCheckout,
+  gitCommit,
+  gitFetch,
+  gitLog,
+  gitMerge,
+  gitOperationAbort,
+  gitOperationContinue,
+  gitPull,
+  gitPush,
+  gitRebase,
+  gitRollback,
+  gitStage,
+  gitStageAll,
+  gitStatus,
+  gitTagCreate,
+  gitUnstage,
+  gitUnstageAll,
+  pathsOf,
+  type BranchInfo,
+  type FileStatus,
+  type RepoStatus,
+} from "../git/api";
+import { agentWatch, type AgentsChanged } from "../agents/api";
+import { patch, patchLayout, settings, useSetting } from "../settings/store";
+import type { RailTab } from "../settings/schema";
+import { contextFrom } from "../templates/placeholders";
+import {
+  onDiffWindowClosed,
+  openLogWindow,
+  openViewerWindow,
+  openTemplatesWindow,
+  type ViewerMode,
+} from "../window";
+import { loadProjectState, saveProjectState, setWritable } from "../projects";
+
+/** How long a watcher-touched path stays accented. */
+const RECENT_MS = 8000;
+
+/**
+ * Debounce for `agents://changed`. Coarser than the file watcher's: a live
+ * transcript is appended many times within a single turn, and every event
+ * means re-reading its tail.
+ */
+const AGENT_DEBOUNCE_MS = 400;
+
+/** Which pane edge is being dragged, if any. Owned by App: the widths are
+ *  window furniture, shared by every project tab. */
+export type Dragging = "rail" | "insight" | null;
+
+/** What a mounted project offers the window around it. */
+export interface ViewApi {
+  /** This project's commands, run while its tab is the active one. */
+  handlers: Handlers;
+  /** Type a finished prompt into the session on screen. */
+  insertPrompt(text: string): void;
+}
+
+/** One agent CLI in this project, behind its own session tab. */
+interface Session {
+  key: number;
+  agentId: string;
+  /** Per agent, from 1, fixed at creation: "Claude Code 2" stays 2. */
+  n: number;
+  /** Bumping this respawns the session. */
+  generation: number;
+  /** undefined while running; null or a code once it has exited. */
+  exitCode: number | null | undefined;
+}
+
+/** Rail tab glyphs. Stroked in `currentColor`, so the tab state colours them. */
+const FilesIcon = () => (
+  <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+    strokeWidth="1.3" strokeLinejoin="round" focusable="false" aria-hidden="true">
+    <path d="M4.5 1.5h5l3 3v7a1 1 0 0 1-1 1h-7a1 1 0 0 1-1-1v-9a1 1 0 0 1 1-1z" />
+    <path d="M9.5 1.5v3h3" />
+    <path d="M1.5 5v8.5a1 1 0 0 0 1 1h7" strokeLinecap="round" />
+  </svg>
+);
+
+const NewFileIcon = () => (
+  <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+    strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" focusable="false"
+    aria-hidden="true">
+    <path d="M9.5 1.5h-5a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1v-9l-3-3z" />
+    <path d="M9.5 1.5v3h3M8 7.5v4M6 9.5h4" />
+  </svg>
+);
+
+/** What a new file's name may not be. Live, so it reads as you type. */
+function newFileError(text: string): string | null {
+  const t = text.trim();
+  if (t === "") return null;
+  if (t.startsWith("/")) return "Give a path inside the project, not an absolute one.";
+  if (t.split("/").includes("..")) return "Stay inside the project: no `..`.";
+  if (t.endsWith("/")) return "Give the file a name after the folder.";
+  return null;
+}
+
+const GitIcon = () => (
+  <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+    strokeWidth="1.3" strokeLinecap="round" focusable="false" aria-hidden="true">
+    <circle cx="4.5" cy="3.5" r="1.75" />
+    <circle cx="4.5" cy="12.5" r="1.75" />
+    <circle cx="11.5" cy="5.5" r="1.75" />
+    <path d="M4.5 5.25v5.5" />
+    <path d="M11.5 7.25c0 2.5-2 3-5.4 4.1" />
+  </svg>
+);
+
+interface Props {
+  /** Canonical workspace root, as `open_workspace` returned it. Never changes
+   *  for a mounted view: App keys each view by it. */
+  root: string;
+  /** This project's tab is the one on screen. */
+  active: boolean;
+  agents: AgentInfo[];
+  railWidth: number;
+  insightWidth: number;
+  resizing: Dragging;
+  onResizeStart(edge: "rail" | "insight"): void;
+  /** The topbar's project name: back to the chooser. */
+  onPickProject(): void;
+  /** The topbar's gear: Settings is the window's, not the project's. */
+  onOpenSettings(): void;
+  showToast(text: string, tone?: ToastMessage["tone"]): void;
+  /** Publish (or, with null, withdraw) what App can ask of this project. */
+  register(root: string, api: ViewApi | null): void;
+  /** Whether any of this project's agents is still running, for the tab dot. */
+  onRunning(root: string, running: boolean): void;
+}
+
+/**
+ * One open project: its rail, its terminal sessions, its viewer and its agent
+ * panel. App mounts one per project tab and hides all but the active one --
+ * never unmounts it while the tab is open, because that kills its agents.
+ */
+export function ProjectView({
+  root,
+  active,
+  agents,
+  railWidth,
+  insightWidth,
+  resizing,
+  onResizeStart,
+  onPickProject,
+  onOpenSettings,
+  showToast,
+  register,
+  onRunning,
+}: Props) {
+  // What the project remembers, read once: this view lives as long as its tab.
+  const [saved] = useState(() => loadProjectState(root));
+  /** Agent to start: the project's, else the last one used anywhere. */
+  const [agentPref, setAgentPref] = useState<string | null>(
+    () => saved.lastAgent ?? settings().lastAgent,
+  );
+
+  const [sessions, setSessions] = useState<Session[]>([]);
+  const [activeKey, setActiveKey] = useState<number | null>(null);
+  const nextKey = useRef(1);
+  const seeded = useRef(false);
+
+  const [openFile, setOpenFile] = useState<string | null>(saved.openFile);
+  /** How the pane's file was opened: as the file (tree) or its diff (git). */
+  const [openedAs, setOpenedAs] = useState<ViewerMode>("file");
+  /** The line to show in the pane's file, when it came from a terminal link. */
+  const [openLine, setOpenLine] = useState<LineTarget | null>(null);
+  /**
+   * The file in the side window, while it is the last one picked. Highlighted
+   * in its place of `openFile`, which it does not replace: the pane is left
+   * alone, and this is not restored with the project.
+   */
+  const [diffFile, setDiffFile] = useState<string | null>(null);
+  useEffect(() => onDiffWindowClosed(() => setDiffFile(null)), []);
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set(saved.expandedDirs));
+  const [refreshToken, setRefreshToken] = useState(0);
+  const [repo, setRepo] = useState<RepoStatus | null>(null);
+  const [gitBusy, setGitBusy] = useState<GitOp | null>(null);
+  const [commitMessage, setCommitMessage] = useState("");
+  /** Bumped by the commit shortcut; see ChangesList. */
+  const [commitRequest, setCommitRequest] = useState(0);
+  /** ⌘⌥Z / ⌘D, aimed at the changes list's cursor. */
+  const [listRequest, setListRequest] = useState<ListRequest | null>(null);
+  /** Bumped by the annotate command; the bottom pane toggles its gutter. */
+  const [annotateRequest, setAnnotateRequest] = useState(0);
+  /** Bumped by Branches…: the topbar's branch menu opens. */
+  const [branchesRequest, setBranchesRequest] = useState(0);
+  const [pushing, setPushing] = useState(false);
+  const [dialogs, ask] = useDialogs();
+  /** path -> when the watcher last saw it move. */
+  const [recentAt, setRecentAt] = useState<Map<string, number>>(new Map());
+  const splitFraction = useRef(settings().layout.splitFraction);
+
+  // Straight from settings rather than mirrored into state: the General tab
+  // sets the same field, and two copies would disagree.
+  const insightOpen = useSetting((s) => s.layout.insightOpen);
+  const railTab = useSetting((s) => s.layout.railTab);
+  const setRailTab = (railTab: RailTab) => patchLayout({ railTab });
+  /** Bumped by `agents://changed`, separately from the workspace watcher. */
+  const [agentsToken, setAgentsToken] = useState(0);
+
+  // Focus is real DOM focus, so "focus the tree" cannot be state -- it is an
+  // event. A counter is how the panes are asked to take the caret, matching
+  // `generation` and `refreshToken` elsewhere here.
+  const [filesFocus, setFilesFocus] = useState(0);
+  const [gitFocus, setGitFocus] = useState(0);
+  const [agentFocus, setAgentFocus] = useState(0);
+
+  /** Everything a session can run: the probed agents, and a plain shell. */
+  const runnable = useMemo(() => [...agents, SHELL_SESSION], [agents]);
+  const agentById = useCallback(
+    (id: string | null | undefined) => runnable.find((a) => a.id === id) ?? null,
+    [runnable],
+  );
+  /** What + offers: installed agents first, then the terminal. */
+  const choices = useMemo(() => runnable.filter((a) => a.available), [runnable]);
+  /** Bumped by ⌘⇧T: the session strip opens its + menu. */
+  const [newRequest, setNewRequest] = useState(0);
+  /** The preference against what is actually installed. */
+  const resolveAgent = useCallback(
+    (pref: string | null) =>
+      agents.find((a) => a.id === pref && a.available) ??
+      agents.find((a) => a.available) ??
+      null,
+    [agents],
+  );
+
+  const current = sessions.find((s) => s.key === activeKey) ?? null;
+  const currentAgent = agentById(current?.agentId);
+  // A plain terminal has no sessions or limits to show, so with one on screen
+  // the panel stays on the project's agent: one open here, else the preferred.
+  const panelAgent =
+    currentAgent && currentAgent.id !== SHELL_SESSION.id
+      ? currentAgent
+      : (agentById(sessions.find((s) => s.agentId !== SHELL_SESSION.id)?.agentId) ??
+        resolveAgent(agentPref));
+  const running = sessions.some((s) => s.exitCode === undefined);
+  const watchClaude = sessions.some((s) => s.agentId === "claude");
+
+  const addSession = useCallback((agent: AgentInfo) => {
+    const key = nextKey.current++;
+    setSessions((prev) => {
+      const n = Math.max(0, ...prev.filter((s) => s.agentId === agent.id).map((s) => s.n)) + 1;
+      return [...prev, { key, agentId: agent.id, n, generation: 0, exitCode: undefined }];
+    });
+    setActiveKey(key);
+  }, []);
+
+  // The first session starts once the agent list is in: spawning against a
+  // fallback and correcting it afterwards would kill and respawn the agent.
+  useEffect(() => {
+    if (seeded.current || agents.length === 0) return;
+    seeded.current = true;
+    const agent = resolveAgent(agentPref);
+    if (agent) addSession(agent);
+  }, [agents, agentPref, resolveAgent, addSession]);
+
+  useEffect(() => onRunning(root, running), [root, running, onRunning]);
+
+  // Watcher -> debounced refresh. The payload also feeds the "just changed"
+  // accent, which is what separates "the agent touched this a moment ago" from
+  // "this has been dirty all morning" -- git alone cannot tell those apart.
+  useEffect(() => {
+    let timer: number | undefined;
+    let debounce = 150;
+    void fsDebounceMs().then((ms) => (debounce = ms));
+
+    const unlisten = listen<FsChanged>("fs://changed", ({ payload }) => {
+      if (payload.root !== root) return;
+      const now = Date.now();
+      setRecentAt((prev) => {
+        const next = new Map(prev);
+        for (const p of payload.paths) next.set(p, now);
+        return next;
+      });
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setRefreshToken((t) => t + 1), debounce);
+    });
+    return () => {
+      window.clearTimeout(timer);
+      void unlisten.then((u) => u());
+    };
+  }, [root]);
+
+  // The log window rewrites history too; the changes list must follow.
+  useEffect(() => {
+    const unlisten = listen<GitChanged>(GIT_CHANGED, ({ payload }) => {
+      if (payload?.root === root) setRefreshToken((t) => t + 1);
+    });
+    return () => void unlisten.then((u) => u());
+  }, [root]);
+
+  // Expire accents. Only ticks while something is actually accented.
+  useEffect(() => {
+    if (recentAt.size === 0) return;
+    const id = window.setInterval(() => {
+      const cutoff = Date.now() - RECENT_MS;
+      setRecentAt((prev) => {
+        const next = new Map([...prev].filter(([, at]) => at > cutoff));
+        return next.size === prev.size ? prev : next;
+      });
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [recentAt.size]);
+
+  // Git status follows the same refresh as the tree, so badges land during a
+  // turn rather than after it.
+  useEffect(() => {
+    let stale = false;
+    gitStatus(root)
+      .then((s) => !stale && setRepo(s))
+      .catch(() => !stale && setRepo(null));
+    return () => {
+      stale = true;
+    };
+  }, [root, refreshToken]);
+
+  // Watch the agent's own state so the panel keeps up during a turn. Only
+  // Claude Code has state to watch; any of this project's sessions running it
+  // is enough. The backend makes a repeat call for the same root a no-op.
+  useEffect(() => {
+    void agentWatch(root, watchClaude ? "claude" : "none").catch(() => {
+      /* the panel still refreshes with the rest of the tree */
+    });
+  }, [root, watchClaude]);
+
+  useEffect(() => {
+    let timer: number | undefined;
+    const unlisten = listen<AgentsChanged>("agents://changed", ({ payload }) => {
+      if (payload.root !== root) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(
+        () => setAgentsToken((t) => t + 1),
+        AGENT_DEBOUNCE_MS,
+      );
+    });
+    return () => {
+      window.clearTimeout(timer);
+      void unlisten.then((u) => u());
+    };
+  }, [root]);
+
+  const statuses = useMemo(
+    () => new Map((repo?.files ?? []).map((f) => [f.path, f.status])),
+    [repo],
+  );
+  const recent = useMemo(() => new Set(recentAt.keys()), [recentAt]);
+  const diffInWindow = useSetting((s) => s.layout.diffDisplay === "window");
+
+  // ------------------------------------------------------------ sessions ---
+
+  /** The agent to start next time here and in new projects. A plain terminal
+   *  is a one-off, never what a project opens with. */
+  const rememberAgent = useCallback(
+    (agent: AgentInfo) => {
+      if (agent.id === SHELL_SESSION.id) return;
+      patch({ lastAgent: agent.id });
+      saveProjectState(root, { lastAgent: agent.id });
+      setAgentPref(agent.id);
+    },
+    [root],
+  );
+
+  /**
+   * The topbar's agent menu, acting on the session on screen: another agent
+   * replaces it, the same one restarts it. With no session open it starts one.
+   */
+  const pickAgent = useCallback(
+    (agent: AgentInfo) => {
+      rememberAgent(agent);
+      if (activeKey === null) {
+        addSession(agent);
+        return;
+      }
+      setSessions((prev) =>
+        prev.map((s) => {
+          if (s.key !== activeKey) return s;
+          const n =
+            s.agentId === agent.id
+              ? s.n
+              : Math.max(0, ...prev.filter((o) => o.agentId === agent.id).map((o) => o.n)) + 1;
+          return { ...s, agentId: agent.id, n, generation: s.generation + 1, exitCode: undefined };
+        }),
+      );
+    },
+    [rememberAgent, activeKey, addSession],
+  );
+
+  /** + in the session strip: an agent, or a plain terminal in this folder. */
+  const startSession = useCallback(
+    (agent: AgentInfo) => {
+      rememberAgent(agent);
+      addSession(agent);
+    },
+    [rememberAgent, addSession],
+  );
+
+  // ⌘⇧T asks the same question as +. With no session strip on screen there is
+  // nothing to ask from, so it starts the project's agent straight away.
+  const newSession = useCallback(() => {
+    if (sessions.length > 0) {
+      setNewRequest((t) => t + 1);
+      return;
+    }
+    const agent = resolveAgent(agentPref);
+    if (agent) addSession(agent);
+    else showToast("No coding agent is installed to start.", "error");
+  }, [sessions.length, resolveAgent, agentPref, addSession, showToast]);
+
+  const sessionLabel = useCallback(
+    (s: Session) => {
+      const label = agentById(s.agentId)?.label ?? s.agentId;
+      const twins = sessions.filter((o) => o.agentId === s.agentId).length;
+      return twins > 1 || s.n > 1 ? `${label} ${s.n}` : label;
+    },
+    [sessions, agentById],
+  );
+
+  const closeSession = useCallback(
+    async (key: number) => {
+      const s = sessions.find((o) => o.key === key);
+      if (!s) return;
+      if (s.exitCode === undefined) {
+        const r = await ask({
+          title: "Close Session",
+          body: <>{sessionLabel(s)} is still running. Closing the tab stops it.</>,
+          confirm: "Close",
+          danger: true,
+        });
+        if (!r) return;
+      }
+      // The neighbour takes over, as closing a tab does anywhere else.
+      const at = sessions.findIndex((o) => o.key === key);
+      const rest = sessions.filter((o) => o.key !== key);
+      const neighbour = rest[Math.min(at, rest.length - 1)]?.key ?? null;
+      setSessions((prev) => prev.filter((o) => o.key !== key));
+      setActiveKey((cur) => (cur === key ? neighbour : cur));
+    },
+    [sessions, ask, sessionLabel],
+  );
+
+  const cycleSession = useCallback(
+    (step: number) => {
+      if (sessions.length < 2) return;
+      const at = sessions.findIndex((s) => s.key === activeKey);
+      setActiveKey(sessions[(at + step + sessions.length) % sessions.length].key);
+    },
+    [sessions, activeKey],
+  );
+
+  const setExit = useCallback((key: number, code: number | null) => {
+    setSessions((prev) => prev.map((s) => (s.key === key ? { ...s, exitCode: code } : s)));
+  }, []);
+
+  const restart = useCallback((key: number) => {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.key === key ? { ...s, generation: s.generation + 1, exitCode: undefined } : s,
+      ),
+    );
+  }, []);
+
+  // ----------------------------------------------------------------- git ---
+
+  /**
+   * Every git write goes through here: one at a time, errors in git's own
+   * words, and a status refresh afterwards -- the watcher ignores `.git`, so
+   * a stage or a commit would otherwise leave the list stale.
+   */
+  const gitBusyRef = useRef(false);
+  const runGit = useCallback(
+    async <T,>(op: GitOp, run: () => Promise<T>): Promise<T | undefined> => {
+      if (gitBusyRef.current) return undefined;
+      gitBusyRef.current = true;
+      setGitBusy(op);
+      try {
+        return await run();
+      } catch (e) {
+        showToast(String(e).replace(/^Error:\s*/, ""), "error");
+        return undefined;
+      } finally {
+        gitBusyRef.current = false;
+        setGitBusy(null);
+        setRefreshToken((t) => t + 1);
+        // The log window, if open on this project, re-reads too.
+        void emit(GIT_CHANGED, { root } satisfies GitChanged);
+      }
+    },
+    [root, showToast],
+  );
+
+  const stageFile = useCallback(
+    (f: FileStatus) => void runGit("stage", () => gitStage(root, pathsOf(f))),
+    [root, runGit],
+  );
+  const unstageFile = useCallback(
+    (f: FileStatus) => void runGit("stage", () => gitUnstage(root, pathsOf(f))),
+    [root, runGit],
+  );
+  const stageAll = useCallback(
+    () => void runGit("stage", () => gitStageAll(root)),
+    [root, runGit],
+  );
+  const unstageAll = useCallback(
+    () => void runGit("stage", () => gitUnstageAll(root)),
+    [root, runGit],
+  );
+  const commit = useCallback(() => {
+    const message = commitMessage;
+    void runGit("commit", async () => {
+      await gitCommit(root, message);
+      // Only on success: a failed hook must not eat the message.
+      setCommitMessage("");
+    });
+  }, [root, runGit, commitMessage]);
+  const pull = useCallback(
+    (rebase: boolean) =>
+      void runGit("pull", async () => {
+        await gitPull(root, rebase);
+        showToast(rebase ? "Pulled and rebased." : "Pulled.");
+      }),
+    [root, runGit, showToast],
+  );
+  /** The push dialog's answer: what it showed is what goes. */
+  const push = useCallback(
+    (opts: { force: boolean; tags: boolean }) => {
+      setPushing(false);
+      void runGit("push", async () => {
+        await gitPush(root, opts);
+        showToast(opts.force ? "Force-pushed." : "Pushed.");
+      });
+    },
+    [root, runGit, showToast],
+  );
+  const openPush = useCallback(() => setPushing(true), []);
+
+  /**
+   * IntelliJ's Rollback: confirm what goes back to HEAD, and whether files
+   * HEAD never had are deleted or merely unstaged.
+   */
+  const rollback = useCallback(
+    async (files: FileStatus[]) => {
+      if (files.length === 0) return;
+      const rel = (p: string) => (p.startsWith(root) ? p.slice(root.length + 1) : p);
+      const added = files.some((f) => f.status === "added");
+      const r = await ask({
+        title: "Rollback Changes",
+        body: (
+          <>
+            {files.length === 1 ? (
+              <>
+                Revert <code>{rel(files[0].path)}</code> to its last committed state?
+              </>
+            ) : (
+              <>Revert {files.length} files to their last committed state?</>
+            )}
+            {files.length > 1 && (
+              <ul className="modal-files">
+                {files.slice(0, 12).map((f) => (
+                  <li key={f.path}>{rel(f.path)}</li>
+                ))}
+                {files.length > 12 && <li>…and {files.length - 12} more</li>}
+              </ul>
+            )}
+          </>
+        ),
+        checks: added
+          ? [{ id: "delete", label: "Delete local copies of added files", initial: false }]
+          : [],
+        confirm: "Rollback",
+        danger: true,
+      });
+      if (!r) return;
+      const paths = files.flatMap(pathsOf);
+      void runGit("rollback", async () => {
+        await gitRollback(root, paths, !!r.checks.delete);
+        showToast(files.length === 1 ? "Rolled back." : `Rolled back ${files.length} files.`);
+      });
+    },
+    [root, ask, runGit, showToast],
+  );
+
+  const continueOperation = useCallback(
+    () => void runGit("operation", () => gitOperationContinue(root)),
+    [root, runGit],
+  );
+  const abortOperation = useCallback(
+    () =>
+      void runGit("operation", async () => {
+        await gitOperationAbort(root);
+        showToast("Aborted.");
+      }),
+    [root, runGit, showToast],
+  );
+
+  /** A new branch from `from` (HEAD when null), switched to unless unticked. */
+  const newBranch = useCallback(
+    async (from: string | null) => {
+      const r = await ask({
+        title: "Create New Branch",
+        body: from ? (
+          <>
+            From <code>{from}</code>
+          </>
+        ) : undefined,
+        input: { label: "New branch name", placeholder: "feature/…" },
+        checks: [{ id: "checkout", label: "Checkout branch", initial: true }],
+        confirm: "Create",
+        validate: refNameError,
+      });
+      if (!r) return;
+      void runGit("branch", async () => {
+        await gitBranchCreate(root, r.text, from, r.checks.checkout);
+        showToast(r.checks.checkout ? `Switched to new branch ${r.text}.` : `Created ${r.text}.`);
+      });
+    },
+    [root, ask, runGit, showToast],
+  );
+
+  const newTag = useCallback(async () => {
+    const head = (await gitLog(root, 0, 1, { branch: "HEAD" }).catch(() => []))[0];
+    if (!head) {
+      showToast("There is no commit to tag yet.", "error");
+      return;
+    }
+    const r = await ask({
+      title: "Create New Tag",
+      body: (
+        <>
+          On <code>{head.shortId}</code> {head.subject}
+        </>
+      ),
+      input: { label: "Tag name", placeholder: "v1.0.0" },
+      message: { label: "Message (makes an annotated tag)", placeholder: "Optional" },
+      confirm: "Create Tag",
+      validate: refNameError,
+    });
+    if (!r) return;
+    void runGit("tag", async () => {
+      await gitTagCreate(root, r.text, head.id, r.message || null);
+      showToast(`Tagged ${head.shortId} as ${r.text}.`);
+    });
+  }, [root, ask, runGit, showToast]);
+
+  const checkout = useCallback(
+    (b: BranchInfo) =>
+      void runGit("checkout", async () => {
+        await gitCheckout(root, b);
+        // A remote branch lands as the local one tracking it.
+        const local = b.remote ? b.name.slice(b.name.indexOf("/") + 1) : b.name;
+        showToast(`Switched to ${local}.`);
+      }),
+    [root, runGit, showToast],
+  );
+  const fetchRemotes = useCallback(() => runGit("fetch", () => gitFetch(root)), [root, runGit]);
+
+  /** Everything the branch popup's submenu can do. */
+  const branchAction = useCallback(
+    async (action: BranchAction, b: BranchInfo) => {
+      const current = repo?.branch ?? "HEAD";
+      switch (action) {
+        case "checkout":
+          return checkout(b);
+        case "newFrom":
+          return newBranch(b.name);
+        case "compare":
+          // IntelliJ's "Compare with Current", as the log of what that
+          // branch has and the current one does not.
+          void openLogWindow({ root, branch: `${current}..${b.name}` });
+          return;
+        case "showLog":
+          void openLogWindow({ root, branch: b.name });
+          return;
+        case "merge":
+          return void runGit("merge", async () => {
+            const out = await gitMerge(root, b.name);
+            showToast(/up to date/i.test(out) ? "Already up to date." : `Merged ${b.name} into ${current}.`);
+          });
+        case "rebase":
+          return void runGit("rebase", async () => {
+            await gitRebase(root, b.name);
+            showToast(`Rebased ${current} onto ${b.name}.`);
+          });
+        case "pull":
+          // Only offered for the current branch, which is what pull updates.
+          return pull(false);
+        case "push":
+          return openPush();
+        case "rename": {
+          const r = await ask({
+            title: `Rename Branch ${b.name}`,
+            input: { label: "New name", initial: b.name },
+            confirm: "Rename",
+            validate: (t) => (t === b.name ? "That is its name already." : refNameError(t)),
+          });
+          if (!r) return;
+          return void runGit("branch", async () => {
+            await gitBranchRename(root, b.name, r.text);
+            showToast(`Renamed ${b.name} to ${r.text}.`);
+          });
+        }
+        case "delete": {
+          const r = await ask({
+            title: b.remote ? "Delete Remote Branch" : "Delete Branch",
+            body: b.remote ? (
+              <>
+                Delete <code>{b.name}</code> on the remote? Everyone loses it.
+              </>
+            ) : (
+              <>
+                Delete <code>{b.name}</code>?
+              </>
+            ),
+            checks: b.remote
+              ? []
+              : [{ id: "force", label: "Delete even if not fully merged", initial: false }],
+            confirm: "Delete",
+            danger: true,
+          });
+          if (!r) return;
+          return void runGit("branch", async () => {
+            await gitBranchDelete(root, b, !!r.checks.force);
+            showToast(`Deleted ${b.name}.`);
+          });
+        }
+      }
+    },
+    [root, repo?.branch, checkout, newBranch, runGit, showToast, pull, openPush, ask],
+  );
+
+  // ----------------------------------------------------------- commands ---
+
+  // Git needs a repo to act on; outside one a silent no-op would read as broken.
+  const gitReady = () => {
+    if (repo && !repo.isRepo) {
+      showToast("This project is not a git repository.", "error");
+      return false;
+    }
+    return true;
+  };
+  // This project's share of the app's shortcuts. App runs them while this tab
+  // is the active one and nothing modal is up; the chords themselves live in
+  // the registry, which is also what stops TerminalPane forwarding them.
+  const commands: Handlers = {
+    "prompt.templates": () => {
+      // Nothing to type into, and a chooser that quietly did nothing would be
+      // worse than saying so.
+      if (!current || current.exitCode !== undefined) {
+        showToast("No agent is running to send a prompt to.", "error");
+        return;
+      }
+      void openTemplatesWindow(
+        contextFrom(root, openFile, repo?.branch ?? null),
+      ).catch(() => showToast("Could not open prompt templates.", "error"));
+    },
+    "focus.files": () => {
+      // Same batch as the token, so the tree is visible by the time its
+      // focus effect runs.
+      setRailTab("files");
+      setFilesFocus((t) => t + 1);
+    },
+    "focus.git": () => {
+      setRailTab("git");
+      setGitFocus((t) => t + 1);
+    },
+    "focus.agent": () => setAgentFocus((t) => t + 1),
+    "file.new": () => void newFile(),
+    // The chord opens the panel too, so it never lands on a hidden tab.
+    "focus.agentInfo": () => patchLayout({ insightOpen: true, insightTab: "info" }),
+    "focus.agentTasks": () => patchLayout({ insightOpen: true, insightTab: "tasks" }),
+    "session.new": newSession,
+    "session.close": () => {
+      if (activeKey !== null) void closeSession(activeKey);
+    },
+    "session.next": () => cycleSession(1),
+    "session.prev": () => cycleSession(-1),
+    "account.next": () => {
+      // The backend would happily swap the Claude login underneath opencode;
+      // it just would not mean anything.
+      if (currentAgent?.id !== "claude") {
+        showToast("Switch to Claude Code to change accounts.", "error");
+        return;
+      }
+      void switchToNextAccount()
+        .then(({ label, settleSeconds }) => {
+          showToast(
+            settleSeconds > 0
+              ? `Switched to ${label}. The session keeps going and picks it up in ${settleSeconds}s.`
+              : `Switched to ${label}.`,
+          );
+          // Sessions and limits on screen belong to the account we just left.
+          setAgentsToken((t) => t + 1);
+        })
+        .catch((e: unknown) =>
+          showToast(String(e).replace(/^Error:\s*/, ""), "error"),
+        );
+    },
+    "git.commit": () => {
+      if (!gitReady()) return;
+      setRailTab("git");
+      setCommitRequest((t) => t + 1);
+    },
+    "git.stageAll": () => {
+      if (gitReady()) stageAll();
+    },
+    "git.pull": () => {
+      if (gitReady()) pull(false);
+    },
+    "git.pullRebase": () => {
+      if (gitReady()) pull(true);
+    },
+    "git.push": () => {
+      if (gitReady()) openPush();
+    },
+    "git.rollback": () => {
+      if (!gitReady()) return;
+      setRailTab("git");
+      setListRequest({ kind: "rollback", token: Date.now() });
+    },
+    "git.showDiff": () => {
+      if (!gitReady()) return;
+      setListRequest({ kind: "diff", token: Date.now() });
+    },
+    "git.log": () => {
+      if (!gitReady()) return;
+      void openLogWindow({ root }).catch(() => showToast("Could not open the git log.", "error"));
+    },
+    "git.annotate": () => {
+      if (!gitReady()) return;
+      if (!openFile) {
+        showToast("Open a file to annotate it.", "error");
+        return;
+      }
+      setAnnotateRequest((t) => t + 1);
+    },
+    "git.branches": () => {
+      if (gitReady()) setBranchesRequest((t) => t + 1);
+    },
+    "git.newBranch": () => {
+      if (gitReady()) void newBranch(null);
+    },
+    "git.newTag": () => {
+      if (gitReady()) void newTag();
+    },
+    "git.fetch": () => {
+      if (!gitReady()) return;
+      void runGit("fetch", async () => {
+        await gitFetch(root);
+        showToast("Fetched.");
+      });
+    },
+  };
+
+  /**
+   * Type a finished prompt into the session on screen.
+   *
+   * It goes through the module-level session handle rather than a prop, because
+   * anything that re-enters TerminalPane is one step closer to the effect that
+   * kills and respawns the PTY. Focus follows it back to the terminal so the
+   * user can add to the prompt and press Enter.
+   */
+  const insertPrompt = useCallback(
+    (text: string) => {
+      void ptyWriteActive(text)
+        .then((sent) => {
+          if (sent) setAgentFocus((t) => t + 1);
+          else showToast("No agent is running to send a prompt to.", "error");
+        })
+        .catch(() => showToast("Could not reach the agent.", "error"));
+    },
+    [showToast],
+  );
+
+  // Handlers close over this render's state, so they are republished every
+  // render; App reads them through a ref, the way the menu always has.
+  useEffect(() => register(root, { handlers: commands, insertPrompt }));
+  useEffect(() => () => register(root, null), [root, register]);
+
+  // ----------------------------------------------------------------- files ---
+
+  const toggleDir = useCallback(
+    (path: string) => {
+      setExpanded((prev) => {
+        const next = new Set(prev);
+        next.has(path) ? next.delete(path) : next.add(path);
+        saveProjectState(root, { expandedDirs: [...next] });
+        return next;
+      });
+    },
+    [root],
+  );
+
+  /**
+   * Open `path` as the file (from the tree) or as its diff (from the git
+   * list). Each goes to the side window when its setting says so, and only
+   * there -- the pane is left as it was.
+   */
+  const openPath = useCallback(
+    (path: string, as: ViewerMode, line?: number) => {
+      const { diffDisplay, fileDisplay } = settings().layout;
+      if ((as === "diff" ? diffDisplay : fileDisplay) === "window") {
+        void openViewerWindow(root, path, as, line);
+        setDiffFile(path);
+        return;
+      }
+      setDiffFile(null);
+      setOpenFile(path);
+      setOpenedAs(as);
+      // A fresh token even for the same line: the user may have scrolled away.
+      setOpenLine(line === undefined ? null : { line, token: Date.now() });
+      saveProjectState(root, { openFile: path });
+    },
+    [root],
+  );
+  const openFromTree = useCallback((path: string) => openPath(path, "file"), [openPath]);
+  const openFromGit = useCallback((path: string) => openPath(path, "diff"), [openPath]);
+  const openFromTerminal = useCallback(
+    (path: string, line?: number) => openPath(path, "file", line),
+    [openPath],
+  );
+
+  /**
+   * ⌘D / ⌘⌥Z with the changes list not focused: the open file, as IntelliJ's
+   * editor does. Rollback with no changed file open offers everything.
+   */
+  const listRequestUnhandled = useCallback(
+    (kind: ListRequest["kind"]) => {
+      const files = repo?.files ?? [];
+      const file = files.find((f) => f.path === (diffFile ?? openFile));
+      if (kind === "diff") {
+        if (file) openPath(file.path, "diff");
+        else showToast("No changed file selected to diff.", "error");
+      } else if (file) void rollback([file]);
+      else if (files.length > 0) void rollback(files);
+      else showToast("No changes to roll back.");
+    },
+    [repo, diffFile, openFile, openPath, showToast, rollback],
+  );
+
+  /**
+   * Create a file and open it ready to type into -- it is the user's, so it is
+   * unlocked from the start. The dialog starts in the folder of the file being
+   * looked at, the way IntelliJ's New File starts from the selection.
+   */
+  const newFile = useCallback(async () => {
+    const near = diffFile ?? openFile;
+    const dir = near?.startsWith(root + "/")
+      ? near.slice(root.length + 1, near.lastIndexOf("/") + 1)
+      : "";
+    const r = await ask({
+      title: "New File",
+      body: (
+        <>
+          In <code>{root.split("/").pop()}</code>. Folders that do not exist yet are created.
+        </>
+      ),
+      input: { label: "Path, relative to the project", initial: dir, placeholder: ".env" },
+      confirm: "Create",
+      validate: newFileError,
+    });
+    if (!r) return;
+    let file: string;
+    try {
+      file = await createFile(root, r.text);
+    } catch (e) {
+      showToast(String(e).replace(/^Error:\s*/, ""), "error");
+      return;
+    }
+    setWritable(root, file, true);
+    // Unfold the tree down to it, so it is visible where it landed.
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      for (let at = file.lastIndexOf("/"); at > root.length; at = file.lastIndexOf("/", at - 1)) {
+        next.add(file.slice(0, at));
+      }
+      saveProjectState(root, { expandedDirs: [...next] });
+      return next;
+    });
+    setRefreshToken((t) => t + 1);
+    openPath(file, "file");
+  }, [root, diffFile, openFile, ask, showToast, openPath]);
+
+  const closeFile = useCallback(() => {
+    setOpenFile(null);
+    saveProjectState(root, { openFile: null });
+  }, [root]);
+
+  const commitSplit = useCallback((f: number) => {
+    splitFraction.current = f;
+    patchLayout({ splitFraction: f });
+  }, []);
+
+  const toggleInsight = useCallback(
+    () => patchLayout({ insightOpen: !settings().layout.insightOpen }),
+    [],
+  );
+
+  // -------------------------------------------------------------- render ---
+
+  const tabs: SessionTab[] = sessions.map((s) => ({
+    key: s.key,
+    label: sessionLabel(s),
+    exited: s.exitCode !== undefined,
+  }));
+
+  // One stable slot for the whole terminal area: SplitPane must never see its
+  // `top` change shape, and every session pane is keyed inside the stack, so
+  // opening, closing or switching sessions never remounts another one.
+  const terminal = (
+    <div className="terminal-slot">
+      {sessions.length > 0 && (
+        <SessionTabs
+          tabs={tabs}
+          activeKey={activeKey}
+          choices={choices}
+          newRequest={newRequest}
+          onSelect={setActiveKey}
+          onClose={(key) => void closeSession(key)}
+          onNew={startSession}
+        />
+      )}
+      <div className="session-stack">
+        {sessions.map((s) => (
+          <SessionPane
+            key={s.key}
+            session={s}
+            agent={agentById(s.agentId)}
+            label={sessionLabel(s)}
+            cwd={root}
+            shown={s.key === activeKey}
+            visible={active && s.key === activeKey}
+            focusToken={agentFocus}
+            onExit={setExit}
+            onRestart={restart}
+            onOpenPath={openFromTerminal}
+          />
+        ))}
+        {sessions.length === 0 && (
+          <EmptyTerminal agents={agents} seeded={seeded.current} onStart={startSession} />
+        )}
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="project-view" hidden={!active}>
+      <header className="topbar">
+        {/* The project is what this tab is, so it leads where the app's own
+            name used to sit. The branch rides along: both answer "where am I
+            working?", and splitting them across the bar made you look in two
+            places for one fact. */}
+        <div className="topbar-project">
+          <button
+            className="cwd"
+            onClick={onPickProject}
+            title={chordHint(`${root} — click to open another project`, "project.open")}
+          >
+            {root.split("/").filter(Boolean).pop() || root}
+          </button>
+          {repo?.isRepo && repo.branch && (
+            <BranchPicker
+              root={root}
+              branch={repo.branch}
+              busy={gitBusy !== null}
+              ahead={repo.ahead}
+              behind={repo.behind}
+              openRequest={branchesRequest}
+              onCheckout={checkout}
+              onFetch={fetchRemotes}
+              onNewBranch={() => void newBranch(null)}
+              onAction={(a, b) => void branchAction(a, b)}
+            />
+          )}
+        </div>
+        <AgentPicker
+          agents={runnable}
+          activeId={currentAgent?.id ?? null}
+          onPick={pickAgent}
+        />
+        <div className="topbar-right">
+          <button
+            className="shortcuts-open"
+            onClick={() => commands["prompt.templates"]?.()}
+            title={chordHint("Prompt templates", "prompt.templates")}
+            aria-label="Prompt templates"
+          >
+            ❝
+          </button>
+          <button
+            className="shortcuts-open"
+            onClick={onOpenSettings}
+            title={chordHint("Settings", "app.settings")}
+            aria-label="Settings"
+          >
+            ⚙
+          </button>
+        </div>
+      </header>
+
+      <div className="body">
+        <aside className="rail" style={{ width: railWidth }}>
+          <nav className="rail-tabs" role="tablist" aria-orientation="vertical">
+            <button
+              className="rail-tab"
+              role="tab"
+              aria-selected={railTab === "files"}
+              aria-label="Files"
+              title={chordHint("Files", "focus.files")}
+              onClick={() => setRailTab("files")}
+            >
+              <FilesIcon />
+            </button>
+            <button
+              className="rail-tab"
+              role="tab"
+              aria-selected={railTab === "git"}
+              aria-label="Git"
+              title={chordHint("Git", "focus.git")}
+              onClick={() => setRailTab("git")}
+            >
+              <GitIcon />
+              {(repo?.files.length ?? 0) > 0 && (
+                <span className="rail-tab-badge">{repo!.files.length}</span>
+              )}
+            </button>
+            <button
+              className="rail-tab rail-action"
+              aria-label="New file"
+              title={chordHint("New file", "file.new")}
+              onClick={() => void newFile()}
+            >
+              <NewFileIcon />
+            </button>
+          </nav>
+          {/* Both stay mounted and the other is hidden: remounting the tree
+              would reload it and lose its scroll, and remounting the changes
+              would drop the commit box's caret and undo. */}
+          <div className="rail-panel">
+            <div hidden={railTab !== "files"}>
+              <FileTree
+                root={root}
+                selected={diffFile ?? openFile}
+                onSelect={openFromTree}
+                refreshToken={refreshToken}
+                expanded={expanded}
+                onToggle={toggleDir}
+                statuses={statuses}
+                recent={recent}
+                focusToken={filesFocus}
+              />
+            </div>
+            <div hidden={railTab !== "git"}>
+              <ChangesList
+                files={repo?.files ?? []}
+                root={root}
+                // null = status not back yet, or it failed. Assume a repo so
+                // the transient body reads "No changes" rather than accusing
+                // a real repo of not being one.
+                isRepo={repo === null || repo.isRepo}
+                upstream={repo?.upstream ?? null}
+                ahead={repo?.ahead ?? 0}
+                behind={repo?.behind ?? 0}
+                selected={diffFile ?? openFile}
+                recent={recent}
+                onSelect={openFromGit}
+                message={commitMessage}
+                onMessage={setCommitMessage}
+                busy={gitBusy}
+                commitRequest={commitRequest}
+                focusToken={gitFocus}
+                onStage={stageFile}
+                onUnstage={unstageFile}
+                onStageAll={stageAll}
+                onUnstageAll={unstageAll}
+                onCommit={commit}
+                onPull={pull}
+                onPush={openPush}
+                onRollback={(files) => void rollback(files)}
+                onHistory={(path) => void openLogWindow({ root, path })}
+                operation={repo?.operation ?? null}
+                onContinue={continueOperation}
+                onAbort={abortOperation}
+                request={listRequest}
+                onRequestUnhandled={listRequestUnhandled}
+              />
+            </div>
+          </div>
+        </aside>
+
+        <div
+          className="rail-resizer"
+          role="separator"
+          aria-orientation="vertical"
+          data-dragging={resizing === "rail"}
+          onPointerDown={(e) => {
+            e.preventDefault();
+            onResizeStart("rail");
+          }}
+        />
+
+        <main className="main">
+          {/* Always a SplitPane, even with no file open -- see the note in
+              SplitPane: moving `terminal` in the tree would remount it and
+              kill the agents' PTYs. The editor simply claims no space until
+              asked. */}
+          <SplitPane
+            initial={splitFraction.current}
+            onCommit={commitSplit}
+            top={terminal}
+            bottom={
+              openFile ? (
+                <BottomPane
+                  root={root}
+                  path={openFile}
+                  status={statuses.get(openFile) ?? null}
+                  refreshToken={refreshToken}
+                  diffInWindow={diffInWindow}
+                  openedAs={openedAs}
+                  target={openLine}
+                  annotateRequest={annotateRequest}
+                  isRepo={!!repo?.isRepo}
+                  onClose={closeFile}
+                />
+              ) : null
+            }
+          />
+        </main>
+
+        {/* A sibling of <main>, never a wrapper around it: anything that
+            remounts the subtree holding TerminalPane kills the agents' PTYs.
+            Swapping the panel for the stub keeps <main> in place, so the
+            terminals survive a collapse. */}
+        {!insightOpen && (
+          <button
+            className="insight-stub"
+            onClick={toggleInsight}
+            title="Show agent panel"
+            aria-label="Show agent panel"
+          >
+            ◫
+          </button>
+        )}
+
+        {insightOpen && (
+          <>
+            <div
+              className="insight-resizer"
+              role="separator"
+              aria-orientation="vertical"
+              data-dragging={resizing === "insight"}
+              onPointerDown={(e) => {
+                e.preventDefault();
+                onResizeStart("insight");
+              }}
+            />
+            <aside className="insight" style={{ width: insightWidth }}>
+              <InsightPanel
+                agent={panelAgent}
+                workspace={root}
+                // Both are monotonic, so the sum changes whenever either does.
+                refreshToken={refreshToken + agentsToken}
+                onAccountChanged={() => setAgentsToken((t) => t + 1)}
+                onClose={toggleInsight}
+              />
+            </aside>
+          </>
+        )}
+      </div>
+
+      {pushing && <PushDialog root={root} onPush={push} onCancel={() => setPushing(false)} />}
+      {dialogs}
+    </div>
+  );
+}
+
+interface SessionPaneProps {
+  session: Session;
+  agent: AgentInfo | null;
+  label: string;
+  cwd: string;
+  /** Its session tab is the selected one in this project. */
+  shown: boolean;
+  /** Shown, and its project tab is the window's active one. */
+  visible: boolean;
+  focusToken: number;
+  onExit(key: number, code: number | null): void;
+  onRestart(key: number): void;
+  onOpenPath(path: string, line?: number): void;
+}
+
+/**
+ * One session's terminal and its exit overlay. Its own component so the exit
+ * callback TerminalPane gets is stable per session: it is a dependency of the
+ * spawn effect, and a fresh one each render would restart the agent.
+ */
+function SessionPane({
+  session,
+  agent,
+  label,
+  cwd,
+  shown,
+  visible,
+  focusToken,
+  onExit,
+  onRestart,
+  onOpenPath,
+}: SessionPaneProps) {
+  const { key } = session;
+  const handleExit = useCallback((code: number | null) => onExit(key, code), [onExit, key]);
+  if (!agent) return null;
+  return (
+    <div className="session-pane" hidden={!shown}>
+      <TerminalPane
+        command={agent.command}
+        cwd={cwd}
+        generation={session.generation}
+        focusToken={focusToken}
+        visible={visible}
+        onExit={handleExit}
+        onOpenPath={onOpenPath}
+      />
+      {session.exitCode !== undefined && (
+        <div className="exit-overlay">
+          <p>
+            {label} exited
+            {session.exitCode === null ? "" : ` (code ${session.exitCode})`}
+          </p>
+          <button className="restart" onClick={() => onRestart(key)}>
+            Restart
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** The terminal area with no session in it: still loading, nothing installed,
+ *  or every session closed. */
+function EmptyTerminal({
+  agents,
+  seeded,
+  onStart,
+}: {
+  agents: AgentInfo[];
+  seeded: boolean;
+  onStart(agent: AgentInfo): void;
+}) {
+  if (agents.length === 0) return <div className="empty">Starting…</div>;
+  const available = agents.filter((a) => a.available);
+  // The registry is never empty, so a populated `agents` with nothing available
+  // means every known agent failed its `--version` probe.
+  if (available.length === 0) {
+    return (
+      <div className="empty">
+        No coding agent found. Install Claude Code or opencode, then reopen Aditor.
+      </div>
+    );
+  }
+  if (!seeded) return <div className="empty">Starting…</div>;
+  return (
+    <div className="empty session-empty">
+      <p>No agent session is open in this project.</p>
+      <div className="session-empty-actions">
+        {available.map((a) => (
+          <button key={a.id} className="restart" onClick={() => onStart(a)}>
+            Start {a.label}
+          </button>
+        ))}
+        <button className="restart" onClick={() => onStart(SHELL_SESSION)}>
+          Open Terminal
+        </button>
+      </div>
+    </div>
+  );
+}

@@ -97,12 +97,12 @@ pub struct Outgoing {
 
 /// Run `f` against the workspace's repo on a worker thread. `None` from a
 /// folder that is not a repo, so callers decide what "nothing" looks like.
-async fn read_repo<T, F>(ws: &State<'_, Workspace>, f: F) -> Result<Option<T>, String>
+async fn read_repo<T, F>(ws: &State<'_, Workspace>, root: &str, f: F) -> Result<Option<T>, String>
 where
     F: FnOnce(&Repository, &Path, &Path) -> Result<T, String> + Send + 'static,
     T: Send + 'static,
 {
-    let root = workspace_root(ws)?;
+    let root = workspace_root(ws, root)?;
     tauri::async_runtime::spawn_blocking(move || {
         let Ok(repo) = Repository::discover(&root) else {
             return Ok(None);
@@ -262,13 +262,14 @@ pub fn log(
 #[tauri::command]
 pub async fn git_log(
     ws: State<'_, Workspace>,
+    root: String,
     skip: usize,
     limit: usize,
     branch: Option<String>,
     text: Option<String>,
     path: Option<String>,
 ) -> Result<Vec<CommitInfo>, String> {
-    let found = read_repo(&ws, move |repo, workdir, _| {
+    let found = read_repo(&ws, &root, move |repo, workdir, _| {
         log(
             repo,
             workdir,
@@ -337,9 +338,10 @@ pub fn details(repo: &Repository, workdir: &Path, id: &str) -> Result<CommitDeta
 #[tauri::command]
 pub async fn git_commit_details(
     ws: State<'_, Workspace>,
+    root: String,
     id: String,
 ) -> Result<CommitDetails, String> {
-    read_repo(&ws, move |repo, workdir, _| details(repo, workdir, &id))
+    read_repo(&ws, &root, move |repo, workdir, _| details(repo, workdir, &id))
         .await?
         .ok_or_else(|| "Not a git repository.".into())
 }
@@ -348,11 +350,12 @@ pub async fn git_commit_details(
 #[tauri::command]
 pub async fn git_commit_file_diff(
     ws: State<'_, Workspace>,
+    root: String,
     id: String,
     path: String,
     old_path: Option<String>,
 ) -> Result<FileDiff, String> {
-    let found = read_repo(&ws, move |repo, workdir, _| {
+    let found = read_repo(&ws, &root, move |repo, workdir, _| {
         let oid = Oid::from_str(&id).map_err(|e| e.to_string())?;
         let c = repo.find_commit(oid).map_err(|e| e.to_string())?;
         let rel = |p: &str| -> PathBuf {
@@ -431,8 +434,12 @@ fn uncommitted(start: usize, lines: usize) -> BlameHunk {
 }
 
 #[tauri::command]
-pub async fn git_blame(ws: State<'_, Workspace>, path: String) -> Result<Vec<BlameHunk>, String> {
-    let found = read_repo(&ws, move |repo, workdir, root| {
+pub async fn git_blame(
+    ws: State<'_, Workspace>,
+    root: String,
+    path: String,
+) -> Result<Vec<BlameHunk>, String> {
+    let found = read_repo(&ws, &root, move |repo, workdir, root| {
         let abs = PathBuf::from(&path);
         if !abs.starts_with(root) {
             return Err(format!("{path} is outside the workspace"));
@@ -495,8 +502,8 @@ pub fn outgoing(repo: &Repository) -> Result<Outgoing, String> {
 }
 
 #[tauri::command]
-pub async fn git_outgoing(ws: State<'_, Workspace>) -> Result<Outgoing, String> {
-    let found = read_repo(&ws, |repo, _, _| outgoing(repo)).await?;
+pub async fn git_outgoing(ws: State<'_, Workspace>, root: String) -> Result<Outgoing, String> {
+    let found = read_repo(&ws, &root, |repo, _, _| outgoing(repo)).await?;
     Ok(found.unwrap_or(Outgoing { branch: None, target: None, commits: Vec::new() }))
 }
 

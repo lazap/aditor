@@ -3,7 +3,7 @@ import { emitTo, listen } from "@tauri-apps/api/event";
 import { useSettings } from "../settings/store";
 import type { PromptTemplate } from "../templates/registry";
 import { fillContext, resolve, scan, type Context } from "../templates/placeholders";
-import { TEMPLATES_CONTEXT, TEMPLATES_INSERT } from "../window";
+import { TEMPLATES_CONTEXT, TEMPLATES_INSERT, type TemplatesTarget } from "../window";
 
 interface Props {
   ctx: Context;
@@ -193,31 +193,32 @@ export function TemplatePicker({ ctx, onInsert, onClose }: Props) {
 
 const EMPTY_CONTEXT: Context = { file: "", project: "", branch: "" };
 
-/** The context the main window opened us with, from the URL. */
-function initialContext(): Context {
+/** What the editor window opened us with, from the URL. */
+function initialTarget(): TemplatesTarget {
   try {
-    const raw = new URLSearchParams(location.search).get("ctx");
-    return raw ? { ...EMPTY_CONTEXT, ...(JSON.parse(raw) as Partial<Context>) } : EMPTY_CONTEXT;
+    const raw = new URLSearchParams(location.search).get("target");
+    const t = raw ? (JSON.parse(raw) as Partial<TemplatesTarget>) : {};
+    return { ctx: { ...EMPTY_CONTEXT, ...t.ctx }, from: t.from ?? "main" };
   } catch {
-    return EMPTY_CONTEXT;
+    return { ctx: EMPTY_CONTEXT, from: "main" };
   }
 }
 
 /**
  * The picker as its own window.
  *
- * The agent's PTY belongs to the main window, so the finished prompt is handed
- * back there to be typed in. Opening the picker again while it is up sends a
+ * The agent's PTY belongs to the editor window that opened the picker, so the
+ * finished prompt is handed back there to be typed in. Opening the picker again while it is up sends a
  * fresh context; the picker is remounted for it, so it comes back cleared and
  * with focus in the filter rather than halfway through the last choice.
  */
 export function TemplatesWindow({ onClose }: { onClose(): void }) {
-  const [ctx, setCtx] = useState(initialContext);
+  const [target, setTarget] = useState(initialTarget);
   const [opened, setOpened] = useState(0);
 
   useEffect(() => {
-    const unlisten = listen<Context>(TEMPLATES_CONTEXT, ({ payload }) => {
-      setCtx(payload);
+    const unlisten = listen<TemplatesTarget>(TEMPLATES_CONTEXT, ({ payload }) => {
+      setTarget(payload);
       setOpened((n) => n + 1);
     });
     return () => void unlisten.then((u) => u());
@@ -226,10 +227,10 @@ export function TemplatesWindow({ onClose }: { onClose(): void }) {
   return (
     <TemplatePicker
       key={opened}
-      ctx={ctx}
+      ctx={target.ctx}
       // Close only once the prompt is on its way: IPC calls are not ordered, and
       // a close that overtook the emit would destroy the window with it.
-      onInsert={(text) => void emitTo("main", TEMPLATES_INSERT, text).finally(onClose)}
+      onInsert={(text) => void emitTo(target.from, TEMPLATES_INSERT, text).finally(onClose)}
       onClose={onClose}
     />
   );

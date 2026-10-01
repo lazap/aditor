@@ -15,6 +15,7 @@ export type BranchAction =
   | "delete";
 
 interface Props {
+  root: string;
   /** What the topbar shows: the branch, or a short SHA on a detached HEAD. */
   branch: string;
   /** True while any git write runs; switching then would only be refused. */
@@ -47,6 +48,7 @@ interface Sub {
  * only ever needed here, and a stale one would offer branches that are gone.
  */
 export function BranchPicker({
+  root,
   branch,
   busy,
   ahead,
@@ -73,10 +75,10 @@ export function BranchPicker({
 
   const load = useCallback(() => {
     setError(null);
-    return gitBranches()
+    return gitBranches(root)
       .then(setList)
       .catch((e) => setError(String(e).replace(/^Error:\s*/, "")));
-  }, []);
+  }, [root]);
 
   const close = useCallback(() => {
     setOpen(false);

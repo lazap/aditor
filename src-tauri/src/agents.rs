@@ -274,9 +274,9 @@ pub struct AgentState {
     files: Mutex<HashMap<PathBuf, CachedFile>>,
     /// workspace root -> the agent's transcript directory for it.
     dirs: Mutex<HashMap<PathBuf, PathBuf>>,
-    watcher: Mutex<Option<Box<dyn Watcher + Send>>>,
-    /// What the live watcher currently covers, so a repeat call is a no-op.
-    watching: Mutex<Option<PathBuf>>,
+    /// workspace root -> the watcher feeding that project's panel. One per open
+    /// project, so a repeat call for the same root is a no-op.
+    watchers: Mutex<HashMap<PathBuf, Box<dyn Watcher + Send>>>,
     /// The last limits `agent_refresh_limits` fetched, per account, mirrored
     /// from `LIMITS_FILE`. Kept in our own file rather than written into the
     /// agent's config, which is not ours to write, so neither the next panel
@@ -869,13 +869,27 @@ fn claude_sessions(root: &Path, state: &AgentState) -> AgentSessions {
 
 // -------------------------------------------------------------- commands ---
 
+impl AgentState {
+    /// Stop watching a workspace whose last tab has closed.
+    pub fn forget(&self, root: &Path) {
+        self.watchers.lock().unwrap().remove(root);
+    }
+}
+
+/// `agents://changed`: which project's panel should refresh.
+#[derive(Clone, Serialize)]
+struct Changed {
+    root: String,
+}
+
 #[tauri::command]
 pub fn agent_sessions(
     ws: State<'_, Workspace>,
     state: State<'_, AgentState>,
+    root: String,
     agent_id: String,
 ) -> Result<AgentSessions, String> {
-    let root = workspace_root(&ws)?;
+    let root = workspace_root(&ws, &root)?;
     // The one dispatch point. Another agent is a new arm here.
     Ok(match agent_id.as_str() {
         "claude" => claude_sessions(&root, &state),
@@ -920,27 +934,30 @@ pub fn agent_watch(
     app: AppHandle,
     ws: State<'_, Workspace>,
     state: State<'_, AgentState>,
+    root: String,
     agent_id: String,
 ) -> Result<(), String> {
+    let root = workspace_root(&ws, &root)?;
     if agent_id != "claude" {
-        *state.watcher.lock().unwrap() = None;
-        *state.watching.lock().unwrap() = None;
+        state.forget(&root);
         return Ok(());
     }
-    let root = workspace_root(&ws)?;
-    if state.watching.lock().unwrap().as_deref() == Some(root.as_path()) {
+    if state.watchers.lock().unwrap().contains_key(&root) {
         return Ok(());
     }
     let home = home().ok_or_else(|| "no home directory".to_string())?;
 
     let emitter = app.clone();
+    let tag = Changed {
+        root: root.to_string_lossy().to_string(),
+    };
     let mut watcher = recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             if matches!(
                 event.kind,
                 EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
             ) {
-                let _ = emitter.emit("agents://changed", ());
+                let _ = emitter.emit("agents://changed", tag.clone());
             }
         }
     })
@@ -959,9 +976,7 @@ pub fn agent_watch(
             .map_err(|e| e.to_string())?;
     }
 
-    // Replacing the previous watcher drops it, which stops it.
-    *state.watcher.lock().unwrap() = Some(Box::new(watcher));
-    *state.watching.lock().unwrap() = Some(root);
+    state.watchers.lock().unwrap().insert(root, Box::new(watcher));
     Ok(())
 }
 

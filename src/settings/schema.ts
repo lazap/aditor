@@ -24,6 +24,12 @@ export interface ProjectState {
   openFile: string | null;
   expandedDirs: string[];
   lastAgent: string | null;
+  /**
+   * Files the user unlocked for editing. Everything else stays read-only --
+   * the agent writes the code -- but a `.env` or a config is the user's to
+   * change, and stays unlocked until they lock it again.
+   */
+  writable: string[];
 }
 
 /** Where a diff or a file opens: under the terminal, or in a window of its own. */
@@ -81,6 +87,13 @@ export interface Settings {
   recents: RecentProject[];
   /** Per-project UI state, keyed by canonical workspace path. */
   projects: Record<string, ProjectState>;
+  /**
+   * The first editor window's project tabs, in order, reopened at launch --
+   * each with one fresh agent, never the sessions it had. Windows opened with
+   * New Window are not restored.
+   */
+  openTabs: string[];
+  activeTab: string | null;
   /** Agent to offer for a project opened for the first time. */
   lastAgent: string | null;
   layout: Layout;
@@ -96,6 +109,7 @@ export const EMPTY_PROJECT_STATE: ProjectState = {
   openFile: null,
   expandedDirs: [],
   lastAgent: null,
+  writable: [],
 };
 
 export const DEFAULTS: Settings = {
@@ -105,6 +119,8 @@ export const DEFAULTS: Settings = {
   templatesSeed: TEMPLATE_SEED,
   recents: [],
   projects: {},
+  openTabs: [],
+  activeTab: null,
   lastAgent: null,
   layout: {
     splitFraction: 0.55,

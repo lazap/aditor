@@ -28,11 +28,14 @@ pub fn run() {
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
-            pty::pty_kill_all,
+            pty::pty_kill_window,
             pty::agents_available,
             fs::open_workspace,
+            fs::close_workspace,
             fs::list_dir,
             fs::read_file,
+            fs::write_file,
+            fs::create_file,
             fs::fs_debounce_ms,
             fs::dirs_exist,
             fs::resolve_file_links,
@@ -83,23 +86,43 @@ pub fn run() {
         // Agents run in their own process groups, so closing the window does not
         // hang them up -- without this they survive the app that spawned them.
         //
-        // Only the main window owns agents. Settings and the template picker are
-        // windows of their own, and closing one must not take the session with
-        // it. When main goes, they go too: without the editor they are orphans
-        // that would keep the app alive.
+        // Only editor windows -- "main", and "main-*" opened with New Window --
+        // own agents, each its own. Settings, templates, diff and log are windows
+        // of their own, and closing one must not take a session with it. When
+        // the last editor goes, they go too: without one they are orphans that
+        // would keep the app alive.
         .on_window_event(|window, event| {
-            if window.label() != "main" || !matches!(event, WindowEvent::Destroyed) {
+            if !is_editor(window.label()) || !matches!(event, WindowEvent::Destroyed) {
                 return;
             }
             if let Some(registry) = window.try_state::<Arc<pty::PtyRegistry>>() {
-                pty::kill_all(&registry);
+                let ids = pty::kill_window(&registry, window.label());
+                if let Some(mcp) = window.try_state::<mcp::McpServer>() {
+                    for id in &ids {
+                        mcp.clear(id);
+                    }
+                }
             }
-            for (label, other) in window.app_handle().webview_windows() {
-                if label != "main" {
-                    let _ = other.close();
+            if let Some(ws) = window.try_state::<fs::Workspace>() {
+                ws.release_window(window.label());
+            }
+            let windows = window.app_handle().webview_windows();
+            let editors_left = windows
+                .keys()
+                .any(|label| is_editor(label) && label != window.label());
+            if !editors_left {
+                for (label, other) in windows {
+                    if !is_editor(&label) {
+                        let _ = other.close();
+                    }
                 }
             }
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// An editor window: the first one, or one opened with New Window.
+fn is_editor(label: &str) -> bool {
+    label == "main" || label.starts_with("main-")
 }

@@ -11,6 +11,7 @@ import { Modal } from "./Modal";
 import { relativeTime } from "../git/format";
 
 interface Props {
+  root: string;
   onPush(opts: { force: boolean; tags: boolean }): void;
   onCancel(): void;
 }
@@ -19,7 +20,7 @@ interface Props {
  * IntelliJ's Push dialog: what is about to leave, where it goes, and how.
  * A commit unfolds into its files; a file opens that commit in the log.
  */
-export function PushDialog({ onPush, onCancel }: Props) {
+export function PushDialog({ root, onPush, onCancel }: Props) {
   const [outgoing, setOutgoing] = useState<Outgoing | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<string | null>(null);
@@ -28,15 +29,15 @@ export function PushDialog({ onPush, onCancel }: Props) {
   const [tags, setTags] = useState(false);
 
   useEffect(() => {
-    gitOutgoing()
+    gitOutgoing(root)
       .then(setOutgoing)
       .catch((e) => setError(String(e).replace(/^Error:\s*/, "")));
-  }, []);
+  }, [root]);
 
   const toggle = (id: string) => {
     setOpen((o) => (o === id ? null : id));
     if (details.has(id)) return;
-    void gitCommitDetails(id)
+    void gitCommitDetails(root, id)
       .then((d) => setDetails((prev) => new Map(prev).set(id, d)))
       .catch(() => {});
   };
@@ -89,7 +90,7 @@ export function PushDialog({ onPush, onCancel }: Props) {
                       key={f.path}
                       className="push-file"
                       title="Show this commit in the log"
-                      onClick={() => void openLogWindow({ select: c.id, file: f.path })}
+                      onClick={() => void openLogWindow({ root, select: c.id, file: f.path })}
                     >
                       <span className="tree-status" data-status={f.kind}>
                         {BADGE[f.kind]}

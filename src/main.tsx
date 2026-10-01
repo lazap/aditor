@@ -8,13 +8,20 @@ import { TemplatesWindow } from "./components/TemplatePicker";
 import { DiffWindow } from "./components/DiffWindow";
 import { LogWindow } from "./components/LogWindow";
 import { flush, hydrate, syncWithPeers } from "./settings/store";
+import { flushEdits } from "./editor/autosave";
+
+/** Everything a closing window still owes the disk: typed edits, then settings. */
+const flushAll = async () => {
+  await flushEdits();
+  await flush();
+};
 import { adopt } from "./shortcuts/store";
 import { watchTheme } from "./theme";
 
 /**
- * Every window loads this same page; `?view=` says which one it is. Only the
- * main window mounts App, so only it reaps orphans, spawns agents or installs
- * the menu.
+ * Every window loads this same page; `?view=` says which one it is. Only editor
+ * windows mount App, so only they reap orphans, spawn agents or install the
+ * menu.
  */
 function root() {
   const view = new URLSearchParams(location.search).get("view");
@@ -22,7 +29,9 @@ function root() {
   // An edit made just before closing is still inside the write debounce, and
   // `beforeunload` cannot wait for an async write. Close-requested can: Tauri
   // holds the window open until this resolves, whichever way it was closed.
-  if (view) void getCurrentWindow().onCloseRequested(() => flush());
+  // Unsaved typing in an editable file is held the same way -- in an editor
+  // window too, whose bottom pane can hold one.
+  void getCurrentWindow().onCloseRequested(() => (view ? flushAll() : flushEdits()));
   if (view === "settings") return <Settings onClose={close} />;
   if (view === "templates") return <TemplatesWindow onClose={close} />;
   if (view === "diff") return <DiffWindow onClose={close} />;
