@@ -52,7 +52,7 @@ export function ShortcutsTab({ onNote, onRecording }: Props) {
     if (chord === null) return; // still only modifiers down
 
     if (isBare(chord)) {
-      onNote("Shortcuts need ⌘ or ⌥ — a bare key would go to the agent.");
+      onNote("Shortcuts need ⌘ or ⌥ — Ctrl and bare keys go to the agent.");
       return;
     }
     if (isSystemReserved(native)) {

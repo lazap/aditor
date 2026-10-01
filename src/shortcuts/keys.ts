@@ -1,9 +1,10 @@
 /**
  * Chords, as one canonical string.
  *
- * `"mod+shift+a"`, `"mod+1"`. `mod` matches Cmd *or* Ctrl, which is the
- * convention the app already used before there was a registry -- see the old
- * `(e.metaKey || e.ctrlKey)` checks in App.tsx and TerminalPane.tsx.
+ * `"mod+shift+a"`, `"mod+1"`. On macOS `mod` is Cmd only: Ctrl chords belong
+ * to the agent (Ctrl-E, Ctrl-O, Ctrl-W... are Claude Code's), so a Ctrl press
+ * there stringifies as `ctrl+…` and never matches a binding. Elsewhere `mod`
+ * is Ctrl (or Meta), there being nothing else to bind to.
  *
  * The key half comes from `e.code`, not `e.key`: under Shift, `e.key` for the
  * A row becomes something else entirely on several layouts, which would make
@@ -11,6 +12,10 @@
  */
 
 const isMac = navigator.userAgent.includes("Mac");
+
+/** Whether the app's modifier is down. See the header for why macOS differs. */
+const modDown = (e: KeyboardEvent): boolean =>
+  isMac ? e.metaKey : e.metaKey || e.ctrlKey;
 
 /** `e.code` -> the token we store. Anything not here falls through lowercased. */
 const CODES: Record<string, string> = {
@@ -46,7 +51,8 @@ export function eventChord(e: KeyboardEvent): string | null {
 
   // Fixed order, so the same chord always stringifies the same way.
   const parts: string[] = [];
-  if (e.metaKey || e.ctrlKey) parts.push("mod");
+  if (modDown(e)) parts.push("mod");
+  if (isMac && e.ctrlKey) parts.push("ctrl");
   if (e.altKey) parts.push("alt");
   if (e.shiftKey) parts.push("shift");
   parts.push(key);
@@ -96,7 +102,7 @@ export function formatChord(chord: string): string {
  * is worth more than the symmetry.
  */
 export function isSystemReserved(e: KeyboardEvent): boolean {
-  const mod = e.metaKey || e.ctrlKey;
+  const mod = modDown(e);
   if (mod && (e.key === "q" || e.key === "w" || e.key === "m")) return true; // window mgmt
   if (mod && e.shiftKey && e.key.toLowerCase() === "r") return true; // reload (dev)
   if (mod && (e.key === "+" || e.key === "-" || e.key === "0")) return true; // zoom
