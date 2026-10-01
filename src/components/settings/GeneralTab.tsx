@@ -8,10 +8,43 @@ import { patch, patchLayout, useSettings } from "../../settings/store";
  * -- and each reads the same field, so they cannot drift apart.
  */
 export function GeneralTab() {
-  const { layout, keyboardMode, terminalFileLinks } = useSettings();
+  const { layout, keyboardMode, appearance, terminalFileLinks } = useSettings();
 
   return (
     <>
+      <div className="picker-section-label">Appearance</div>
+      <div className="setting-row">
+        <span className="setting-label">
+          Theme
+          <span className="setting-sub">
+            Light follows IntelliJ Light. System switches with macOS.
+          </span>
+        </span>
+        <div className="seg">
+          <button
+            className="seg-btn"
+            data-active={appearance === "system"}
+            onClick={() => patch({ appearance: "system" })}
+          >
+            System
+          </button>
+          <button
+            className="seg-btn"
+            data-active={appearance === "light"}
+            onClick={() => patch({ appearance: "light" })}
+          >
+            Light
+          </button>
+          <button
+            className="seg-btn"
+            data-active={appearance === "dark"}
+            onClick={() => patch({ appearance: "dark" })}
+          >
+            Dark
+          </button>
+        </div>
+      </div>
+
       <div className="picker-section-label">Diff view</div>
       <div className="setting-row">
         <span className="setting-label">

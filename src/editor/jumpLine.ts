@@ -23,7 +23,7 @@ const jumpLineField = StateField.define<DecorationSet>({
 
 export const jumpLine = [
   jumpLineField,
-  EditorView.theme({ ".cm-jump-line": { backgroundColor: "#243049" } }),
+  EditorView.theme({ ".cm-jump-line": { backgroundColor: "var(--jump-line)" } }),
 ];
 
 /** Put the caret on 1-based `line` (clamped), centre it, and tint it. */

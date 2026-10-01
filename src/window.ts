@@ -9,6 +9,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { emitTo } from "@tauri-apps/api/event";
 import type { Context } from "./templates/placeholders";
+import { windowBackground } from "./theme";
 
 const PICKER_WIDTH = 560;
 /** Bounds for the measured fit: small enough to look deliberate, tall enough
@@ -47,10 +48,6 @@ export async function growWindowToEditor(): Promise<void> {
 
 // ------------------------------------------------------------ side windows ---
 
-/** Matches `--bg` in theme.css, so a new window does not flash white before
- *  its stylesheet lands. */
-const WINDOW_BG = "#14161a";
-
 /**
  * Bring an existing side window forward, or build it.
  *
@@ -73,7 +70,9 @@ async function showWindow(
     ...options,
     center: true,
     parent: "main",
-    backgroundColor: WINDOW_BG,
+    // The page's own `--bg`, so the window does not flash the other theme
+    // before its stylesheet lands.
+    backgroundColor: windowBackground(),
   });
 }
 

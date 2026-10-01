@@ -6,6 +6,7 @@ import { listen } from "@tauri-apps/api/event";
 import { isReservedForApp } from "../shortcuts/store";
 import { useSetting } from "../settings/store";
 import { createFileLinkProvider } from "../pty/fileLinks";
+import { currentTheme, terminalMinContrast, terminalThemes, useTheme } from "../theme";
 import {
   activeSession,
   fromBase64,
@@ -17,30 +18,6 @@ import {
   type PtyExit,
   type PtyOutput,
 } from "../pty/api";
-
-const terminalTheme = {
-  background: "#14161a",
-  foreground: "#d7dae0",
-  cursor: "#7aa2f7",
-  cursorAccent: "#14161a",
-  selectionBackground: "#2d3343",
-  black: "#14161a",
-  red: "#f7768e",
-  green: "#9ece6a",
-  yellow: "#e0af68",
-  blue: "#7aa2f7",
-  magenta: "#bb9af7",
-  cyan: "#7dcfff",
-  white: "#c0caf5",
-  brightBlack: "#565f89",
-  brightRed: "#ff899d",
-  brightGreen: "#b9f27c",
-  brightYellow: "#ffc777",
-  brightBlue: "#8db0ff",
-  brightMagenta: "#caa9fa",
-  brightCyan: "#b4f9f8",
-  brightWhite: "#eaeefb",
-};
 
 interface Props {
   /** Command to run in the login shell; null spawns an interactive shell. */
@@ -74,6 +51,7 @@ export function TerminalPane({
    */
   const [liveTerm, setLiveTerm] = useState<Terminal | null>(null);
   const fileLinks = useSetting((s) => s.terminalFileLinks);
+  const theme = useTheme();
   // Read at click time rather than depended on: any new dependency of the spawn
   // effect is one more way to kill and restart the agent.
   const onOpenPathRef = useRef(onOpenPath);
@@ -90,8 +68,12 @@ export function TerminalPane({
     let sessionId: string | null = null;
     const unlisteners: Array<() => void> = [];
 
+    // Read rather than depended on, like onOpenPath: the effect below repaints
+    // a live terminal, so a theme change never respawns the agent.
+    const startTheme = currentTheme();
     const term = new Terminal({
-      theme: terminalTheme,
+      theme: terminalThemes[startTheme],
+      minimumContrastRatio: terminalMinContrast(startTheme),
       fontFamily:
         'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace',
       fontSize: 13,
@@ -213,7 +195,13 @@ export function TerminalPane({
     return () => provider.dispose();
   }, [liveTerm, fileLinks]);
 
-  // Its own effect, and `focusToken` stays out of the one above: adding it
+  useEffect(() => {
+    if (!liveTerm) return;
+    liveTerm.options.theme = terminalThemes[theme];
+    liveTerm.options.minimumContrastRatio = terminalMinContrast(theme);
+  }, [liveTerm, theme]);
+
+  // Its own effect, and `focusToken` stays out of the spawn effect: adding it
   // there would tear down the PTY and restart the agent on every ⌘E.
   useEffect(() => {
     if (focusToken === 0) return;

@@ -117,8 +117,8 @@ const blockCursor = layer({
 const blockCursorTheme = EditorView.theme({
   // Specific enough to beat the caret colour in aditorEditorTheme.
   "&.cm-editor .cm-content": { caretColor: "transparent" },
-  ".cm-vim-cursor": { outline: "1px solid #7aa2f7", outlineOffset: "-1px" },
-  "&.cm-focused .cm-vim-cursor": { backgroundColor: "rgba(122, 162, 247, 0.45)" },
+  ".cm-vim-cursor": { outline: "1px solid var(--caret)", outlineOffset: "-1px" },
+  "&.cm-focused .cm-vim-cursor": { backgroundColor: "var(--vim-cursor)" },
 });
 
 export function vimMotions(on: boolean): Extension {

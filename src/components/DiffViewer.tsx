@@ -3,10 +3,11 @@ import { EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
 import { MergeView, unifiedMergeView } from "@codemirror/merge";
 import { gitDiff, type FileDiff } from "../git/api";
-import { aditorEditorTheme, aditorHighlighting } from "../editor/theme";
+import { aditorEditorTheme, aditorHighlighting, darkMode, darkModeFor } from "../editor/theme";
 import { loadLanguage } from "../editor/language";
 import { vimMode, vimMotions } from "../editor/vim";
 import { useSetting } from "../settings/store";
+import { useTheme } from "../theme";
 
 export type DiffLayout = "unified" | "split";
 
@@ -41,6 +42,10 @@ export function DiffViewer({ path, layout, refreshToken, autoFocus }: Props) {
   // reconfigures the live view below instead of rebuilding it.
   const vimRef = useRef(vim);
   vimRef.current = vim;
+  // Same arrangement for the theme.
+  const theme = useTheme();
+  const themeRef = useRef(theme);
+  themeRef.current = theme;
   const autoFocusRef = useRef(autoFocus);
   autoFocusRef.current = autoFocus;
 
@@ -72,6 +77,7 @@ export function DiffViewer({ path, layout, refreshToken, autoFocus }: Props) {
         aditorHighlighting,
         EditorState.readOnly.of(true),
         vimMode.of(vimMotions(vimRef.current)),
+        darkMode.of(darkModeFor(themeRef.current)),
         ...lang,
       ];
 
@@ -114,6 +120,11 @@ export function DiffViewer({ path, layout, refreshToken, autoFocus }: Props) {
     const effects = vimMode.reconfigure(vimMotions(vim));
     for (const view of editorsOf(instanceRef.current)) view.dispatch({ effects });
   }, [vim]);
+
+  useEffect(() => {
+    const effects = darkMode.reconfigure(darkModeFor(theme));
+    for (const view of editorsOf(instanceRef.current)) view.dispatch({ effects });
+  }, [theme]);
 
   useEffect(
     () => () => {

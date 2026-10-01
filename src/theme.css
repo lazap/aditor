@@ -1,5 +1,7 @@
-/* One dark token set, shared by the app chrome and the xterm palette in
-   TerminalPane.tsx. Keep the two in step when either changes. */
+/* Two token sets: dark here, IntelliJ Light under [data-theme="light"] below.
+   The chrome and every CodeMirror view read these directly; the colours that
+   cannot be variables -- xterm's palette, a new window's background -- live in
+   theme.ts. Keep the three in step when any changes. */
 :root {
   --bg: #14161a;
   --bg-raised: #1a1d23;
@@ -9,6 +11,40 @@
   --accent: #7aa2f7;
   --danger: #f7768e;
 
+  /* Rows and buttons: under the pointer, chosen, under the keyboard cursor,
+     and touched by the agent a moment ago. */
+  --bg-hover: #22262f;
+  --bg-selected: #2a3550;
+  --bg-cursor: #202634;
+  --bg-recent: #223046;
+  --shadow: rgb(0 0 0 / 45%);
+  --overlay: rgba(20, 22, 26, 0.88);
+
+  /* Editor (editor/theme.ts and the vim, search and jump-line extensions). */
+  --editor-bg: #14161a;
+  --caret: #7aa2f7;
+  --gutter-fg: #4a5163;
+  --active-line: #1a1d23;
+  --selection: #2d3343;
+  --selection-focused: #33405c;
+  --jump-line: #243049;
+  --search-match: rgba(224, 175, 104, 0.3);
+  --vim-cursor: rgba(122, 162, 247, 0.45);
+
+  /* Syntax. */
+  --syn-keyword: #bb9af7;
+  --syn-property: #d7dae0;
+  --syn-variable: #c0caf5;
+  --syn-function: #7aa2f7;
+  --syn-type: #7dcfff;
+  --syn-string: #9ece6a;
+  --syn-number: #ff9e64;
+  --syn-punctuation: #7c8495;
+  --syn-comment: #565f89;
+  --syn-meta: #e0af68;
+  --syn-heading: #7aa2f7;
+  --syn-link: #7dcfff;
+
   --topbar-h: 38px;
   --rail-w: 240px;
   /* Starting width of the agent panel; the user's drag overrides it inline. */
@@ -17,6 +53,59 @@
   color-scheme: dark;
   font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
   font-size: 13px;
+}
+
+/* After IntelliJ Light: white editor, #f7f8fa panels, its blue, and its
+   syntax colours. Also overrides the file-tree and git-status tokens declared
+   with their sections further down. */
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-raised: #f7f8fa;
+  --border: #ebecf0;
+  --fg: #080808;
+  --fg-dim: #6c707e;
+  --accent: #3574f0;
+  --danger: #db3b4b;
+
+  --bg-hover: #dfe1e5;
+  --bg-selected: #d4e2ff;
+  --bg-cursor: #ebecf0;
+  --bg-recent: #e6eeff;
+  --shadow: rgb(0 0 0 / 14%);
+  --overlay: rgba(255, 255, 255, 0.88);
+
+  --editor-bg: #ffffff;
+  --caret: #000000;
+  --gutter-fg: #adadad;
+  --active-line: #f5f8fe;
+  --selection: #d4e2ff;
+  --selection-focused: #a6d2ff;
+  --jump-line: #fdf0c4;
+  --search-match: rgba(242, 200, 80, 0.45);
+  --vim-cursor: rgba(53, 116, 240, 0.35);
+
+  --syn-keyword: #0033b3;
+  --syn-property: #871094;
+  --syn-variable: #080808;
+  --syn-function: #00627a;
+  --syn-type: #000000;
+  --syn-string: #067d17;
+  --syn-number: #1750eb;
+  --syn-punctuation: #080808;
+  --syn-comment: #8c8c8c;
+  --syn-meta: #9e880d;
+  --syn-heading: #0033b3;
+  --syn-link: #287bde;
+
+  --icon-dir: #6c707e;
+
+  --st-modified: #0a77d8;
+  --st-added: #067d17;
+  --st-deleted: #6c707e;
+  --st-renamed: #007f9a;
+  --st-conflicted: #d5756c;
+
+  color-scheme: light;
 }
 
 * {
@@ -96,7 +185,7 @@ body,
 
 .agent-trigger:hover,
 .agent-trigger[data-open="true"] {
-  background: #22262f;
+  background: var(--bg-hover);
   border-color: var(--border);
 }
 
@@ -117,7 +206,7 @@ body,
   background: var(--bg-raised);
   border: 1px solid var(--border);
   border-radius: 6px;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 
 .agent-option {
@@ -138,7 +227,7 @@ body,
 
 .agent-option:hover:not(:disabled),
 .agent-option:focus-visible {
-  background: #22262f;
+  background: var(--bg-hover);
   color: var(--fg);
   outline: none;
 }
@@ -229,7 +318,7 @@ body,
 }
 
 .rail-tab:hover {
-  background: #22262f;
+  background: var(--bg-hover);
   color: var(--fg);
 }
 
@@ -256,7 +345,7 @@ body,
   min-width: 14px;
   padding: 0 3px;
   border-radius: 7px;
-  background: #22262f;
+  background: var(--bg-hover);
   color: var(--fg-dim);
   font-size: 9px;
   line-height: 14px;
@@ -325,7 +414,7 @@ body,
   align-items: center;
   justify-content: center;
   gap: 12px;
-  background: rgba(20, 22, 26, 0.88);
+  background: var(--overlay);
   backdrop-filter: blur(2px);
 }
 
@@ -381,11 +470,11 @@ body,
 }
 
 .tree-row:hover {
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .tree-row[data-selected="true"] {
-  background: #2a3550;
+  background: var(--bg-selected);
 }
 
 .tree-chevron {
@@ -450,7 +539,7 @@ body,
 /* A background too, so the cursor is legible at a glance and not just a hairline
    -- but never over the open file's own highlight. */
 .tree:focus-within .tree-row[data-cursor="true"]:not([data-selected="true"]) {
-  background: #202634;
+  background: var(--bg-cursor);
 }
 
 .tree-row:focus {
@@ -615,7 +704,7 @@ button.cwd:hover {
 
 .viewer-close:hover {
   color: var(--fg);
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .viewer-host {
@@ -674,7 +763,7 @@ button.cwd:hover {
    only say a file differs from HEAD, so this is what distinguishes the agent's
    latest edits from work that has been dirty for hours. */
 .tree-row[data-recent="true"] {
-  background: #223046;
+  background: var(--bg-recent);
   box-shadow: inset 2px 0 0 var(--accent);
   transition: background 600ms ease-out;
 }
@@ -719,7 +808,7 @@ button.cwd:hover {
   font-size: 11px;
   letter-spacing: 0;
   color: var(--fg-dim);
-  background: #22262f;
+  background: var(--bg-hover);
   border-radius: 8px;
   padding: 0 6px;
 }
@@ -743,7 +832,7 @@ button.cwd:hover {
 }
 
 .changes-body:focus-within .changes-row[data-cursor="true"]:not([data-selected="true"]) {
-  background: #202634;
+  background: var(--bg-cursor);
 }
 
 .changes-body:focus {
@@ -800,7 +889,7 @@ button.cwd:hover {
 .changes-tool:hover:not(:disabled),
 .changes-act:hover:not(:disabled) {
   color: var(--fg);
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .changes-tool:disabled,
@@ -827,7 +916,7 @@ button.cwd:hover {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--bg-raised);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  box-shadow: 0 8px 24px var(--shadow);
 }
 
 .changes-menu button {
@@ -843,7 +932,7 @@ button.cwd:hover {
 }
 
 .changes-menu button:hover {
-  background: #2a3550;
+  background: var(--bg-selected);
 }
 
 .changes-commit {
@@ -972,7 +1061,7 @@ button.cwd:hover {
 
 .branch:hover,
 .branch[data-open="true"] {
-  background: #22262f;
+  background: var(--bg-hover);
   color: var(--fg);
 }
 
@@ -1087,7 +1176,7 @@ button.cwd:hover {
 }
 
 .recent-row:hover {
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .recent-open {
@@ -1196,7 +1285,7 @@ button.cwd:hover {
 
 .picker-browse:hover,
 .picker-cancel:hover {
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .picker-browse:focus-visible,
@@ -1233,12 +1322,12 @@ button.cwd:hover {
 
 .seg-btn:hover:not(:disabled) {
   color: var(--fg);
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .seg-btn[data-active="true"] {
   color: var(--fg);
-  background: #2a3550;
+  background: var(--bg-selected);
 }
 
 .seg-btn:disabled {
@@ -1367,7 +1456,7 @@ button.cwd:hover {
 }
 
 .insight-close:hover {
-  background: #22262f;
+  background: var(--bg-hover);
   color: var(--fg);
 }
 
@@ -1390,7 +1479,7 @@ button.cwd:hover {
 }
 
 .insight-stub:hover {
-  background: #22262f;
+  background: var(--bg-hover);
   color: var(--fg);
 }
 
@@ -1416,7 +1505,7 @@ button.cwd:hover {
 }
 
 .shortcuts-open:hover {
-  background: #22262f;
+  background: var(--bg-hover);
   border-color: var(--fg-dim);
 }
 
@@ -1509,7 +1598,7 @@ button.cwd:hover {
 .meter-track {
   height: 4px;
   border-radius: 2px;
-  background: #22262f;
+  background: var(--bg-hover);
   overflow: hidden;
 }
 
@@ -1543,7 +1632,7 @@ button.cwd:hover {
 .iaccount-add:focus-visible,
 .section-action:hover:not(:disabled),
 .section-action:focus-visible {
-  background: #22262f;
+  background: var(--bg-hover);
   color: var(--fg);
   outline: none;
 }
@@ -1566,7 +1655,7 @@ button.cwd:hover {
 }
 
 .iaccount:hover {
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .iaccount-pick {
@@ -1681,7 +1770,7 @@ button.cwd:hover {
 }
 
 .isession:hover {
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .isession-head {
@@ -1832,7 +1921,7 @@ button.cwd:hover {
   border-radius: 8px;
   background: var(--bg-raised);
   color: var(--fg);
-  box-shadow: 0 8px 24px rgb(0 0 0 / 45%);
+  box-shadow: 0 8px 24px var(--shadow);
   animation: toast-in 120ms ease-out;
   /* Git errors arrive as several lines of its own output. */
   white-space: pre-line;
@@ -1868,7 +1957,7 @@ button.cwd:hover {
 }
 
 .shortcut-row:hover {
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .shortcut-label {
@@ -2009,7 +2098,7 @@ button.cwd:hover {
 }
 
 .settings-tab:hover {
-  background: #22262f;
+  background: var(--bg-hover);
   color: var(--fg);
 }
 
@@ -2119,7 +2208,7 @@ button.cwd:hover {
 }
 
 .template-row:hover {
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .template-row[data-selected="true"] {
@@ -2268,7 +2357,7 @@ button.cwd:hover {
 }
 
 .template-act:hover:not(:disabled) {
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .template-act:disabled {
@@ -2382,7 +2471,7 @@ button.cwd:hover {
 }
 
 .task-row[data-status="in_progress"] {
-  background: #22262f;
+  background: var(--bg-hover);
 }
 
 .task-row[data-status="in_progress"] .task-status {

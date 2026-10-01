@@ -32,6 +32,9 @@ export type DiffDisplay = "pane" | "window";
 /** How the read-only viewers take the keyboard: as-is, or with vim motions. */
 export type KeyboardMode = "standard" | "vim";
 
+/** Colour scheme: follow macOS, or pin one. */
+export type Appearance = "system" | "light" | "dark";
+
 /** Which panel the left rail shows. */
 export type RailTab = "files" | "git";
 
@@ -82,6 +85,7 @@ export interface Settings {
   lastAgent: string | null;
   layout: Layout;
   keyboardMode: KeyboardMode;
+  appearance: Appearance;
   /** Underline file paths in the agent terminal and open them on click. */
   terminalFileLinks: boolean;
   /** Which tab the Settings dialog opens on. */
@@ -116,6 +120,7 @@ export const DEFAULTS: Settings = {
     sections: {},
   },
   keyboardMode: "standard",
+  appearance: "dark",
   terminalFileLinks: true,
   settingsTab: "general",
 };
