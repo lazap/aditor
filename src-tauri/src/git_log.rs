@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
 
 use git2::{Commit, Delta, DiffFindOptions, DiffOptions, Oid, Repository, Sort};
 use serde::Serialize;
@@ -178,8 +179,31 @@ fn info(c: &Commit, refs: &HashMap<Oid, Vec<RefLabel>>) -> CommitInfo {
     }
 }
 
+/// `touches` answers already worked out, by commit and path. Both are
+/// immutable, so an answer never goes stale -- and paging, window focus and
+/// every `git://changed` re-walk the history from the top, which without this
+/// re-diffs every commit each time.
+static TOUCHES: LazyLock<Mutex<HashMap<(Oid, PathBuf), bool>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Roughly 40 bytes plus the path per entry; dropped wholesale past this.
+const TOUCHES_MAX: usize = 200_000;
+
 /// Whether `c` changed `rel` relative to its first parent.
 fn touches(repo: &Repository, c: &Commit, rel: &Path) -> bool {
+    let key = (c.id(), rel.to_path_buf());
+    if let Some(&hit) = TOUCHES.lock().unwrap().get(&key) {
+        return hit;
+    }
+    let hit = diff_touches(repo, c, rel);
+    let mut cache = TOUCHES.lock().unwrap();
+    if cache.len() >= TOUCHES_MAX {
+        cache.clear();
+    }
+    cache.insert(key, hit);
+    hit
+}
+
+fn diff_touches(repo: &Repository, c: &Commit, rel: &Path) -> bool {
     let Ok(tree) = c.tree() else { return false };
     let parent = c.parent(0).ok().and_then(|p| p.tree().ok());
     let mut opts = DiffOptions::new();
