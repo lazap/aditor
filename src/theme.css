@@ -46,6 +46,10 @@
   --syn-link: #7dcfff;
 
   --topbar-h: 38px;
+  /* What the macOS traffic lights take from the tabs strip and the chooser
+     when the title bar is overlaid; 0 wherever the native bar is kept. */
+  --titlebar-inset: 0px;
+  --titlebar-h: 0px;
   --rail-w: 240px;
   /* Starting width of the agent panel; the user's drag overrides it inline. */
   --insight-w: 300px;
@@ -141,6 +145,12 @@ body,
   display: none;
 }
 
+/* Set by titlebar.ts on macOS editor windows, cleared in full screen. */
+:root[data-titlebar="overlay"] {
+  --titlebar-inset: 78px;
+  --titlebar-h: 28px;
+}
+
 /* ---- project tabs ---- */
 
 /* JetBrains' project tabs: a quiet strip above the topbar. The active tab takes
@@ -150,10 +160,19 @@ body,
   align-items: stretch;
   flex: 0 0 auto;
   height: 30px;
+  /* Clear of the traffic lights: the strip is the window's title bar. */
+  padding-left: var(--titlebar-inset);
   background: var(--bg);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
   scrollbar-width: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* The first tab's divider would otherwise float beside the traffic lights. */
+:root[data-titlebar="overlay"] .project-tab:first-child {
+  border-left: 1px solid var(--border);
 }
 
 .project-tab,
@@ -1387,6 +1406,8 @@ button.cwd:hover {
   align-items: center;
   justify-content: center;
   padding: 24px;
+  /* The card's title would sit under the traffic lights otherwise. */
+  padding-top: calc(24px + var(--titlebar-h));
   /* Opaque: the app is still mounted underneath so the agent keeps running. */
   background: var(--bg);
 }

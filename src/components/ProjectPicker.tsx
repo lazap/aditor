@@ -62,9 +62,6 @@ function WhereStep({
   );
 }
 
-/** Must match `.picker-overlay`'s padding in theme.css. */
-const OVERLAY_PAD = 24;
-
 /** `/Users/me/dev/aditor` -> `{ name: "aditor", parent: "~/dev" }`. */
 function split(path: string): { name: string; parent: string } {
   const parts = path.split("/").filter(Boolean);
@@ -119,8 +116,12 @@ export function ProjectPicker({
   useLayoutEffect(() => {
     if (!fitWindow) return;
     const card = cardRef.current;
-    if (!card) return;
-    void fitWindowToPicker(card.getBoundingClientRect().height + OVERLAY_PAD * 2);
+    const overlay = card?.parentElement;
+    if (!card || !overlay) return;
+    // Read, not assumed: the top padding also clears the title bar on macOS.
+    const pad = getComputedStyle(overlay);
+    const padding = parseFloat(pad.paddingTop) + parseFloat(pad.paddingBottom);
+    void fitWindowToPicker(card.getBoundingClientRect().height + padding);
   }, [fitWindow, recents.length, error]);
 
   const onKeyDown = (e: React.KeyboardEvent) => {
@@ -157,6 +158,8 @@ export function ProjectPicker({
       aria-modal="true"
       aria-label="Open a project"
       onKeyDown={onKeyDown}
+      // Covers the tabs strip, so it is the title bar while it is up.
+      data-tauri-drag-region
     >
       <div className="picker-card" ref={cardRef}>
         <h1 className="picker-title">Aditor</h1>

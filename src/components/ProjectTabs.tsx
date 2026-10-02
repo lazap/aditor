@@ -20,7 +20,9 @@ interface Props {
  */
 export function ProjectTabs({ tabs, active, running, attention, onSelect, onClose, onOpen }: Props) {
   return (
-    <div className="project-tabs" role="tablist" aria-label="Projects">
+    // The strip is the window's title bar: its empty stretch drags the window
+    // and a double-click there zooms it. The tabs inside are not drag regions.
+    <div className="project-tabs" role="tablist" aria-label="Projects" data-tauri-drag-region>
       {tabs.map((root) => (
         <div
           key={root}

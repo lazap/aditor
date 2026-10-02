@@ -62,6 +62,9 @@ export async function openProjectWindow(root: string): Promise<void> {
     height: EDITOR_HEIGHT,
     minWidth: EDITOR_MIN_WIDTH,
     minHeight: EDITOR_MIN_HEIGHT,
+    // As the first window's config: the tabs strip is the title bar.
+    titleBarStyle: "overlay",
+    hiddenTitle: true,
     backgroundColor: windowBackground(),
   });
   await new Promise<void>((resolve, reject) => {

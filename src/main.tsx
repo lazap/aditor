@@ -17,6 +17,7 @@ const flushAll = async () => {
 };
 import { adopt } from "./shortcuts/store";
 import { watchTheme } from "./theme";
+import { installTitlebar } from "./titlebar";
 
 /**
  * Every window loads this same page; `?view=` says which one it is. Only editor
@@ -36,6 +37,7 @@ function root() {
   if (view === "templates") return <TemplatesWindow onClose={close} />;
   if (view === "diff") return <DiffWindow onClose={close} />;
   if (view === "log") return <LogWindow onClose={close} />;
+  installTitlebar();
   return <App />;
 }
 
