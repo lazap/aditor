@@ -86,7 +86,7 @@ pub struct BlameHunk {
     pub summary: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct Outgoing {
     /// None on a detached HEAD, which has nothing to push.
@@ -94,7 +94,12 @@ pub struct Outgoing {
     /// Where it goes: the upstream, or `<remote>/<branch>` for a first push.
     pub target: Option<String>,
     pub commits: Vec<CommitInfo>,
+    /// More commits would go than `commits` lists; it stops at `OUTGOING_MAX`.
+    pub more: bool,
 }
+
+/// Enough to recognise what a push sends; past this the dialog says "and more".
+const OUTGOING_MAX: usize = 500;
 
 /// Run `f` against the workspace's repo on a worker thread. `None` from a
 /// folder that is not a repo, so callers decide what "nothing" looks like.
@@ -478,10 +483,10 @@ pub async fn git_blame(
 /// that tracks nothing, what no remote branch has yet.
 pub fn outgoing(repo: &Repository) -> Result<Outgoing, String> {
     let Ok(head) = repo.head() else {
-        return Ok(Outgoing { branch: None, target: None, commits: Vec::new() });
+        return Ok(Outgoing::default());
     };
     if !head.is_branch() {
-        return Ok(Outgoing { branch: None, target: None, commits: Vec::new() });
+        return Ok(Outgoing::default());
     }
     let branch = head.shorthand().ok().map(str::to_string);
     let head_id = head.target().ok_or("HEAD points at nothing.")?;
@@ -500,35 +505,40 @@ pub fn outgoing(repo: &Repository) -> Result<Outgoing, String> {
         }
         None => {
             let _ = walk.hide_glob("refs/remotes");
-            let remote = repo
+            let names: Vec<String> = repo
                 .remotes()
-                .ok()
-                .and_then(|rs| {
-                    let names: Vec<String> =
-                        rs.iter().filter_map(|r| r.ok().flatten().map(str::to_string)).collect();
-                    names
-                        .iter()
-                        .find(|r| *r == "origin")
-                        .cloned()
-                        .or_else(|| (names.len() == 1).then(|| names[0].clone()))
-                });
+                .map(|rs| rs.iter().filter_map(|r| r.ok().flatten().map(str::to_string)).collect())
+                .unwrap_or_default();
+            // No remote at all: there is nowhere to push, and hiding
+            // `refs/remotes` hid nothing, so the walk would be all of history.
+            if names.is_empty() {
+                return Ok(Outgoing { branch, ..Outgoing::default() });
+            }
+            let remote = names
+                .iter()
+                .find(|r| *r == "origin")
+                .cloned()
+                .or_else(|| (names.len() == 1).then(|| names[0].clone()));
             remote.zip(branch.clone()).map(|(r, b)| format!("{r}/{b}"))
         }
     };
 
     let refs = ref_labels(repo);
-    let commits = walk
+    let mut commits: Vec<CommitInfo> = walk
         .filter_map(Result::ok)
         .filter_map(|id| repo.find_commit(id).ok())
+        .take(OUTGOING_MAX + 1)
         .map(|c| info(&c, &refs))
         .collect();
-    Ok(Outgoing { branch, target, commits })
+    let more = commits.len() > OUTGOING_MAX;
+    commits.truncate(OUTGOING_MAX);
+    Ok(Outgoing { branch, target, commits, more })
 }
 
 #[tauri::command]
 pub async fn git_outgoing(ws: State<'_, Workspace>, root: String) -> Result<Outgoing, String> {
     let found = read_repo(&ws, &root, |repo, _, _| outgoing(repo)).await?;
-    Ok(found.unwrap_or(Outgoing { branch: None, target: None, commits: Vec::new() }))
+    Ok(found.unwrap_or_default())
 }
 
 #[cfg(test)]
@@ -636,5 +646,18 @@ mod tests {
         let out = outgoing(&s.repo()).unwrap();
         assert_eq!(out.target.as_deref(), Some("origin/main"));
         assert_eq!(out.commits.iter().map(|c| c.subject.as_str()).collect::<Vec<_>>(), ["local two", "local one"]);
+    }
+
+    #[test]
+    fn outgoing_without_a_remote_lists_nothing() {
+        let s = Scratch::new("outgoing-local");
+        s.commit("a.txt", "1\n", "one");
+        s.commit("a.txt", "2\n", "two");
+
+        let out = outgoing(&s.repo()).unwrap();
+        assert!(out.branch.is_some());
+        assert_eq!(out.target, None);
+        assert!(out.commits.is_empty());
+        assert!(!out.more);
     }
 }

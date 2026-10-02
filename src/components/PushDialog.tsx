@@ -102,6 +102,7 @@ export function PushDialog({ root, onPush, onCancel }: Props) {
               )}
             </div>
           ))}
+          {outgoing?.more && <div className="modal-hint">…and more</div>}
         </div>
       )}
       <label className="modal-check">

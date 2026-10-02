@@ -200,6 +200,8 @@ export interface Outgoing {
   /** The upstream, or where a first push would create one. */
   target: string | null;
   commits: CommitInfo[];
+  /** `commits` was cut short; more would be pushed than it lists. */
+  more: boolean;
 }
 
 export const gitOutgoing = (root: string) => invoke<Outgoing>("git_outgoing", { root });
