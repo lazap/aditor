@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -33,7 +34,11 @@ const FLUSH_BYTES: usize = 32 * 1024;
 const READ_BUF: usize = 8 * 1024;
 
 pub struct PtySession {
-    writer: Box<dyn Write + Send>,
+    /// Feeds the session's writer thread. A write to the PTY master blocks once
+    /// the tty input queue is full and the child is not reading, so it must
+    /// never happen on the IPC thread (the AppKit main thread) or under the
+    /// `sessions` lock. Dropping this sender, with the session, ends the thread.
+    input: Sender<Vec<u8>>,
     master: Box<dyn MasterPty + Send>,
     /// Needed because dropping `master` is *not* enough to end the child: the
     /// reader thread holds a cloned reader for the same PTY, so the master fd
@@ -281,15 +286,26 @@ pub fn pty_spawn(
         .master
         .try_clone_reader()
         .map_err(|e| format!("clone reader failed: {e}"))?;
-    let writer = pair
+    let mut writer = pair
         .master
         .take_writer()
         .map_err(|e| format!("take writer failed: {e}"))?;
 
+    // Writer thread: one per session, so a child that stops reading stalls only
+    // its own input, and keystrokes keep their order.
+    let (input, queued) = channel::<Vec<u8>>();
+    std::thread::spawn(move || {
+        for data in queued {
+            if writer.write_all(&data).and_then(|_| writer.flush()).is_err() {
+                break;
+            }
+        }
+    });
+
     registry.sessions.lock().unwrap().insert(
         id.clone(),
         PtySession {
-            writer,
+            input,
             master: pair.master,
             killer: child.clone_killer(),
             window: window.label().to_string(),
@@ -359,10 +375,12 @@ pub fn pty_write(
     bytes: String,
 ) -> Result<(), String> {
     let data = B64.decode(bytes).map_err(|e| format!("bad base64: {e}"))?;
-    let mut sessions = registry.sessions.lock().unwrap();
-    let session = sessions.get_mut(&id).ok_or("no such session")?;
-    session.writer.write_all(&data).map_err(|e| e.to_string())?;
-    session.writer.flush().map_err(|e| e.to_string())
+    let sessions = registry.sessions.lock().unwrap();
+    let session = sessions.get(&id).ok_or("no such session")?;
+    session
+        .input
+        .send(data)
+        .map_err(|_| "session closed".to_string())
 }
 
 #[tauri::command]
