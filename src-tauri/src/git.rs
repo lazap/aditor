@@ -694,6 +694,10 @@ fn default_remote(repo: &Repository) -> Result<String, String> {
 ///
 /// `force` is `--force-with-lease`, never a bare `--force`: it still refuses
 /// when the remote moved since the last fetch, so nobody else's work is lost.
+/// A bare lease alone is not enough here, because Aditor's own Fetch moves the
+/// remote-tracking ref the lease compares against, and the push would then go
+/// through like `--force`. `--force-if-includes` (git 2.30) also requires that
+/// remote tip to have been integrated locally, which a fetch alone does not do.
 #[tauri::command]
 pub async fn git_push(
     ws: State<'_, Workspace>,
@@ -707,7 +711,7 @@ pub async fn git_push(
         let (upstream, _, _) = tracking(&repo);
         let mut args = vec!["push"];
         if force {
-            args.push("--force-with-lease");
+            args.extend(["--force-with-lease", "--force-if-includes"]);
         }
         if tags {
             args.push("--follow-tags");
