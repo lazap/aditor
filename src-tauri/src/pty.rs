@@ -12,9 +12,9 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -215,6 +215,14 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
     cmd
 }
 
+/// Output read but not yet sent, shared by a session's reader and ticker.
+#[derive(Default)]
+struct Outbox {
+    bytes: Vec<u8>,
+    /// The reader has seen EOF; the ticker can stop.
+    done: bool,
+}
+
 /// Send whatever has been coalesced so far. Both the reader and the ticker
 /// call this, under the same lock, so bytes reach the webview in read order.
 fn flush(events: &Channel<PtyEvent>, pending: &mut Vec<u8>) {
@@ -313,51 +321,70 @@ pub fn pty_spawn(
         },
     );
 
-    let pending = Arc::new(Mutex::new(Vec::<u8>::with_capacity(FLUSH_BYTES)));
-    let done = Arc::new(AtomicBool::new(false));
+    // The condvar wakes the ticker when output arrives in an empty outbox, so
+    // an idle session costs no wakeups at all.
+    let outbox = Arc::new((Mutex::new(Outbox::default()), Condvar::new()));
 
     // Ticker: the flush clock has to live outside the reader, because the
     // reader can only act when a read returns and then it blocks again. A
     // burst that ends inside the coalescing window would otherwise sit in
-    // `pending` until the agent next wrote something -- which is why a prompt
+    // the outbox until the agent next wrote something -- which is why a prompt
     // redrawn after a resize, or a trust dialog on first open, stayed missing
     // until a click or keystroke shook the held bytes loose.
     {
         let events = on_event.clone();
-        let pending = Arc::clone(&pending);
-        let done = Arc::clone(&done);
+        let outbox = Arc::clone(&outbox);
         std::thread::spawn(move || {
-            while !done.load(Ordering::Relaxed) {
+            let (lock, arrived) = &*outbox;
+            loop {
+                // Sleep until there is something to send, then give the
+                // burst its coalescing window before sending it.
+                let guard = lock.lock().unwrap();
+                let guard = arrived
+                    .wait_while(guard, |o| o.bytes.is_empty() && !o.done)
+                    .unwrap();
+                if guard.done {
+                    break;
+                }
+                drop(guard);
                 std::thread::sleep(FLUSH_INTERVAL);
-                flush(&events, &mut pending.lock().unwrap());
+                flush(&events, &mut lock.lock().unwrap().bytes);
             }
         });
     }
 
-    // Reader thread: coalesce into `pending`; the size cap is the only reason
+    // Reader thread: coalesce into the outbox; the size cap is the only reason
     // to emit early, since the ticker owns the deadline.
     {
         let events = on_event;
-        let pending = Arc::clone(&pending);
-        let done = Arc::clone(&done);
         std::thread::spawn(move || {
+            let (lock, arrived) = &*outbox;
             let mut buf = [0u8; READ_BUF];
 
             loop {
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
-                        let mut p = pending.lock().unwrap();
-                        p.extend_from_slice(&buf[..n]);
-                        if p.len() >= FLUSH_BYTES {
-                            flush(&events, &mut p);
+                        let mut o = lock.lock().unwrap();
+                        let was_empty = o.bytes.is_empty();
+                        o.bytes.extend_from_slice(&buf[..n]);
+                        if o.bytes.len() >= FLUSH_BYTES {
+                            flush(&events, &mut o.bytes);
+                        } else if was_empty {
+                            arrived.notify_one();
                         }
                     }
                     Err(_) => break,
                 }
             }
-            done.store(true, Ordering::Relaxed);
-            flush(&events, &mut pending.lock().unwrap());
+            {
+                // Under the lock, so the ticker cannot miss it between
+                // checking and waiting.
+                let mut o = lock.lock().unwrap();
+                o.done = true;
+                flush(&events, &mut o.bytes);
+            }
+            arrived.notify_one();
 
             let code = child.wait().ok().map(|s| s.exit_code() as i32);
             let _ = events.send(PtyEvent::Exit { code });
