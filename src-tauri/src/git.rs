@@ -117,22 +117,29 @@ pub enum FileDiff {
 }
 
 /// The one boundary through which git work happens.
-pub(crate) fn with_repo<T>(
-    ws: &Workspace,
-    root: &str,
-    f: impl FnOnce(&Repository, &Path, &Path) -> Result<T, String>,
-) -> Result<Option<T>, String> {
+///
+/// The work runs on the blocking pool: a full status walks every untracked
+/// directory, and a sync command would hold the UI thread for all of it.
+pub(crate) async fn with_repo<T, F>(ws: &Workspace, root: &str, f: F) -> Result<Option<T>, String>
+where
+    F: FnOnce(&Repository, &Path, &Path) -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
     let root = workspace_root(ws, root)?;
-    let repo = match Repository::discover(&root) {
-        Ok(r) => r,
-        Err(_) => return Ok(None),
-    };
-    // A bare repo has no working tree to compare against.
-    let workdir = match repo.workdir() {
-        Some(w) => w.to_path_buf(),
-        None => return Ok(None),
-    };
-    f(&repo, &workdir, &root).map(Some)
+    tauri::async_runtime::spawn_blocking(move || {
+        let repo = match Repository::discover(&root) {
+            Ok(r) => r,
+            Err(_) => return Ok(None),
+        };
+        // A bare repo has no working tree to compare against.
+        let workdir = match repo.workdir() {
+            Some(w) => w.to_path_buf(),
+            None => return Ok(None),
+        };
+        f(&repo, &workdir, &root).map(Some)
+    })
+    .await
+    .map_err(|e| format!("reading the repository did not finish: {e}"))?
 }
 
 fn classify(s: Status) -> Option<ChangeKind> {
@@ -219,7 +226,7 @@ fn tracking(repo: &Repository) -> (Option<String>, u32, u32) {
 }
 
 #[tauri::command]
-pub fn git_status(ws: State<'_, Workspace>, root: String) -> Result<RepoStatus, String> {
+pub async fn git_status(ws: State<'_, Workspace>, root: String) -> Result<RepoStatus, String> {
     let found = with_repo(&ws, &root, |repo, workdir, root| {
         let mut opts = StatusOptions::new();
         opts.include_untracked(true)
@@ -274,7 +281,8 @@ pub fn git_status(ws: State<'_, Workspace>, root: String) -> Result<RepoStatus, 
             files,
             operation: RepoOperation::of(repo.state()),
         })
-    })?;
+    })
+    .await?;
 
     Ok(found.unwrap_or(RepoStatus {
         is_repo: false,
@@ -419,8 +427,8 @@ pub(crate) fn text_diff(old_bytes: Vec<u8>, new_bytes: Vec<u8>) -> FileDiff {
 }
 
 #[tauri::command]
-pub fn git_diff(ws: State<'_, Workspace>, root: String, path: String) -> Result<FileDiff, String> {
-    let found = with_repo(&ws, &root, |repo, workdir, root| {
+pub async fn git_diff(ws: State<'_, Workspace>, root: String, path: String) -> Result<FileDiff, String> {
+    let found = with_repo(&ws, &root, move |repo, workdir, root| {
         let abs = PathBuf::from(&path);
         if !inside_workspace(root, &abs) {
             return Err(format!("{path} is outside the workspace"));
@@ -433,7 +441,8 @@ pub fn git_diff(ws: State<'_, Workspace>, root: String, path: String) -> Result<
         // Missing working file means deleted; that is a diff, not an error.
         let new_bytes = std::fs::read(&abs).unwrap_or_default();
         Ok(text_diff(old_bytes, new_bytes))
-    })?;
+    })
+    .await?;
 
     Ok(found.unwrap_or(FileDiff::NotRepo))
 }

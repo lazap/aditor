@@ -882,19 +882,25 @@ struct Changed {
     root: String,
 }
 
+/// Async so the fold -- every transcript in the project on the first call --
+/// runs off the UI thread.
 #[tauri::command]
-pub fn agent_sessions(
+pub async fn agent_sessions(
+    app: AppHandle,
     ws: State<'_, Workspace>,
-    state: State<'_, AgentState>,
     root: String,
     agent_id: String,
 ) -> Result<AgentSessions, String> {
     let root = workspace_root(&ws, &root)?;
-    // The one dispatch point. Another agent is a new arm here.
-    Ok(match agent_id.as_str() {
-        "claude" => claude_sessions(&root, &state),
-        _ => AgentSessions::unsupported(),
+    tauri::async_runtime::spawn_blocking(move || {
+        // The one dispatch point. Another agent is a new arm here.
+        match agent_id.as_str() {
+            "claude" => claude_sessions(&root, &app.state::<AgentState>()),
+            _ => AgentSessions::unsupported(),
+        }
     })
+    .await
+    .map_err(|e| format!("reading sessions did not finish: {e}"))
 }
 
 /// Fetch the account's limits live, rather than waiting for the agent to

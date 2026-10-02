@@ -127,14 +127,31 @@ pub fn inside_workspace(root: &Path, path: &Path) -> bool {
 
 /// Resolve `path` and assert it stays inside the workspace `root`.
 fn resolve_in_workspace(ws: &Workspace, root: &str, path: &str) -> Result<PathBuf, String> {
-    let root = workspace_root(ws, root)?;
+    resolve_in(&workspace_root(ws, root)?, path)
+}
+
+/// `resolve_in_workspace` for a root already checked, so the filesystem work
+/// can move off the UI thread without taking the `State` with it.
+fn resolve_in(root: &Path, path: &str) -> Result<PathBuf, String> {
     let candidate = Path::new(path)
         .canonicalize()
         .map_err(|e| format!("{path}: {e}"))?;
-    if !candidate.starts_with(&root) {
+    if !candidate.starts_with(root) {
         return Err(format!("{path} is outside the workspace"));
     }
     Ok(candidate)
+}
+
+/// Run filesystem reads on the blocking pool. Sync commands run on the macOS
+/// main thread, and these are called on every watcher tick during a turn.
+async fn off_thread<T, F>(f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(f)
+        .await
+        .map_err(|e| format!("the read did not finish: {e}"))?
 }
 
 #[tauri::command]
@@ -229,14 +246,19 @@ pub fn close_workspace(
 /// instant on a large repo, and ignored trees like `node_modules` and `target`
 /// are never enumerated at all.
 #[tauri::command]
-pub fn list_dir(
+pub async fn list_dir(
     ws: State<'_, Workspace>,
     root: String,
     path: Option<String>,
 ) -> Result<Vec<DirEntry>, String> {
+    let root = workspace_root(&ws, &root)?;
+    off_thread(move || list_dir_in(&root, path.as_deref())).await
+}
+
+fn list_dir_in(root: &Path, path: Option<&str>) -> Result<Vec<DirEntry>, String> {
     let dir = match path {
-        Some(p) => resolve_in_workspace(&ws, &root, &p)?,
-        None => workspace_root(&ws, &root)?,
+        Some(p) => resolve_in(root, p)?,
+        None => root.to_path_buf(),
     };
 
     let mut entries: Vec<DirEntry> = WalkBuilder::new(&dir)
@@ -264,12 +286,17 @@ pub fn list_dir(
 }
 
 #[tauri::command]
-pub fn read_file(
+pub async fn read_file(
     ws: State<'_, Workspace>,
     root: String,
     path: String,
 ) -> Result<FileContents, String> {
-    let file = resolve_in_workspace(&ws, &root, &path)?;
+    let root = workspace_root(&ws, &root)?;
+    off_thread(move || read_file_in(&root, &path)).await
+}
+
+fn read_file_in(root: &Path, path: &str) -> Result<FileContents, String> {
+    let file = resolve_in(root, path)?;
     let meta = std::fs::metadata(&file).map_err(|e| e.to_string())?;
     if meta.len() > MAX_FILE_BYTES {
         return Ok(FileContents::TooLarge { bytes: meta.len() });

@@ -457,45 +457,64 @@ pub fn pty_kill_window(
 
 /// Probe the agents we know about, through a login shell so PATH matches what
 /// the user sees in their own terminal.
+///
+/// Each probe starts a login shell, which a heavy profile can make take
+/// seconds, so they run in parallel and off the UI thread.
 #[tauri::command]
-pub fn agents_available() -> Vec<AgentInfo> {
+pub async fn agents_available() -> Result<Vec<AgentInfo>, String> {
+    tauri::async_runtime::spawn_blocking(probe_agents)
+        .await
+        .map_err(|e| format!("probing agents did not finish: {e}"))
+}
+
+fn probe_agents() -> Vec<AgentInfo> {
     let known = [
         ("claude", "Claude Code", Some("claude")),
         ("opencode", "opencode", Some("opencode")),
     ];
 
-    known
-        .iter()
-        .map(|(id, label, command)| match command {
-            // Dormant alongside `shell_command`'s None arm -- no entry above
-            // carries a `None` command today.
-            None => AgentInfo {
+    std::thread::scope(|scope| {
+        let probes: Vec<_> = known
+            .iter()
+            .map(|agent| scope.spawn(move || probe(agent)))
+            .collect();
+        probes
+            .into_iter()
+            .map(|p| p.join().expect("agent probe panicked"))
+            .collect()
+    })
+}
+
+fn probe(&(id, label, command): &(&str, &str, Option<&str>)) -> AgentInfo {
+    match command {
+        // Dormant alongside `shell_command`'s None arm -- no entry above
+        // carries a `None` command today.
+        None => AgentInfo {
+            id: id.to_string(),
+            label: label.to_string(),
+            command: None,
+            available: true,
+            version: Some(user_shell()),
+        },
+        Some(bin) => {
+            let out = std::process::Command::new(user_shell())
+                .args(["-l", "-c", &format!("command -v {bin} >/dev/null && {bin} --version")])
+                .output();
+            let version = out.ok().filter(|o| o.status.success()).map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .next()
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            });
+            AgentInfo {
                 id: id.to_string(),
                 label: label.to_string(),
-                command: None,
-                available: true,
-                version: Some(user_shell()),
-            },
-            Some(bin) => {
-                let out = std::process::Command::new(user_shell())
-                    .args(["-l", "-c", &format!("command -v {bin} >/dev/null && {bin} --version")])
-                    .output();
-                let version = out.ok().filter(|o| o.status.success()).map(|o| {
-                    String::from_utf8_lossy(&o.stdout)
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .trim()
-                        .to_string()
-                });
-                AgentInfo {
-                    id: id.to_string(),
-                    label: label.to_string(),
-                    command: Some(bin.to_string()),
-                    available: version.is_some(),
-                    version,
-                }
+                command: Some(bin.to_string()),
+                available: version.is_some(),
+                version,
             }
-        })
-        .collect()
+        }
+    }
 }
