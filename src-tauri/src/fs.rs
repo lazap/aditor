@@ -152,7 +152,7 @@ fn resolve_in(root: &Path, path: &str) -> Result<PathBuf, String> {
 
 /// Run filesystem reads on the blocking pool. Sync commands run on the macOS
 /// main thread, and these are called on every watcher tick during a turn.
-async fn off_thread<T, F>(f: F) -> Result<T, String>
+pub(crate) async fn off_thread<T, F>(f: F) -> Result<T, String>
 where
     F: FnOnce() -> Result<T, String> + Send + 'static,
     T: Send + 'static,

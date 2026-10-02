@@ -17,6 +17,8 @@ export type CommandId =
   | "prompt.templates"
   | "project.open"
   | "file.new"
+  | "find.files"
+  | "find.content"
   | "project.close"
   | "project.next"
   | "project.prev"
@@ -43,7 +45,7 @@ export interface ShortcutCommand {
   id: CommandId;
   /** Shown in the shortcuts panel. */
   label: string;
-  group: "Focus" | "Tabs" | "Account" | "Prompt" | "Git" | "App";
+  group: "Focus" | "Tabs" | "Account" | "Prompt" | "Search" | "Git" | "App";
   /**
    * The binding shipped with the app; the user may override it. Null ships
    * the command unbound, for the user to give a chord in Settings.
@@ -83,6 +85,9 @@ export const COMMANDS: readonly ShortcutCommand[] = [
     chord: "mod+shift+p",
     label: "Prompt templates…",
   },
+  // IntelliJ's Go to File and Find in Files. ⌘O stays Open project….
+  { id: "find.files", group: "Search", chord: "mod+shift+o", label: "Find file…" },
+  { id: "find.content", group: "Search", chord: "mod+shift+f", label: "Find in files…" },
   // Git chords follow IntelliJ's default keymap: ⌘K commit, ⌘⇧K push, ⌘T
   // update, ⌘⌥Z rollback, ⌘D diff, ⌘9 log. What IntelliJ ships unbound ships
   // unbound here too. Its branch and VCS popups sit on Ctrl chords, which on
@@ -120,6 +125,7 @@ export const GROUPS: ReadonlyArray<ShortcutCommand["group"]> = [
   "Tabs",
   "Account",
   "Prompt",
+  "Search",
   "Git",
   "App",
 ];

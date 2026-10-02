@@ -8,6 +8,7 @@ import { FileTree } from "./FileTree";
 import { ChangesList, type GitOp, type ListRequest } from "./ChangesList";
 import { GIT_CHANGED, type GitChanged } from "./LogWindow";
 import { PushDialog } from "./PushDialog";
+import { FindPopup, type FindMode } from "./FindPopup";
 import { refNameError, useDialogs } from "./Modal";
 import { BottomPane } from "./BottomPane";
 import type { LineTarget } from "./FileViewer";
@@ -196,6 +197,8 @@ export function ProjectView({
    * alone, and this is not restored with the project.
    */
   const [diffFile, setDiffFile] = useState<string | null>(null);
+  /** The find popup's mode while it is up. */
+  const [finding, setFinding] = useState<FindMode | null>(null);
   useEffect(() => onDiffWindowClosed(() => setDiffFile(null)), []);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(saved.expandedDirs));
   const [refreshToken, setRefreshToken] = useState(0);
@@ -806,6 +809,8 @@ export function ProjectView({
     },
     "focus.agent": () => setAgentFocus((t) => t + 1),
     "file.new": () => void newFile(),
+    "find.files": () => setFinding("files"),
+    "find.content": () => setFinding("content"),
     // The chord opens the panel too, so it never lands on a hidden tab.
     "focus.agentInfo": () => patchLayout({ insightOpen: true, insightTab: "info" }),
     "focus.agentTasks": () => patchLayout({ insightOpen: true, insightTab: "tasks" }),
@@ -1313,6 +1318,18 @@ export function ProjectView({
         )}
       </div>
 
+      {finding && (
+        <FindPopup
+          root={root}
+          mode={finding}
+          onMode={setFinding}
+          onOpen={(rel, line) => {
+            setFinding(null);
+            openPath(`${root}/${rel}`, "file", line);
+          }}
+          onClose={() => setFinding(null)}
+        />
+      )}
       {pushing && <PushDialog root={root} onPush={push} onCancel={() => setPushing(false)} />}
       {dialogs}
     </div>

@@ -3366,3 +3366,131 @@ button.cwd:hover {
   flex: 1 1 50%;
   min-height: 0;
 }
+
+/* ---------------------------------------------------------------- find --- */
+
+.find-card {
+  max-width: 720px;
+  height: 60vh;
+  overflow: hidden;
+}
+
+.find-modes {
+  display: flex;
+  gap: 2px;
+  padding: 8px 10px 0;
+}
+
+.find-mode {
+  appearance: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 4px 10px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.find-mode:hover {
+  color: var(--fg);
+}
+
+.find-mode[data-active="true"] {
+  background: var(--bg-selected);
+  color: var(--fg);
+}
+
+.find-chord {
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.find-input {
+  margin: 8px 10px;
+  padding: 6px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  outline: none;
+}
+
+.find-input:focus {
+  border-color: var(--fg-dim);
+}
+
+.find-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 6px 6px;
+}
+
+.find-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.find-row[data-selected="true"] {
+  background: var(--bg-selected);
+}
+
+.find-row .tree-icon {
+  flex: none;
+}
+
+.find-name {
+  flex: none;
+}
+
+.find-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+}
+
+.find-dir {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.find-text + .find-dir {
+  flex: 0 1 auto;
+  max-width: 40%;
+}
+
+.find-hit {
+  background: none;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.find-note,
+.find-footer {
+  padding: 8px;
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.find-footer {
+  border-top: 1px solid var(--border);
+  padding: 6px 12px;
+}

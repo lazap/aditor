@@ -17,6 +17,9 @@ import { chordFor, subscribe } from "./shortcuts/store";
 /** The commands that earn a place in the application submenu. */
 const IN_MENU: readonly CommandId[] = ["app.settings", "prompt.templates"];
 
+/** The Find submenu, in order. */
+const FIND_MENU: readonly CommandId[] = ["find.files", "find.content"];
+
 /** The Git submenu, in order; null is a separator. */
 const GIT_MENU: readonly (CommandId | null)[] = [
   "git.commit",
@@ -154,6 +157,9 @@ async function build(): Promise<void> {
   const own: MenuItem[] = [];
   for (const id of IN_MENU) own.push(await item(id));
 
+  const find: MenuItem[] = [];
+  for (const id of FIND_MENU) find.push(await item(id));
+
   const git: (MenuItem | PredefinedMenuItem)[] = [];
   for (const id of GIT_MENU) {
     git.push(
@@ -179,14 +185,19 @@ async function build(): Promise<void> {
 
   // Before Window and Help, as macOS apps do; at the end if the default has
   // no Window submenu to anchor on.
-  const gitMenu = await Submenu.new({ text: "Git", items: git });
   const top = await menu.items();
   const titles = await Promise.all(
     top.map((m) => (m instanceof Submenu ? m.text() : Promise.resolve(""))),
   );
   const windowAt = titles.indexOf("Window");
-  if (windowAt >= 0) await menu.insert(gitMenu, windowAt);
-  else await menu.append(gitMenu);
+  const subs = [
+    await Submenu.new({ text: "Find", items: find }),
+    await Submenu.new({ text: "Git", items: git }),
+  ];
+  for (const [i, sub] of subs.entries()) {
+    if (windowAt >= 0) await menu.insert(sub, windowAt + i);
+    else await menu.append(sub);
+  }
 
   await menu.setAsAppMenu();
   built = menu;

@@ -5,6 +5,7 @@ mod git;
 mod git_log;
 mod mcp;
 mod pty;
+mod search;
 mod settings;
 
 use std::sync::Arc;
@@ -19,6 +20,7 @@ pub fn run() {
         .manage(Arc::new(pty::PtyRegistry::default()))
         .manage(fs::Workspace::default())
         .manage(agents::AgentState::default())
+        .manage(search::SearchState::default())
         .setup(|app| {
             app.manage(mcp::start(app.handle().clone())?);
             Ok(())
@@ -39,6 +41,8 @@ pub fn run() {
             fs::fs_debounce_ms,
             fs::dirs_exist,
             fs::resolve_file_links,
+            search::list_files,
+            search::search_content,
             git::git_status,
             git::git_diff,
             git::git_stage,
