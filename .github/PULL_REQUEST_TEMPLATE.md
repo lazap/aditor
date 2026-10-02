@@ -5,13 +5,15 @@
 ## How I verified it
 
 <!--
-There is no test suite yet, so this section is the review. Say what you ran
-and what you clicked through — which pane, which shortcut, which project.
+The UI has no tests, so for UI changes this section is the review. Say what
+you ran and what you clicked through — which pane, which shortcut, which
+project.
 -->
 
 ## Checklist
 
 - [ ] `npm run build` passes (this is the typecheck)
+- [ ] `npm test` and `cargo test` (from `src-tauri/`) pass
 - [ ] `cargo clippy` adds no new warnings, from `src-tauri/` (two already exist)
 - [ ] I did not run `cargo fmt` — the Rust here is hand-formatted
 - [ ] I ran the app and exercised the part I changed

@@ -89,9 +89,9 @@ pub enum PtyEvent {
 pub struct AgentInfo {
     pub id: String,
     pub label: String,
-    /// What we run inside the login shell. `None` would mean "just the shell";
-    /// no registry entry uses it today, but the path is kept so a plain-shell
-    /// entry can come back as a one-line change.
+    /// What we run inside the login shell. `None` means "just the shell": no
+    /// probed agent has it, but it is what the frontend's Terminal session
+    /// (`SHELL_SESSION` in `src/pty/api.ts`) spawns.
     pub command: Option<String>,
     pub available: bool,
     pub version: Option<String>,
@@ -158,8 +158,7 @@ const FOREIGN_TERMINAL_VARS: [&str; 5] = [
 ];
 
 /// Build `$SHELL -l -c '<command>'`, or an interactive login shell when
-/// `command` is None -- a branch nothing reaches while the registry is all
-/// agents. `-l` sources the login profile, which is what makes the user's real
+/// `command` is None -- a Terminal session. `-l` sources the login profile, which is what makes the user's real
 /// PATH (and therefore the agent binaries) visible.
 fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder {
     let mut cmd = CommandBuilder::new(user_shell());
@@ -176,13 +175,14 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
             //
             // `exec` keeps the process tree flat: without it zsh stays as a
             // parent, and the ChildKiller would signal the shell instead of the
-            // agent. Commands come from a fixed registry of bare binary names;
-            // `args` is already shell-quoted by `agent_args`.
+            // agent. Commands come from the frontend's registry of bare binary
+            // names; nothing here enforces that. `args` is already
+            // shell-quoted by `agent_args`.
             cmd.args(["-l", "-c", &format!("stty -echo 2>/dev/null; exec {c}{args}")]);
         }
         None => {
-            // Dormant: see the note above. An interactive shell needs ECHO left
-            // alone, or you type blind.
+            // A Terminal session. An interactive shell needs ECHO left alone,
+            // or you type blind.
             cmd.args(["-l", "-i"]);
         }
     }
@@ -514,8 +514,8 @@ fn probe_agents() -> Vec<AgentInfo> {
 
 fn probe(&(id, label, command): &(&str, &str, Option<&str>)) -> AgentInfo {
     match command {
-        // Dormant alongside `shell_command`'s None arm -- no entry above
-        // carries a `None` command today.
+        // No entry above carries a `None` command; the Terminal session is
+        // offered by the frontend rather than probed here.
         None => AgentInfo {
             id: id.to_string(),
             label: label.to_string(),

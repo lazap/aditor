@@ -24,14 +24,18 @@ behind it, so every command fails and the terminal pane never spawns. See
 [Build from source](README.md#build-from-source) for the toolchain details and
 what to do when the build cannot find `clang`.
 
-There is **no test suite yet**. Changes are verified by running the app and
-exercising the pane you touched, so please say in your PR what you actually
-clicked through.
+Tests cover the Rust modules (`cargo test` from `src-tauri/`) and the pure
+frontend modules (`npm test`, vitest). The UI itself has none, so changes there
+are verified by running the app and exercising the pane you touched -- please
+say in your PR what you actually clicked through.
 
 ## Before you open a PR
 
 ```bash
 npm run build                        # tsc, then a production vite build
+npm run lint                         # React hooks rules; warnings, not errors
+npm test                             # frontend unit tests
+cd src-tauri && cargo test           # backend unit tests
 cd src-tauri && cargo clippy         # no *new* warnings, please
 ```
 
@@ -68,12 +72,16 @@ second one is the main way a PR gets review comments:
   templates they deleted.
 - **A new agent is a new arm** in `agent_sessions` in `src-tauri/src/agents.rs`,
   plus a reader module alongside it. `agents.rs` is the single dispatch point.
-- **`git.rs` is read-only by design.** It reports status and diffs through
-  `git2` and does not mutate the repository. Please keep it that way -- the app
-  should never be the reason someone loses work.
-- **`agents.rs` reads the agent's own on-disk files.** No network calls, no
-  subprocesses to gather state. That is what makes the sessions panel cheap
-  enough to refresh freely; keep new readers in the same shape.
+- **`git.rs` reads through `git2` and writes only through `run_git`**, behind
+  `GIT_GATE`, with the git CLI. Never `--force` -- only `--force-with-lease`
+  together with `--force-if-includes` -- and nothing that discards work without
+  the user confirming it. The app should never be the reason someone loses
+  work.
+- **`agents.rs` reads the agent's own on-disk files.** No subprocesses to
+  gather state, and no network calls on refresh -- the one request,
+  `agent_refresh_limits`, is made only when the user asks for fresh limits.
+  That is what makes the sessions panel cheap enough to refresh freely; keep
+  new readers in the same shape.
 - **New Tauri commands need a permission** in
   `src-tauri/capabilities/default.json`. Keep the set minimal -- add the one
   permission you need, not a wider default.
