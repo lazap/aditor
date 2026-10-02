@@ -17,6 +17,7 @@ use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use notify::{EventKind, RecursiveMode, Watcher, recommended_watcher};
 use serde::{Deserialize, Serialize};
@@ -275,6 +276,8 @@ pub struct AgentState {
     files: Mutex<HashMap<PathBuf, CachedFile>>,
     /// workspace root -> the agent's transcript directory for it.
     dirs: Mutex<HashMap<PathBuf, PathBuf>>,
+    /// workspace root -> when a full scan last failed to find its directory.
+    misses: Mutex<HashMap<PathBuf, Instant>>,
     /// workspace root -> the watcher feeding that project's panel. One per open
     /// project, so a repeat call for the same root is a no-op.
     watchers: Mutex<HashMap<PathBuf, Box<dyn Watcher + Send>>>,
@@ -516,17 +519,38 @@ fn project_dir(root: &Path, state: &AgentState) -> Option<PathBuf> {
     let found = if guess.is_dir() && dir_cwd(&guess).as_deref().unwrap_or(&want) == want {
         Some(guess)
     } else {
-        std::fs::read_dir(&projects)
+        // The full scan opens a transcript in every project directory there
+        // is, so a project with none of its own is not rescanned on every
+        // refresh. The guess above stays live, which is where a new
+        // directory almost always appears.
+        let recent = state
+            .misses
+            .lock()
+            .unwrap()
+            .get(root)
+            .is_some_and(|at| at.elapsed() < MISS_TTL);
+        if recent {
+            return None;
+        }
+        let scanned = std::fs::read_dir(&projects)
             .ok()?
             .flatten()
             .map(|e| e.path())
             .filter(|p| p.is_dir())
-            .find(|p| dir_cwd(p).as_deref() == Some(want.as_str()))
+            .find(|p| dir_cwd(p).as_deref() == Some(want.as_str()));
+        if scanned.is_none() {
+            state.misses.lock().unwrap().insert(root.to_path_buf(), Instant::now());
+        }
+        scanned
     }?;
 
+    state.misses.lock().unwrap().remove(root);
     state.dirs.lock().unwrap().insert(root.to_path_buf(), found.clone());
     Some(found)
 }
+
+/// How long a failed full scan for a project's transcripts is trusted.
+const MISS_TTL: Duration = Duration::from_secs(30);
 
 #[derive(Deserialize)]
 struct LiveEntry {
