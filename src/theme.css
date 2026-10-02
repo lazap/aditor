@@ -65,22 +65,22 @@
 :root[data-theme="light"] {
   --bg: #ffffff;
   --bg-raised: #f7f8fa;
-  --border: #ebecf0;
+  --border: #d9dbe1;
   --fg: #080808;
-  --fg-dim: #6c707e;
+  --fg-dim: #4b4f5c;
   --accent: #3574f0;
   --danger: #db3b4b;
 
   --bg-hover: #dfe1e5;
   --bg-selected: #d4e2ff;
-  --bg-cursor: #ebecf0;
+  --bg-cursor: #e4e6ea;
   --bg-recent: #e6eeff;
   --shadow: rgb(0 0 0 / 14%);
   --overlay: rgba(255, 255, 255, 0.88);
 
   --editor-bg: #ffffff;
   --caret: #000000;
-  --gutter-fg: #adadad;
+  --gutter-fg: #868a94;
   --active-line: #f5f8fe;
   --selection: #d4e2ff;
   --selection-focused: #a6d2ff;
@@ -96,16 +96,16 @@
   --syn-string: #067d17;
   --syn-number: #1750eb;
   --syn-punctuation: #080808;
-  --syn-comment: #8c8c8c;
-  --syn-meta: #9e880d;
+  --syn-comment: #6a6a6a;
+  --syn-meta: #85720a;
   --syn-heading: #0033b3;
   --syn-link: #287bde;
 
-  --icon-dir: #6c707e;
+  --icon-dir: #4b4f5c;
 
   --st-modified: #0a77d8;
   --st-added: #067d17;
-  --st-deleted: #6c707e;
+  --st-deleted: #4b4f5c;
   --st-renamed: #007f9a;
   --st-conflicted: #d5756c;
 
