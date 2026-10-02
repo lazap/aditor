@@ -39,9 +39,17 @@ export const listDir = async (root: string, path?: string): Promise<DirEntry[]> 
 export const readFile = (root: string, path: string) =>
   invoke<FileContents>("read_file", { root, path });
 
-/** Save over a file the user made writable; it must exist in the workspace. */
-export const writeFile = (root: string, path: string, text: string) =>
-  invoke<void>("write_file", { root, path, text });
+/** What `writeFile` rejects with when the file no longer holds `expected`. */
+export const CHANGED_ON_DISK = "changed on disk";
+
+/**
+ * Save over a file the user made writable; it must exist in the workspace.
+ * With `expected` (the disk text the edit started from), refuses with
+ * `CHANGED_ON_DISK` rather than overwrite a change made since; without it,
+ * overwrites unconditionally.
+ */
+export const writeFile = (root: string, path: string, text: string, expected?: string) =>
+  invoke<void>("write_file", { root, path, text, expected: expected ?? null });
 
 /** Create an empty file at `rel` under the root; resolves to its absolute path. */
 export const createFile = (root: string, rel: string) =>

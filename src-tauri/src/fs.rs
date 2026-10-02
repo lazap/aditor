@@ -263,21 +263,48 @@ pub fn read_file(
     }
 }
 
+/// What `write_file` answers when the file is no longer the text the editor's
+/// buffer was based on. The frontend matches on it, so it stays a fixed string.
+pub const CHANGED_ON_DISK: &str = "changed on disk";
+
 /// Save the editor's text over a file the user has made writable. Same rule as
 /// `read_file`: the file must already exist inside the workspace, so this can
 /// only ever overwrite something the viewer could show.
+///
+/// `expected` is the disk text the edit started from. When it is given and the
+/// file no longer holds it -- the agent wrote to it meanwhile -- nothing is
+/// written and the error is `CHANGED_ON_DISK`, so an autosave cannot silently
+/// throw the agent's change away. `None` overwrites unconditionally, which is
+/// what the user picks when told about the conflict.
 #[tauri::command]
 pub fn write_file(
     ws: State<'_, Workspace>,
     root: String,
     path: String,
     text: String,
+    expected: Option<String>,
 ) -> Result<(), String> {
     let file = resolve_in_workspace(&ws, &root, &path)?;
+    write_unless_changed(&file, &text, expected.as_deref()).map_err(|e| {
+        if e == CHANGED_ON_DISK {
+            e
+        } else {
+            format!("{path}: {e}")
+        }
+    })
+}
+
+fn write_unless_changed(file: &Path, text: &str, expected: Option<&str>) -> Result<(), String> {
     if !file.is_file() {
-        return Err(format!("{path} is not a file"));
+        return Err("not a file".to_string());
     }
-    std::fs::write(&file, text).map_err(|e| format!("{path}: {e}"))
+    if let Some(expected) = expected {
+        let current = std::fs::read(file).map_err(|e| e.to_string())?;
+        if current != expected.as_bytes() {
+            return Err(CHANGED_ON_DISK.to_string());
+        }
+    }
+    std::fs::write(file, text).map_err(|e| e.to_string())
 }
 
 /// Create an empty file at `rel`, relative to the workspace root, making any
@@ -393,6 +420,30 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         // Canonical, as `workspace_root` hands it over: /var is /private/var.
         dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn writes_when_the_disk_still_matches() {
+        let root = scratch("write-match");
+        let file = root.join("a.txt");
+        std::fs::write(&file, "base").unwrap();
+        write_unless_changed(&file, "mine", Some("base")).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine");
+    }
+
+    #[test]
+    fn refuses_to_overwrite_a_change_made_on_disk() {
+        let root = scratch("write-conflict");
+        let file = root.join("a.txt");
+        std::fs::write(&file, "agent").unwrap();
+        assert_eq!(
+            write_unless_changed(&file, "mine", Some("base")),
+            Err(CHANGED_ON_DISK.to_string())
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "agent");
+        // Unconditional, as when the user chooses to overwrite.
+        write_unless_changed(&file, "mine", None).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine");
     }
 
     #[test]

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
 import { EditorView, lineNumbers } from "@codemirror/view";
-import { readFile, writeFile, type FileContents } from "../fs/api";
+import { CHANGED_ON_DISK, readFile, writeFile, type FileContents } from "../fs/api";
 import { AUTOSAVE_MS, trackEdits } from "../editor/autosave";
 import { aditorEditorTheme, aditorHighlighting, darkMode, darkModeFor } from "../editor/theme";
 import { loadLanguage } from "../editor/language";
@@ -52,6 +52,8 @@ interface Unsaved {
   root: string;
   path: string;
   text: string;
+  /** The disk text this edit started from; the write refuses if it moved. */
+  base: string | null;
 }
 
 function formatBytes(n: number): string {
@@ -83,18 +85,42 @@ export function FileViewer({
   /** Typed but not yet written. */
   const unsavedRef = useRef<Unsaved | null>(null);
   const saveTimer = useRef<number | undefined>(undefined);
+  /** The disk text the buffer is based on: what the last read or write left. */
+  const baseRef = useRef<string | null>(null);
+  /**
+   * The file changed on disk under unsaved typing. Autosave stops until the
+   * user picks a side, or it would overwrite the agent's change unseen.
+   */
+  const [conflict, setConflictState] = useState(false);
+  const conflictRef = useRef(false);
+  const setConflict = (on: boolean) => {
+    conflictRef.current = on;
+    setConflictState(on);
+  };
 
-  /** Write whatever is waiting, now. Safe to call with nothing waiting. */
-  const flushRef = useRef(async () => {});
-  flushRef.current = async () => {
+  /**
+   * Write whatever is waiting, now. Safe to call with nothing waiting.
+   * `overwrite` writes even over a change made on disk since.
+   */
+  const flushRef = useRef(async (_overwrite?: boolean) => {});
+  flushRef.current = async (overwrite = false) => {
     window.clearTimeout(saveTimer.current);
     const job = unsavedRef.current;
-    if (!job) return;
+    if (!job || (conflictRef.current && !overwrite)) return;
     unsavedRef.current = null;
+    // Ahead of the write, so typing while it is out bases on what it writes.
+    baseRef.current = job.text;
     try {
-      await writeFile(job.root, job.path, job.text);
+      await writeFile(job.root, job.path, job.text, overwrite ? undefined : (job.base ?? undefined));
       setSaveError(null);
     } catch (e) {
+      if (baseRef.current === job.text) baseRef.current = job.base;
+      if (String(e).includes(CHANGED_ON_DISK)) {
+        // Keep the typing, newest first, for an overwrite.
+        unsavedRef.current = unsavedRef.current ?? job;
+        setConflict(true);
+        return;
+      }
       setSaveError(`Not saved: ${String(e).replace(/^Error:\s*/, "")}`);
     }
   };
@@ -185,7 +211,9 @@ export function FileViewer({
     // buffer would throw away what was typed since.
     const live = viewRef.current;
     if (live && viewPathRef.current === path) {
-      if (unsavedRef.current || live.state.doc.toString() === text) return;
+      if (unsavedRef.current) return;
+      baseRef.current = text;
+      if (live.state.doc.toString() === text) return;
       const { anchor, head } = live.state.selection.main;
       const clamp = (n: number) => Math.min(n, text.length);
       live.dispatch({
@@ -211,7 +239,12 @@ export function FileViewer({
         editMode.of(editFor(editableRef.current)),
         EditorView.updateListener.of((u) => {
           if (!u.docChanged || u.transactions.some((t) => t.annotation(fromDisk))) return;
-          unsavedRef.current = { root, path, text: u.state.doc.toString() };
+          unsavedRef.current = {
+            root,
+            path,
+            text: u.state.doc.toString(),
+            base: unsavedRef.current?.base ?? baseRef.current,
+          };
           window.clearTimeout(saveTimer.current);
           saveTimer.current = window.setTimeout(() => void flushRef.current(), AUTOSAVE_MS);
         }),
@@ -229,6 +262,7 @@ export function FileViewer({
         state: EditorState.create({ doc: text, extensions }),
         parent: host,
       });
+      baseRef.current = text;
       viewPathRef.current = path;
       if (autoFocusRef.current) viewRef.current.focus();
       jump();
@@ -254,8 +288,38 @@ export function FileViewer({
   }, [editable]);
 
   // Switching to another file saves this one first; the next build replaces
-  // the view, and its text with it.
-  useEffect(() => () => void flushRef.current(), [root, path]);
+  // the view, and its text with it. Typing held back by a conflict is dropped
+  // with the file, leaving the change on disk in place.
+  useEffect(
+    () => () => {
+      void flushRef.current();
+      if (conflictRef.current) {
+        unsavedRef.current = null;
+        setConflict(false);
+      }
+    },
+    [root, path],
+  );
+
+  /** Drop the typing and show what is on disk. */
+  const reload = async () => {
+    window.clearTimeout(saveTimer.current);
+    unsavedRef.current = null;
+    setConflict(false);
+    try {
+      const c = await readFile(root, path);
+      loadedPathRef.current = path;
+      setContents(c);
+    } catch (e) {
+      setError(String(e));
+    }
+  };
+
+  /** Keep the typing, writing it over the change on disk. */
+  const overwrite = () => {
+    setConflict(false);
+    void flushRef.current(true);
+  };
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: darkMode.reconfigure(darkModeFor(theme)) });
@@ -279,6 +343,17 @@ export function FileViewer({
     <>
       {error && <div className="viewer-message error">{error}</div>}
       {saveError && <div className="viewer-message error">{saveError}</div>}
+      {conflict && (
+        <div className="viewer-message error viewer-conflict">
+          Changed on disk while you were typing; not saved.
+          <button className="seg-btn" onClick={() => void reload()}>
+            Reload
+          </button>
+          <button className="seg-btn" onClick={overwrite}>
+            Overwrite
+          </button>
+        </div>
+      )}
       {contents?.kind === "tooLarge" && (
         <div className="viewer-message">
           {formatBytes(contents.bytes)} — too large to display

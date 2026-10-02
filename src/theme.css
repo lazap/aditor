@@ -932,6 +932,16 @@ button.cwd:hover {
   color: var(--danger);
 }
 
+.viewer-conflict {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.viewer-conflict .seg-btn:first-of-type {
+  margin-left: auto;
+}
+
 /* ---- git status ---- */
 
 :root {
