@@ -1,5 +1,5 @@
 import { useSyncExternalStore } from "react";
-import { emit, listen } from "@tauri-apps/api/event";
+import { emit, emitTo, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { settingsRead, settingsWrite } from "./api";
 import { clearLegacy, hasLegacy, readLegacy } from "./legacy";
@@ -29,6 +29,11 @@ const listeners = new Set<() => void>();
 const WRITE_DEBOUNCE_MS = 300;
 let timer: number | undefined;
 let pending = false;
+/**
+ * Every field this window has set since it loaded, so a peer's document
+ * adopted at startup (see `syncWithPeers`) cannot undo them.
+ */
+let own: Partial<Settings> = {};
 
 export const settings = (): Settings => current;
 
@@ -63,9 +68,10 @@ export function useSetting<T>(select: (s: Settings) => T): T {
  */
 export function patch(next: Partial<Settings>): void {
   current = { ...current, ...next };
+  own = { ...own, ...next };
   for (const fn of listeners) fn();
   schedule();
-  void emit(CHANGED, { from: self, value: current } satisfies Change).catch(() => {});
+  void emit(CHANGED, { from: self, next } satisfies Change).catch(() => {});
 }
 
 export function patchLayout(next: Partial<Settings["layout"]>): void {
@@ -76,14 +82,31 @@ export function patchLayout(next: Partial<Settings["layout"]>): void {
 
 /**
  * Settings and the template picker are windows of their own, each with its own
- * copy of this module. Every change is broadcast whole, and every other window
- * takes it as its snapshot -- so they never disagree, and a debounced write
- * from any of them saves the same document rather than a stale one.
+ * copy of this module. Every change is broadcast as the fields it set, and
+ * every other window merges those into its snapshot -- so they agree, and a
+ * debounced write from any of them saves the same document rather than a
+ * stale one.
+ *
+ * Fields, not the whole document: two windows changing different fields at
+ * once would otherwise each overwrite the other's change with their own copy.
  */
 const CHANGED = "settings://changed";
 
 interface Change {
   from: string;
+  next: Partial<Settings>;
+}
+
+/**
+ * A window that has just loaded asks its peers for anything they have not
+ * written yet: it read the disk, and a change still inside another window's
+ * write debounce is not there.
+ */
+const HELLO = "settings://hello";
+/** The answer to `HELLO`, sent to the asking window only. */
+const SNAPSHOT = "settings://snapshot";
+
+interface Snapshot {
   value: Settings;
 }
 
@@ -91,18 +114,31 @@ const self = getCurrentWindow().label;
 
 /**
  * Follow changes made in other windows. `onChange` runs after the snapshot is
- * replaced, for readers that keep a derived copy -- the shortcut keymap.
+ * updated, for readers that keep a derived copy -- the shortcut keymap.
  *
  * Adopting does not schedule a write: the window that made the change is
  * already writing it.
  */
 export function syncWithPeers(onChange: () => void): void {
-  void listen<Change>(CHANGED, ({ payload }) => {
-    if (payload.from === self) return;
-    current = payload.value;
+  const adopt = (value: Settings) => {
+    current = value;
     for (const fn of listeners) fn();
     onChange();
+  };
+  void listen<Change>(CHANGED, ({ payload }) => {
+    if (payload.from === self) return;
+    adopt({ ...current, ...payload.next });
   });
+  void listen<{ from: string }>(HELLO, ({ payload }) => {
+    if (payload.from === self || !pending) return;
+    void emitTo(payload.from, SNAPSHOT, { value: current } satisfies Snapshot).catch(() => {});
+  });
+  // This window's own listener: a global one would take every answer meant
+  // for any window that said hello (see App's TEMPLATES_INSERT).
+  void getCurrentWindow()
+    .listen<Snapshot>(SNAPSHOT, ({ payload }) => adopt({ ...payload.value, ...own }))
+    .then(() => emit(HELLO, { from: self }))
+    .catch(() => {});
 }
 
 function schedule(): void {
