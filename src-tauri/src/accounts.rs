@@ -1048,19 +1048,39 @@ fn switch_blocking(app: AppHandle, uuid: String) -> Result<(), String> {
         return Err("that saved account has no identity to switch to".to_string());
     }
 
-    {
+    // The outgoing credential is held on to until the identity has landed: the
+    // two halves are written under different locks, and a failure in between
+    // must not leave the target's token beside the old identity, or the next
+    // attempt's recapture files it into the *old* account's slot.
+    let outgoing = {
         let _locks = credential_locks()?;
+        let outgoing = live_read()?;
         recapture_outgoing(&dir, &index)?;
         live_write(&target.credential)?;
+        outgoing
+    };
+
+    if let Err(e) = splice_config(&target) {
+        return Err(match roll_back(&dir, &uuid, &target, outgoing) {
+            Ok(()) => e,
+            Err(r) => format!("{e} (and putting the previous login back failed: {r})"),
+        });
     }
 
+    let _ = app.emit("agents://changed", ());
+    Ok(())
+}
+
+/// Write the target's identity into `~/.claude.json`, the second half of a
+/// switch.
+fn splice_config(target: &Slot) -> Result<(), String> {
     let path = global_config().ok_or_else(|| "no home directory".to_string())?;
     let _lock = config_lock()?;
     match read_config()? {
         Some(mut config) => {
-            splice_identity(&mut config, &target);
+            splice_identity(&mut config, target);
             let bytes = serde_json::to_vec_pretty(&Value::Object(config)).map_err(|e| e.to_string())?;
-            rewrite_preserving_mode(&path, &bytes)?;
+            rewrite_preserving_mode(&path, &bytes)
         }
         None => {
             // Unreadable or absent. Never assign through it -- put whatever was
@@ -1069,14 +1089,35 @@ fn switch_blocking(app: AppHandle, uuid: String) -> Result<(), String> {
                 salvage(&path);
             }
             let mut fresh = Map::new();
-            splice_identity(&mut fresh, &target);
+            splice_identity(&mut fresh, target);
             let bytes = serde_json::to_vec_pretty(&Value::Object(fresh)).map_err(|e| e.to_string())?;
-            rewrite_preserving_mode(&path, &bytes)?;
+            rewrite_preserving_mode(&path, &bytes)
         }
     }
+}
 
-    let _ = app.emit("agents://changed", ());
-    Ok(())
+/// Undo the credential half of a switch whose identity half failed, so the
+/// live credential matches the identity the config still names.
+///
+/// If the agent refreshed in the meantime, the live bytes are the target's
+/// newest token, and the copy in its slot has just been rotated away: file
+/// them there first, or that account's login dies with the rollback.
+fn roll_back(dir: &Path, uuid: &str, target: &Slot, outgoing: Option<String>) -> Result<(), String> {
+    let _locks = credential_locks()?;
+    if let Some(live) = live_read()?.filter(|live| live != &target.credential) {
+        let refreshed = Slot {
+            credential: live,
+            oauth_account: target.oauth_account.clone(),
+            cached_usage_utilization: target.cached_usage_utilization.clone(),
+            trusted_device_token: target.trusted_device_token.clone(),
+        };
+        write_slot(dir, uuid, &refreshed)?;
+    }
+    match outgoing {
+        Some(credential) => live_write(&credential),
+        // Nothing was logged in before; there is no credential to put back.
+        None => Ok(()),
+    }
 }
 
 #[tauri::command]
