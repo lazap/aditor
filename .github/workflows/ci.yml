@@ -1,0 +1,36 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  check:
+    # The app is macOS-only; the backend links against AppKit through Tauri.
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      # `tsc && vite build`: type-checks, and produces the `dist` that
+      # `tauri::generate_context!` needs to exist at compile time.
+      - run: npm run build
+      - run: npm run lint
+      - run: npm test
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo test
+        working-directory: src-tauri
+      # Not `-D warnings` yet: two known warnings remain (CODE_REVIEW.md L10).
+      - run: cargo clippy --all-targets
+        working-directory: src-tauri
