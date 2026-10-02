@@ -190,13 +190,17 @@ struct Lock {
     toucher: Option<JoinHandle<()>>,
 }
 
-/// Bump a lock directory's mtime without a `utime` binding: creating and
-/// removing an entry inside a directory updates that directory's mtime on
-/// every platform we ship to.
+/// Bump a lock directory's mtime, which is how `proper-lockfile` tells a live
+/// lock from a stale one.
+///
+/// Directly, never by creating an entry inside it: Claude Code removes a stale
+/// lock with a plain `rmdir`, so anything left in the directory -- by a crash
+/// or a force-quit while we hold it -- would wedge its lock for good. False
+/// once the directory is gone.
 fn touch(dir: &Path) -> bool {
-    let probe = dir.join(".touch");
-    let _ = fs::remove_file(&probe);
-    fs::File::create(&probe).is_ok()
+    fs::File::open(dir)
+        .and_then(|f| f.set_modified(SystemTime::now()))
+        .is_ok()
 }
 
 /// Cheap jitter so two waiters do not retry in lockstep. A lock loop does not
@@ -290,6 +294,7 @@ impl Drop for Lock {
         if let Some(t) = self.toucher.take() {
             let _ = t.join();
         }
+        // Left by versions that touched the lock through an entry inside it.
         let _ = fs::remove_file(self.dir.join(".touch"));
         let _ = fs::remove_dir(&self.dir);
     }
@@ -1293,6 +1298,17 @@ mod tests {
         std::thread::sleep(every * 4);
         let later = fs::metadata(&dir).unwrap().modified().unwrap();
         assert!(later > first, "a held lock must keep its mtime moving");
+    }
+
+    /// Claude Code takes a stale lock over with a plain `rmdir`, so touching
+    /// must never leave anything inside it for a crash to strand there.
+    #[test]
+    fn a_held_lock_stays_empty() {
+        let dir = scratch("empty").join("x.lock");
+        let every = Duration::from_millis(20);
+        let _held = acquire_every(dir.clone(), CONFIG_STALENESS, LOCK_TIMEOUT, every).unwrap();
+        std::thread::sleep(every * 4);
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 0);
     }
 
     /// The protocol's escape hatch: a holder that died without releasing must
