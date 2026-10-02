@@ -622,8 +622,9 @@ fn set_private(_f: &fs::File) -> Result<(), String> {
 }
 
 /// Rewrite an existing file in place, keeping whatever mode it already had.
-/// Used for `~/.claude.json`, which is Claude Code's file, not ours.
-fn rewrite_preserving_mode(path: &Path, bytes: &[u8]) -> Result<(), String> {
+/// Used for `~/.claude.json`, which is Claude Code's file, not ours, and for
+/// the user's own files saved from the editor.
+pub(crate) fn rewrite_preserving_mode(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let dir = path.parent().ok_or_else(|| "no parent directory".to_string())?;
     let tmp = dir.join(format!(
         ".{}.aditor.{}.tmp",

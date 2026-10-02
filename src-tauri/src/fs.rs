@@ -356,7 +356,10 @@ fn write_unless_changed(file: &Path, text: &str, expected: Option<&str>) -> Resu
             return Err(CHANGED_ON_DISK.to_string());
         }
     }
-    std::fs::write(file, text).map_err(|e| e.to_string())
+    // Temp file and rename rather than truncate-and-write: a crash or a full
+    // disk mid-write would otherwise leave the user's file cut short, and the
+    // agent or the viewer could read it empty in between.
+    crate::accounts::rewrite_preserving_mode(file, text.as_bytes())
 }
 
 /// Create an empty file at `rel`, relative to the workspace root, making any
@@ -512,6 +515,21 @@ mod tests {
         // Unconditional, as when the user chooses to overwrite.
         write_unless_changed(&file, "mine", None).unwrap();
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine");
+    }
+
+    #[test]
+    fn saving_keeps_the_mode_and_leaves_no_temp_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = scratch("write-mode");
+        let file = root.join("run.sh");
+        std::fs::write(&file, "old").unwrap();
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o750)).unwrap();
+        write_unless_changed(&file, "new", Some("old")).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new");
+        let mode = std::fs::metadata(&file).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o750);
+        let names: Vec<_> = std::fs::read_dir(&root).unwrap().flatten().map(|e| e.file_name()).collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("run.sh")]);
     }
 
     #[test]
