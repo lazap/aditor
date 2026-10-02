@@ -125,7 +125,20 @@ export function TerminalPane({
     // Ctrl-C, Cmd-K and Opt/Cmd-arrow word motion far more than the webview
     // does. Declining a key here does not preventDefault it, which is how the
     // reserved ones go on to reach App's window listener.
-    term.attachCustomKeyEventHandler((e) => !isReservedForApp(e));
+    term.attachCustomKeyEventHandler((e) => {
+      if (isReservedForApp(e)) return false;
+      // xterm sends a bare CR for Shift+Enter, which the agent takes as submit.
+      // ESC CR is the Meta+Enter the agent reads as a newline. Every event of
+      // the press is declined, so no stray CR follows it.
+      if (e.key === "Enter" && e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        if (e.type === "keydown") {
+          e.preventDefault();
+          term.input("\x1b\r", true);
+        }
+        return false;
+      }
+      return true;
+    });
     term.onBell(() => onBellRef.current?.());
     fit.fit();
 
