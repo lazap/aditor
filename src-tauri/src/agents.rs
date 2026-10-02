@@ -15,7 +15,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::{BufRead, BufReader, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use notify::{EventKind, RecursiveMode, Watcher, recommended_watcher};
 use serde::{Deserialize, Serialize};
@@ -952,19 +953,53 @@ pub fn agent_watch(
         return Ok(());
     }
     let home = home().ok_or_else(|| "no home directory".to_string())?;
+    let projects = home.join(".claude").join("projects");
+    let transcripts = project_dir(&root, &state);
 
+    // A project's first session has no transcript directory yet, and this is
+    // called once per project, so the watcher has to add it itself once it
+    // appears. Until then it also watches the directory it will appear in, and
+    // every event is a cue to look again.
+    let awaiting = Arc::new(AtomicBool::new(transcripts.is_none()));
     let emitter = app.clone();
     let tag = Changed {
         root: root.to_string_lossy().to_string(),
     };
+    let (watch_root, watch_projects) = (root.clone(), projects.clone());
     let mut watcher = recommended_watcher(move |res: notify::Result<notify::Event>| {
-        if let Ok(event) = res {
-            if matches!(
-                event.kind,
-                EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
-            ) {
-                let _ = emitter.emit("agents://changed", tag.clone());
-            }
+        let Ok(event) = res else { return };
+        if !matches!(
+            event.kind,
+            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+        ) {
+            return;
+        }
+        // Other projects' directories changing say nothing about this one.
+        if !event.paths.iter().all(|p| p.parent() == Some(&watch_projects)) {
+            let _ = emitter.emit("agents://changed", tag.clone());
+        }
+        if awaiting.swap(false, Ordering::SeqCst) {
+            // Not from inside the callback: adding a watch restarts the
+            // watcher's stream, which waits on the thread running this.
+            let (app, root, projects) = (emitter.clone(), watch_root.clone(), watch_projects.clone());
+            let (awaiting, tag) = (Arc::clone(&awaiting), tag.clone());
+            std::thread::spawn(move || {
+                let state = app.state::<AgentState>();
+                let added = project_dir(&root, &state).is_some_and(|dir| {
+                    let mut watchers = state.watchers.lock().unwrap();
+                    let Some(w) = watchers.get_mut(&root) else { return false };
+                    let ok = w.watch(&dir, RecursiveMode::Recursive).is_ok();
+                    if ok {
+                        let _ = w.unwatch(&projects);
+                    }
+                    ok
+                });
+                if added {
+                    let _ = app.emit("agents://changed", tag);
+                } else {
+                    awaiting.store(true, Ordering::SeqCst);
+                }
+            });
         }
     })
     .map_err(|e| e.to_string())?;
@@ -975,11 +1010,15 @@ pub fn agent_watch(
             .watch(&registry, RecursiveMode::NonRecursive)
             .map_err(|e| e.to_string())?;
     }
-    // Recursive so subagent transcripts, which live one level down, are covered.
-    if let Some(dir) = project_dir(&root, &state) {
-        watcher
+    match transcripts {
+        // Recursive so subagent transcripts, which live one level down, are covered.
+        Some(dir) => watcher
             .watch(&dir, RecursiveMode::Recursive)
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| e.to_string())?,
+        None if projects.is_dir() => watcher
+            .watch(&projects, RecursiveMode::NonRecursive)
+            .map_err(|e| e.to_string())?,
+        None => {}
     }
 
     state.watchers.lock().unwrap().insert(root, Box::new(watcher));
