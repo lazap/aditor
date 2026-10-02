@@ -104,7 +104,12 @@ pub fn run() {
                 }
             }
             if let Some(ws) = window.try_state::<fs::Workspace>() {
-                ws.release_window(window.label());
+                let released = ws.release_window(window.label());
+                if let Some(agents) = window.try_state::<agents::AgentState>() {
+                    for root in &released {
+                        agents.forget(root);
+                    }
+                }
             }
             let windows = window.app_handle().webview_windows();
             let editors_left = windows

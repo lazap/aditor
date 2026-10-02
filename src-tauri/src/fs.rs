@@ -67,12 +67,20 @@ struct Open {
 }
 
 impl Workspace {
-    /// An editor window has gone: release every root it held.
-    pub fn release_window(&self, label: &str) {
-        self.open.lock().unwrap().retain(|_, o| {
+    /// An editor window has gone: release every root it held. Returns the
+    /// roots no window holds any more, whose other watchers must go too, as
+    /// `close_workspace` does for them.
+    pub fn release_window(&self, label: &str) -> Vec<PathBuf> {
+        let mut released = Vec::new();
+        self.open.lock().unwrap().retain(|root, o| {
             o.windows.remove(label);
-            !o.windows.is_empty()
+            let keep = !o.windows.is_empty();
+            if !keep {
+                released.push(root.clone());
+            }
+            keep
         });
+        released
     }
 }
 
