@@ -199,6 +199,12 @@ export function ProjectView({
   useEffect(() => onDiffWindowClosed(() => setDiffFile(null)), []);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(saved.expandedDirs));
   const [refreshToken, setRefreshToken] = useState(0);
+  /**
+   * What the watcher saw move in the tick that last bumped `refreshToken`, so
+   * the tree re-lists only those directories. Null means everything, for the
+   * refreshes that do not come from the watcher.
+   */
+  const [treeChanges, setTreeChanges] = useState<ReadonlySet<string> | null>(null);
   const [repo, setRepo] = useState<RepoStatus | null>(null);
   const [gitBusy, setGitBusy] = useState<GitOp | null>(null);
   const [commitMessage, setCommitMessage] = useState("");
@@ -289,6 +295,7 @@ export function ProjectView({
     let timer: number | undefined;
     let debounce = 150;
     void fsDebounceMs().then((ms) => (debounce = ms));
+    let batch = new Set<string>();
 
     const unlisten = listen<FsChanged>("fs://changed", ({ payload }) => {
       if (payload.root !== root) return;
@@ -298,8 +305,14 @@ export function ProjectView({
         for (const p of payload.paths) next.set(p, now);
         return next;
       });
+      for (const p of payload.paths) batch.add(p);
       window.clearTimeout(timer);
-      timer = window.setTimeout(() => setRefreshToken((t) => t + 1), debounce);
+      timer = window.setTimeout(() => {
+        const paths = batch;
+        batch = new Set();
+        setTreeChanges(paths);
+        setRefreshToken((t) => t + 1);
+      }, debounce);
     });
     return () => {
       window.clearTimeout(timer);
@@ -310,7 +323,9 @@ export function ProjectView({
   // The log window rewrites history too; the changes list must follow.
   useEffect(() => {
     const unlisten = listen<GitChanged>(GIT_CHANGED, ({ payload }) => {
-      if (payload?.root === root) setRefreshToken((t) => t + 1);
+      if (payload?.root !== root) return;
+      setTreeChanges(null);
+      setRefreshToken((t) => t + 1);
     });
     return () => void unlisten.then((u) => u());
   }, [root]);
@@ -506,6 +521,7 @@ export function ProjectView({
       } finally {
         gitBusyRef.current = false;
         setGitBusy(null);
+        setTreeChanges(null);
         setRefreshToken((t) => t + 1);
         // The log window, if open on this project, re-reads too.
         void emit(GIT_CHANGED, { root } satisfies GitChanged);
@@ -1001,6 +1017,7 @@ export function ProjectView({
       saveProjectState(root, { expandedDirs: [...next] });
       return next;
     });
+    setTreeChanges(null);
     setRefreshToken((t) => t + 1);
     openPath(file, "file");
   }, [root, diffFile, openFile, ask, showToast, openPath]);
@@ -1167,6 +1184,7 @@ export function ProjectView({
                 selected={diffFile ?? openFile}
                 onSelect={openFromTree}
                 refreshToken={refreshToken}
+                changed={treeChanges}
                 expanded={expanded}
                 onToggle={toggleDir}
                 statuses={statuses}

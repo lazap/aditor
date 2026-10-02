@@ -17,6 +17,11 @@ interface Props {
   onSelect(path: string): void;
   /** Bumped by the workspace watcher to force a refetch of loaded levels. */
   refreshToken: number;
+  /**
+   * The paths behind this bump of `refreshToken`: only the loaded directories
+   * they touch are re-read. Null re-reads every loaded directory.
+   */
+  changed: ReadonlySet<string> | null;
   expanded: Set<string>;
   onToggle(path: string): void;
   /** Absolute path -> git status, for row badges. */
@@ -103,6 +108,7 @@ function Tree({
   selected,
   onSelect,
   refreshToken,
+  changed,
   expanded,
   onToggle,
   statuses,
@@ -154,16 +160,22 @@ function Tree({
     });
   }, [missing]);
 
-  // What makes the watcher's changes show up: everything already loaded is
-  // re-read, which is what the old per-level effects added up to. Errored
-  // directories are retried here too, so a recreated one recovers.
+  // What makes the watcher's changes show up: the loaded directories the
+  // change touched are re-read -- each changed path's parent, the path itself
+  // if it is a loaded directory, and anything loaded beneath it (a directory
+  // renamed or removed whole). Re-reading every loaded directory on each tick
+  // cost dozens of walks during a turn. Errored directories are retried here
+  // too, so a recreated one recovers.
   //
-  // `cache`/`errors` are read but deliberately not dependencies -- this must
-  // fire on the token alone, and the closure already belongs to the render in
-  // which the token changed.
+  // `cache`/`errors`/`changed` are read but deliberately not dependencies --
+  // this must fire on the token alone, and the closure already belongs to the
+  // render in which the token changed.
   useEffect(() => {
     if (refreshToken === 0) return;
-    const dirs = [...new Set([...cache.keys(), ...errors.keys()])];
+    const touched = (dir: string): boolean =>
+      changed === null ||
+      [...changed].some((p) => dir === p || dir === parentOf(p) || dir.startsWith(`${p}/`));
+    const dirs = [...new Set([...[...cache.keys()].filter(touched), ...errors.keys()])];
     if (dirs.length === 0) return;
     let stale = false;
 
