@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ProjectPicker } from "./components/ProjectPicker";
@@ -377,9 +376,11 @@ export default function App() {
   // The template picker lives in its own window, but the agents' PTYs live in
   // this one, so a chosen prompt comes back here to be typed into the session
   // on screen. Focus follows it, so the user lands in the terminal ready to add
-  // to it.
+  // to it. Scoped to this window: the global `listen` registers for any target,
+  // and Tauri delivers every `emitTo` to those, so each editor window would
+  // paste the prompt into its own agent.
   useEffect(() => {
-    const unlisten = listen<string>(TEMPLATES_INSERT, ({ payload }) => {
+    const unlisten = getCurrentWindow().listen<string>(TEMPLATES_INSERT, ({ payload }) => {
       void getCurrentWindow()
         .setFocus()
         .catch(() => {});
