@@ -18,6 +18,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use git2::{Branch, BranchType, Repository, RepositoryState, Status, StatusOptions};
 use serde::Serialize;
@@ -540,6 +541,10 @@ fn askpass() -> Option<&'static Path> {
 /// and an empty agent it opens /dev/tty and waits there -- on the terminal
 /// that launched the app, or on nothing at all. Forcing askpass sends its
 /// prompts to a dialog instead, and `ssh_command` keeps the answer.
+///
+/// Bounded by `GIT_TIMEOUT`: a push stalled on the network, or a hook waiting
+/// on something that never comes, would otherwise hold `GIT_GATE` until the
+/// app restarts, and every later git action would queue behind it.
 fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
     let mut cmd = Command::new(crate::pty::user_shell());
     cmd.args(["-l", "-c", "exec git \"$@\"", "git"])
@@ -567,15 +572,20 @@ fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, St
         pipe.write_all(input.as_bytes())
             .map_err(|e| format!("could not talk to git: {e}"))?;
     }
-    let out = child
-        .wait_with_output()
-        .map_err(|e| format!("git did not finish: {e}"))?;
+    let (status, stdout, stderr) = wait_bounded(child, GIT_TIMEOUT).map_err(|e| match e {
+        Waited::TimedOut => format!(
+            "git {} gave no answer in {} minutes and was stopped.",
+            args.first().unwrap_or(&""),
+            GIT_TIMEOUT.as_secs() / 60
+        ),
+        Waited::Failed(e) => format!("git did not finish: {e}"),
+    })?;
 
-    let stdout = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if out.status.success() {
+    let stdout = String::from_utf8_lossy(&stdout).trim().to_string();
+    if status.success() {
         return Ok(stdout);
     }
-    let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    let stderr = String::from_utf8_lossy(&stderr).trim().to_string();
     Err(if !stderr.is_empty() {
         stderr
     } else if !stdout.is_empty() {
@@ -583,6 +593,54 @@ fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, St
     } else {
         format!("git {} failed", args.first().unwrap_or(&""))
     })
+}
+
+/// Long enough for a commit hook that runs a test suite, or a large push on a
+/// slow link; short enough that a hung one does not wedge git for the session.
+const GIT_TIMEOUT: Duration = Duration::from_secs(5 * 60);
+
+enum Waited {
+    TimedOut,
+    Failed(std::io::Error),
+}
+
+/// `wait_with_output`, but killing the child once `timeout` has passed. The
+/// pipes are drained on their own threads meanwhile, so a chatty child cannot
+/// fill one and block before it exits.
+fn wait_bounded(
+    mut child: std::process::Child,
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), Waited> {
+    fn drain(pipe: Option<impl std::io::Read + Send + 'static>) -> std::thread::JoinHandle<Vec<u8>> {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            if let Some(mut p) = pipe {
+                let _ = p.read_to_end(&mut buf);
+            }
+            buf
+        })
+    }
+    let stdout = drain(child.stdout.take());
+    let stderr = drain(child.stderr.take());
+
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(Waited::TimedOut);
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(e) => return Err(Waited::Failed(e)),
+        }
+    };
+    Ok((
+        status,
+        stdout.join().unwrap_or_default(),
+        stderr.join().unwrap_or_default(),
+    ))
 }
 
 /// Every path must stay inside the workspace, as in `git_diff`.
@@ -1067,6 +1125,32 @@ pub async fn git_operation_abort(ws: State<'_, Workspace>, root: String) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn piped(script: &str) -> std::process::Child {
+        Command::new("/bin/sh")
+            .args(["-c", script])
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap()
+    }
+
+    #[test]
+    fn bounded_wait_returns_output() {
+        let (status, out, err) = wait_bounded(piped("echo out; echo err >&2"), Duration::from_secs(10))
+            .unwrap_or_else(|_| panic!("should finish"));
+        assert!(status.success());
+        assert_eq!(out, b"out\n");
+        assert_eq!(err, b"err\n");
+    }
+
+    #[test]
+    fn bounded_wait_kills_a_hung_child() {
+        let started = Instant::now();
+        let result = wait_bounded(piped("exec sleep 30"), Duration::from_millis(200));
+        assert!(matches!(result, Err(Waited::TimedOut)));
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
 
     /// A throwaway repo with a fixed identity, built with the real git CLI.
     struct Scratch(PathBuf);
