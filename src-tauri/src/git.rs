@@ -23,7 +23,7 @@ use git2::{Branch, BranchType, Repository, RepositoryState, Status, StatusOption
 use serde::Serialize;
 use tauri::State;
 
-use crate::fs::{MAX_FILE_BYTES, Workspace, looks_binary, workspace_root};
+use crate::fs::{MAX_FILE_BYTES, Workspace, inside_workspace, looks_binary, workspace_root};
 
 #[derive(Serialize, Clone, Copy)]
 #[serde(rename_all = "camelCase")]
@@ -422,7 +422,7 @@ pub(crate) fn text_diff(old_bytes: Vec<u8>, new_bytes: Vec<u8>) -> FileDiff {
 pub fn git_diff(ws: State<'_, Workspace>, root: String, path: String) -> Result<FileDiff, String> {
     let found = with_repo(&ws, &root, |repo, workdir, root| {
         let abs = PathBuf::from(&path);
-        if !abs.starts_with(root) {
+        if !inside_workspace(root, &abs) {
             return Err(format!("{path} is outside the workspace"));
         }
         let rel = abs
@@ -578,7 +578,7 @@ fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, St
 
 /// Every path must stay inside the workspace, as in `git_diff`.
 fn check_paths(root: &Path, paths: &[String]) -> Result<(), String> {
-    match paths.iter().find(|p| !Path::new(p).starts_with(root)) {
+    match paths.iter().find(|p| !inside_workspace(root, Path::new(p))) {
         Some(p) => Err(format!("{p} is outside the workspace")),
         None => Ok(()),
     }

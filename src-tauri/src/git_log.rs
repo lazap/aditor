@@ -9,7 +9,7 @@ use git2::{Commit, Delta, DiffFindOptions, DiffOptions, Oid, Repository, Sort};
 use serde::Serialize;
 use tauri::State;
 
-use crate::fs::{Workspace, workspace_root};
+use crate::fs::{Workspace, inside_workspace, workspace_root};
 use crate::git::{ChangeKind, FileDiff, blob_at, text_diff};
 
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
@@ -441,7 +441,7 @@ pub async fn git_blame(
 ) -> Result<Vec<BlameHunk>, String> {
     let found = read_repo(&ws, &root, move |repo, workdir, root| {
         let abs = PathBuf::from(&path);
-        if !abs.starts_with(root) {
+        if !inside_workspace(root, &abs) {
             return Err(format!("{path} is outside the workspace"));
         }
         blame(repo, workdir, &abs)

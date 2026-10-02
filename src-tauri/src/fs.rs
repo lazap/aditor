@@ -100,6 +100,31 @@ pub fn workspace_root(ws: &Workspace, root: &str) -> Result<PathBuf, String> {
     }
 }
 
+/// Whether `path` names something inside the workspace `root`, for paths that
+/// may not exist -- a deleted file still has a diff, and can be staged or
+/// rolled back -- and so cannot simply be canonicalized like `resolve_in_workspace`
+/// does.
+///
+/// `starts_with` alone is lexical: `<root>/../../etc/passwd` passes it and the
+/// OS resolves the `..` later. So `.` and `..` are refused outright, and the
+/// nearest ancestor that exists is canonicalized, which catches a symlinked
+/// directory pointing out of the workspace.
+pub fn inside_workspace(root: &Path, path: &Path) -> bool {
+    use std::path::Component;
+    if !path.starts_with(root)
+        || !path
+            .components()
+            .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+    {
+        return false;
+    }
+    path.parent()
+        .into_iter()
+        .flat_map(Path::ancestors)
+        .find_map(|a| a.canonicalize().ok())
+        .is_some_and(|a| a.starts_with(root))
+}
+
 /// Resolve `path` and assert it stays inside the workspace `root`.
 fn resolve_in_workspace(ws: &Workspace, root: &str, path: &str) -> Result<PathBuf, String> {
     let root = workspace_root(ws, root)?;
@@ -420,6 +445,22 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         // Canonical, as `workspace_root` hands it over: /var is /private/var.
         dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn inside_workspace_refuses_parent_segments_and_symlinked_dirs() {
+        let root = scratch("inside");
+        let outside = scratch("inside-target");
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+
+        assert!(inside_workspace(&root, &root.join("src/main.rs")));
+        // Deleted files, in directories that may be gone too.
+        assert!(inside_workspace(&root, &root.join("gone/deleted.rs")));
+        assert!(!inside_workspace(&root, &root.join("../../etc/passwd")));
+        assert!(!inside_workspace(&root, &root.join("src/../../x")));
+        assert!(!inside_workspace(&root, &root.join("link/secret")));
+        assert!(!inside_workspace(&root, Path::new("/etc/passwd")));
     }
 
     #[test]
