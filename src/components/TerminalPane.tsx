@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
-import { listen } from "@tauri-apps/api/event";
 import { isReservedForApp } from "../shortcuts/store";
 import { useSetting } from "../settings/store";
 import { createFileLinkProvider } from "../pty/fileLinks";
@@ -15,8 +14,6 @@ import {
   ptySpawn,
   ptyWrite,
   setActiveSession,
-  type PtyExit,
-  type PtyOutput,
 } from "../pty/api";
 
 interface Props {
@@ -78,7 +75,6 @@ export function TerminalPane({
     // than leaking a PTY with no pane.
     let disposed = false;
     let sessionId: string | null = null;
-    const unlisteners: Array<() => void> = [];
 
     // Read rather than depended on, like onOpenPath: the effect below repaints
     // a live terminal, so a theme change never respawns the agent.
@@ -124,12 +120,14 @@ export function TerminalPane({
 
     (async () => {
       try {
-        const id = await ptySpawn({
-          command,
-          cwd,
-          cols: term.cols,
-          rows: term.rows,
-        });
+        const id = await ptySpawn(
+          { command, cwd, cols: term.cols, rows: term.rows },
+          (ev) => {
+            if (disposed) return;
+            if (ev.kind === "output") term.write(fromBase64(ev.bytes));
+            else onExit(ev.code);
+          },
+        );
         if (disposed) {
           void ptyKill(id);
           return;
@@ -142,19 +140,9 @@ export function TerminalPane({
         if (visibleRef.current) setActiveSession(id);
 
         // A session can vanish underneath us (killed, or the agent exited);
-        // pty://exit drives the UI, so swallow the write/resize rejection.
+        // the exit event drives the UI, so swallow the write/resize rejection.
         term.onData((data) => void ptyWrite(id, data).catch(() => {}));
 
-        unlisteners.push(
-          await listen<PtyOutput>("pty://output", (ev) => {
-            if (ev.payload.id === id) term.write(fromBase64(ev.payload.bytes));
-          }),
-        );
-        unlisteners.push(
-          await listen<PtyExit>("pty://exit", (ev) => {
-            if (ev.payload.id === id) onExit(ev.payload.code);
-          }),
-        );
         if (visibleRef.current) term.focus();
       } catch (e) {
         if (!disposed) setError(String(e));
@@ -185,7 +173,6 @@ export function TerminalPane({
       disposed = true;
       window.clearTimeout(resizeTimer);
       observer.disconnect();
-      unlisteners.forEach((u) => u());
       // Only if it is still ours: a respawn publishes the new id before the old
       // pane's cleanup runs, and clearing unconditionally would blank it.
       if (sessionId && activeSession() === sessionId) setActiveSession(null);

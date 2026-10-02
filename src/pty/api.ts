@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { Channel, invoke } from "@tauri-apps/api/core";
 
 export interface AgentInfo {
   id: string;
@@ -23,16 +23,11 @@ export const SHELL_SESSION: AgentInfo = {
   version: null,
 };
 
-export interface PtyOutput {
-  id: string;
+/** What a session sends back over the channel handed to `ptySpawn`. */
+export type PtyEvent =
   /** base64 of raw PTY bytes -- see note in pty.rs on why this is not a string. */
-  bytes: string;
-}
-
-export interface PtyExit {
-  id: string;
-  code: number | null;
-}
+  | { kind: "output"; bytes: string }
+  | { kind: "exit"; code: number | null };
 
 const encoder = new TextEncoder();
 
@@ -51,12 +46,18 @@ export function fromBase64(b64: string): Uint8Array {
 
 export const agentsAvailable = () => invoke<AgentInfo[]>("agents_available");
 
-export const ptySpawn = (args: {
-  command: string | null;
-  cwd: string;
-  cols: number;
-  rows: number;
-}) => invoke<string>("pty_spawn", args);
+/**
+ * `onEvent` is attached before the process starts, so the first output and an
+ * immediate exit cannot be missed.
+ */
+export function ptySpawn(
+  args: { command: string | null; cwd: string; cols: number; rows: number },
+  onEvent: (event: PtyEvent) => void,
+): Promise<string> {
+  const channel = new Channel<PtyEvent>();
+  channel.onmessage = onEvent;
+  return invoke<string>("pty_spawn", { ...args, onEvent: channel });
+}
 
 /** xterm hands us a JS string; encode as UTF-8 so non-ASCII input survives. */
 export const ptyWrite = (id: string, data: string) =>

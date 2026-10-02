@@ -5,7 +5,7 @@
 //! than dropping into an interactive shell and typing the command. That gives
 //! clean lifecycle semantics (the pane's life == the agent's life) at the cost
 //! of having no shell to fall back on when the agent quits, so the frontend has
-//! to offer a restart when `pty://exit` arrives.
+//! to offer a restart when the session reports its exit.
 //!
 //! The login shell matters: a GUI-launched macOS app inherits a bare PATH, so
 //! `claude` at /opt/homebrew/bin would not resolve if we exec'd it directly.
@@ -21,7 +21,8 @@ use base64::Engine as _;
 use base64::engine::general_purpose::STANDARD as B64;
 use portable_pty::{ChildKiller, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::ipc::Channel;
+use tauri::{State, WebviewWindow};
 
 use crate::mcp::McpServer;
 
@@ -63,20 +64,24 @@ impl PtyRegistry {
     }
 }
 
+/// What a session tells the pane that spawned it, over the channel that pane
+/// handed to `pty_spawn`. A channel rather than global events: it exists
+/// before the process does, so the first prompt and an immediate exit cannot
+/// slip out before anyone is listening, and output goes to that one pane
+/// instead of being broadcast to every window.
 #[derive(Clone, Serialize)]
-struct PtyOutput {
-    id: String,
-    /// base64 of the raw bytes. Deliberately not a String: a read boundary can
+#[serde(tag = "kind", rename_all = "lowercase")]
+pub enum PtyEvent {
+    Output {
+        /// base64 of the raw bytes. Deliberately not a String: a read boundary can
     /// land mid-UTF-8-sequence, and lossy decoding would pepper the agent's
     /// box-drawing and emoji with replacement characters. xterm.js decodes
     /// incrementally from a Uint8Array, so bytes travel end to end untouched.
-    bytes: String,
-}
-
-#[derive(Clone, Serialize)]
-struct PtyExit {
-    id: String,
-    code: Option<i32>,
+        bytes: String,
+    },
+    Exit {
+        code: Option<i32>,
+    },
 }
 
 /// An agent CLI Aditor knows how to launch.
@@ -210,19 +215,15 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
     cmd
 }
 
-/// Emit whatever has been coalesced so far. Both the reader and the ticker
+/// Send whatever has been coalesced so far. Both the reader and the ticker
 /// call this, under the same lock, so bytes reach the webview in read order.
-fn flush(app: &AppHandle, id: &str, pending: &mut Vec<u8>) {
+fn flush(events: &Channel<PtyEvent>, pending: &mut Vec<u8>) {
     if pending.is_empty() {
         return;
     }
-    let _ = app.emit(
-        "pty://output",
-        PtyOutput {
-            id: id.to_string(),
-            bytes: B64.encode(&pending),
-        },
-    );
+    let _ = events.send(PtyEvent::Output {
+        bytes: B64.encode(&pending),
+    });
     pending.clear();
 }
 
@@ -254,7 +255,6 @@ fn agent_args(command: Option<&str>, id: &str, mcp: &McpServer) -> String {
 
 #[tauri::command]
 pub fn pty_spawn(
-    app: AppHandle,
     window: WebviewWindow,
     registry: State<'_, Arc<PtyRegistry>>,
     mcp: State<'_, McpServer>,
@@ -262,6 +262,7 @@ pub fn pty_spawn(
     cwd: String,
     cols: u16,
     rows: u16,
+    on_event: Channel<PtyEvent>,
 ) -> Result<String, String> {
     let pair = native_pty_system()
         .openpty(PtySize {
@@ -322,14 +323,13 @@ pub fn pty_spawn(
     // redrawn after a resize, or a trust dialog on first open, stayed missing
     // until a click or keystroke shook the held bytes loose.
     {
-        let app = app.clone();
-        let id = id.clone();
+        let events = on_event.clone();
         let pending = Arc::clone(&pending);
         let done = Arc::clone(&done);
         std::thread::spawn(move || {
             while !done.load(Ordering::Relaxed) {
                 std::thread::sleep(FLUSH_INTERVAL);
-                flush(&app, &id, &mut pending.lock().unwrap());
+                flush(&events, &mut pending.lock().unwrap());
             }
         });
     }
@@ -337,8 +337,7 @@ pub fn pty_spawn(
     // Reader thread: coalesce into `pending`; the size cap is the only reason
     // to emit early, since the ticker owns the deadline.
     {
-        let app = app.clone();
-        let id = id.clone();
+        let events = on_event;
         let pending = Arc::clone(&pending);
         let done = Arc::clone(&done);
         std::thread::spawn(move || {
@@ -351,17 +350,17 @@ pub fn pty_spawn(
                         let mut p = pending.lock().unwrap();
                         p.extend_from_slice(&buf[..n]);
                         if p.len() >= FLUSH_BYTES {
-                            flush(&app, &id, &mut p);
+                            flush(&events, &mut p);
                         }
                     }
                     Err(_) => break,
                 }
             }
             done.store(true, Ordering::Relaxed);
-            flush(&app, &id, &mut pending.lock().unwrap());
+            flush(&events, &mut pending.lock().unwrap());
 
             let code = child.wait().ok().map(|s| s.exit_code() as i32);
-            let _ = app.emit("pty://exit", PtyExit { id: id.clone(), code });
+            let _ = events.send(PtyEvent::Exit { code });
         });
     }
 
@@ -404,7 +403,7 @@ pub fn pty_resize(
 }
 
 /// End the session: signal the child, then drop our handles. The reader thread
-/// sees EOF once the child is gone and emits `pty://exit` on its way out.
+/// sees EOF once the child is gone and sends `Exit` on its way out.
 #[tauri::command]
 pub fn pty_kill(
     registry: State<'_, Arc<PtyRegistry>>,
