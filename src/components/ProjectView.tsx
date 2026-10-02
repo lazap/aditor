@@ -1282,8 +1282,11 @@ export function ProjectView({
               <InsightPanel
                 agent={panelAgent}
                 workspace={root}
-                // Both are monotonic, so the sum changes whenever either does.
-                refreshToken={refreshToken + agentsToken}
+                // Not the workspace watcher's token: it fires on every file
+                // the agent touches, and each refresh re-reads every
+                // transcript and the account config. `agents://changed`
+                // already covers the transcripts and the session registry.
+                refreshToken={agentsToken}
                 onAccountChanged={() => setAgentsToken((t) => t + 1)}
                 onClose={toggleInsight}
               />
