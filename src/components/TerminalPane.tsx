@@ -20,6 +20,8 @@ interface Props {
   /** Command to run in the login shell; null spawns an interactive shell. */
   command: string | null;
   cwd: string;
+  /** A Claude Code session to continue, rather than starting a new one. */
+  resume?: string;
   /** Bumping this respawns -- how the agent picker switches agents. */
   generation: number;
   /** Bumping this takes the caret, without touching the session. */
@@ -33,16 +35,23 @@ interface Props {
   onExit(code: number | null): void;
   /** A file path in the output was clicked; `line` when it carried one. */
   onOpenPath(path: string, line?: number): void;
+  /** The PTY is up, under this id. Called again after every respawn. */
+  onSpawned?(id: string): void;
+  /** The program rang the terminal bell. */
+  onBell?(): void;
 }
 
 export function TerminalPane({
   command,
   cwd,
+  resume,
   generation,
   focusToken,
   visible,
   onExit,
   onOpenPath,
+  onSpawned,
+  onBell,
 }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   // Reachable from outside the spawn effect, so focusing never goes near the
@@ -60,6 +69,10 @@ export function TerminalPane({
   // effect is one more way to kill and restart the agent.
   const onOpenPathRef = useRef(onOpenPath);
   onOpenPathRef.current = onOpenPath;
+  const onSpawnedRef = useRef(onSpawned);
+  onSpawnedRef.current = onSpawned;
+  const onBellRef = useRef(onBell);
+  onBellRef.current = onBell;
   // Read by the spawn, not depended on, like the two above.
   const visibleRef = useRef(visible);
   visibleRef.current = visible;
@@ -113,6 +126,7 @@ export function TerminalPane({
     // does. Declining a key here does not preventDefault it, which is how the
     // reserved ones go on to reach App's window listener.
     term.attachCustomKeyEventHandler((e) => !isReservedForApp(e));
+    term.onBell(() => onBellRef.current?.());
     fit.fit();
 
     /** Geometry the PTY has actually been told about. */
@@ -121,7 +135,7 @@ export function TerminalPane({
     (async () => {
       try {
         const id = await ptySpawn(
-          { command, cwd, cols: term.cols, rows: term.rows },
+          { command, cwd, cols: term.cols, rows: term.rows, resume },
           (ev) => {
             if (disposed) return;
             if (ev.kind === "output") term.write(fromBase64(ev.bytes));
@@ -134,6 +148,7 @@ export function TerminalPane({
         }
         sessionId = id;
         sessionRef.current = id;
+        onSpawnedRef.current?.(id);
         // Published so the prompt-template chooser can type into this session
         // without a prop that would re-enter this component. Only from the pane
         // on screen: several spawn at once when a window restores its tabs.
@@ -182,7 +197,7 @@ export function TerminalPane({
       setLiveTerm(null);
       term.dispose();
     };
-  }, [command, cwd, generation, onExit]);
+  }, [command, cwd, resume, generation, onExit]);
 
   // Separate from the spawn effect for the same reason as focus below: turning
   // the setting on or off adds or drops the provider on the live terminal and

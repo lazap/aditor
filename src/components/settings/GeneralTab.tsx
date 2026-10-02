@@ -8,7 +8,9 @@ import { patch, patchLayout, useSettings } from "../../settings/store";
  * -- and each reads the same field, so they cannot drift apart.
  */
 export function GeneralTab() {
-  const { layout, keyboardMode, appearance, terminalFileLinks } = useSettings();
+  const { layout, keyboardMode, appearance, terminalFileLinks, notifications } = useSettings();
+  const notify = (next: Partial<typeof notifications>) =>
+    patch({ notifications: { ...notifications, ...next } });
 
   return (
     <>
@@ -169,6 +171,43 @@ export function GeneralTab() {
           onClick={() => patch({ terminalFileLinks: !terminalFileLinks })}
         >
           {terminalFileLinks ? "On" : "Off"}
+        </button>
+      </div>
+
+      <div className="picker-section-label">Notifications</div>
+      <div className="setting-row">
+        <span className="setting-label">
+          When an agent finishes
+          <span className="setting-sub">
+            A macOS notification and a Dock badge, when the session is in a
+            background tab or Aditor is not in front.
+          </span>
+        </span>
+        <button
+          className="setting-toggle"
+          role="switch"
+          aria-checked={notifications.onDone}
+          data-on={notifications.onDone}
+          onClick={() => notify({ onDone: !notifications.onDone })}
+        >
+          {notifications.onDone ? "On" : "Off"}
+        </button>
+      </div>
+      <div className="setting-row">
+        <span className="setting-label">
+          When an agent needs you
+          <span className="setting-sub">
+            A permission prompt, or a question the agent asked through Aditor.
+          </span>
+        </span>
+        <button
+          className="setting-toggle"
+          role="switch"
+          aria-checked={notifications.onWaiting}
+          data-on={notifications.onWaiting}
+          onClick={() => notify({ onWaiting: !notifications.onWaiting })}
+        >
+          {notifications.onWaiting ? "On" : "Off"}
         </button>
       </div>
 

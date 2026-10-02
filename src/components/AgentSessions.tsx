@@ -25,6 +25,7 @@ interface Props {
   /** An account switch invalidates everything below it: the sessions and
    *  limits on screen belong to the account we just left. */
   onAccountChanged(): void;
+  onResume(session: SessionSummary): void;
 }
 
 const EMPTY: Totals = {
@@ -80,21 +81,44 @@ function Meter({ label, pct, resetsAt }: { label: string; pct: number; resetsAt:
   );
 }
 
-function Row({ session, open, onToggle }: { session: SessionSummary; open: boolean; onToggle(): void }) {
+function Row({
+  session,
+  open,
+  onToggle,
+  onResume,
+}: {
+  session: SessionSummary;
+  open: boolean;
+  onToggle(): void;
+  onResume?(): void;
+}) {
   const { totals, live } = session;
+  // Running in one of our tabs: the button goes there instead of resuming.
+  const shown = live?.ptyId != null;
   return (
     <div className="isession" data-live={live !== null}>
-      <button className="isession-head" onClick={onToggle} aria-expanded={open}>
-        <span className="tree-chevron">{open ? "▾" : "▸"}</span>
-        {live && <span className="isession-dot" aria-hidden />}
-        <span className="isession-title">
-          {session.title ?? session.id.slice(0, 8)}
-        </span>
-        <span className="isession-cost">
-          {approx(totals)}
-          {formatUsd(totals.costUsd)}
-        </span>
-      </button>
+      <div className="isession-row">
+        <button className="isession-head" onClick={onToggle} aria-expanded={open}>
+          <span className="tree-chevron">{open ? "▾" : "▸"}</span>
+          {live && <span className="isession-dot" aria-hidden />}
+          <span className="isession-title">
+            {session.title ?? session.id.slice(0, 8)}
+          </span>
+          <span className="isession-cost">
+            {approx(totals)}
+            {formatUsd(totals.costUsd)}
+          </span>
+        </button>
+        {onResume && (
+          <button
+            className="isession-resume"
+            onClick={onResume}
+            title={shown ? "Show the tab this session runs in" : "Continue this session in a new tab"}
+          >
+            {shown ? "Show" : "Resume"}
+          </button>
+        )}
+      </div>
 
       <div className="isession-sub">
         <span>{live ? statusLabel(live) : formatRelative(session.lastAt)}</span>
@@ -163,6 +187,7 @@ export function AgentSessions({
   workspace,
   refreshToken,
   onAccountChanged,
+  onResume,
 }: Props) {
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -285,6 +310,7 @@ export function AgentSessions({
                   session={s}
                   open={open.has(s.id)}
                   onToggle={() => toggle(s.id)}
+                  onResume={agent?.id === "claude" ? () => onResume(s) : undefined}
                 />
               ))
             )}

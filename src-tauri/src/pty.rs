@@ -12,6 +12,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
+use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -24,7 +25,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{State, WebviewWindow};
 
-use crate::mcp::McpServer;
+use crate::mcp::{McpServer, PROMPT_TIMEOUT};
 
 /// Flush pending PTY output at least this often. One event per read syscall
 /// floods the IPC bridge when an agent dumps a long file; batching keeps
@@ -50,6 +51,11 @@ pub struct PtySession {
     /// Label of the window whose pane spawned it. Several editor windows can be
     /// open, and reloading or closing one must reap only its own agents.
     window: String,
+    /// The process the login shell `exec`ed into -- for an agent, the agent
+    /// itself, which is what Claude Code's live registry is keyed on.
+    pid: Option<u32>,
+    /// Where it was started: the workspace an MCP tool call's paths resolve in.
+    cwd: PathBuf,
 }
 
 #[derive(Default)]
@@ -61,6 +67,25 @@ pub struct PtyRegistry {
 impl PtyRegistry {
     fn new_id(&self) -> String {
         format!("pty-{}", self.next_id.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// The session running process `pid`, and the window that owns it.
+    pub fn lookup_pid(&self, pid: u32) -> Option<(String, String)> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .iter()
+            .find(|(_, s)| s.pid == Some(pid))
+            .map(|(id, s)| (id.clone(), s.window.clone()))
+    }
+
+    /// The window that owns session `id`, and the folder it runs in.
+    pub fn owner(&self, id: &str) -> Option<(String, PathBuf)> {
+        self.sessions
+            .lock()
+            .unwrap()
+            .get(id)
+            .map(|s| (s.window.clone(), s.cwd.clone()))
     }
 }
 
@@ -197,6 +222,12 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
     // TERM_PROGRAM_VERSION would claim a version that is not ours.
     cmd.env("TERM_PROGRAM", "Aditor");
     cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+    // `ask_user` and `request_review` wait on the user. Claude Code's default
+    // tool timeout would abort them first, so allow as long as the server
+    // waits -- unless the user already chose a timeout of their own.
+    if std::env::var_os("MCP_TOOL_TIMEOUT").is_none() {
+        cmd.env("MCP_TOOL_TIMEOUT", PROMPT_TIMEOUT.as_millis().to_string());
+    }
 
     for key in INHERITED_SESSION_VARS {
         cmd.env_remove(key);
@@ -241,22 +272,40 @@ fn sh_quote(s: &str) -> String {
 }
 
 /// Told to Claude alongside the MCP config, or it keeps its plan in its own
-/// built-in todo list and the Tasks tab never hears of it.
-const TASKS_NUDGE: &str = "You are running inside Aditor. Whenever you plan multi-step work \
-    or a task's status changes, also call the aditor `update_tasks` tool with the full task \
-    list, so the user can follow along in Aditor's Tasks panel.";
+/// built-in todo list and the Tasks tab never hears of it -- and asks its
+/// questions in prose rather than through the prompt Aditor can show.
+const TASKS_NUDGE: &str = "You are running inside Aditor, an editor built around this \
+    terminal. Whenever you plan multi-step work or a task's status changes, also call the \
+    aditor `update_tasks` tool with the full task list, so the user can follow along in \
+    Aditor's Tasks panel. When you point the user at code, call `open_file` so they see it. \
+    When you need the user to pick between a few concrete options, call `ask_user` instead \
+    of asking in prose. Call `request_review` only when the user asked to review changes \
+    before you go on.";
+
+/// A Claude Code session id: a UUID. Checked rather than trusted, since it
+/// lands on a shell command line.
+fn is_session_id(s: &str) -> bool {
+    s.len() == 36
+        && s.chars().enumerate().all(|(i, c)| match i {
+            8 | 13 | 18 | 23 => c == '-',
+            _ => c.is_ascii_hexdigit(),
+        })
+}
 
 /// Extra arguments for the agent in PTY `id`, leading space included. Only
-/// Claude Code is wired to Aditor's MCP server today.
-fn agent_args(command: Option<&str>, id: &str, mcp: &McpServer) -> String {
+/// Claude Code is wired to Aditor's MCP server, and only it can resume.
+fn agent_args(command: Option<&str>, resume: Option<&str>, mcp_config: &str) -> String {
     match command {
-        Some("claude") => format!(
-            // `--mcp-config` is variadic, so it goes last: anything after it
-            // that is not a flag would be read as one more config.
-            " --append-system-prompt {} --mcp-config {}",
-            sh_quote(TASKS_NUDGE),
-            sh_quote(&mcp.config_for(id)),
-        ),
+        Some("claude") => {
+            let resume = resume.map(|r| format!(" --resume {}", sh_quote(r))).unwrap_or_default();
+            format!(
+                // `--mcp-config` is variadic, so it goes last: anything after it
+                // that is not a flag would be read as one more config.
+                "{resume} --append-system-prompt {} --mcp-config {}",
+                sh_quote(TASKS_NUDGE),
+                sh_quote(mcp_config),
+            )
+        }
         _ => String::new(),
     }
 }
@@ -270,8 +319,14 @@ pub fn pty_spawn(
     cwd: String,
     cols: u16,
     rows: u16,
+    resume: Option<String>,
     on_event: Channel<PtyEvent>,
 ) -> Result<String, String> {
+    if let Some(r) = &resume {
+        if !is_session_id(r) {
+            return Err(format!("{r} is not a session id"));
+        }
+    }
     let pair = native_pty_system()
         .openpty(PtySize {
             rows,
@@ -283,7 +338,7 @@ pub fn pty_spawn(
 
     // Allocated before the spawn: the agent's MCP URL carries it.
     let id = registry.new_id();
-    let args = agent_args(command.as_deref(), &id, &mcp);
+    let args = agent_args(command.as_deref(), resume.as_deref(), &mcp.config_for(&id));
     let mut child = pair
         .slave
         .spawn_command(shell_command(command.as_deref(), &args, &cwd))
@@ -318,6 +373,8 @@ pub fn pty_spawn(
             master: pair.master,
             killer: child.clone_killer(),
             window: window.label().to_string(),
+            pid: child.process_id(),
+            cwd: PathBuf::from(&cwd),
         },
     );
 
@@ -543,5 +600,36 @@ fn probe(&(id, label, command): &(&str, &str, Option<&str>)) -> AgentInfo {
                 version,
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_only_uuid_session_ids() {
+        assert!(is_session_id("cbff751a-17a4-496c-970a-b21039d0cd30"));
+        assert!(!is_session_id("cbff751a-17a4-496c-970a-b21039d0cd3"));
+        assert!(!is_session_id("cbff751a-17a4-496c-970a-b21039d0cd3'"));
+        assert!(!is_session_id("cbff751a 17a4-496c-970a-b21039d0cd30"));
+        assert!(!is_session_id("$(rm -rf ~)-496c-970a-b21039d0cd30xx"));
+    }
+
+    #[test]
+    fn resume_goes_before_the_variadic_mcp_config() {
+        let id = "cbff751a-17a4-496c-970a-b21039d0cd30";
+        let args = agent_args(Some("claude"), Some(id), "{}");
+        let resume = args.find("--resume").unwrap();
+        let mcp = args.find("--mcp-config").unwrap();
+        assert!(resume < mcp);
+        assert!(args.contains(&format!("--resume '{id}'")));
+        assert!(args.trim_end().ends_with("'{}'"));
+    }
+
+    #[test]
+    fn other_agents_get_no_arguments() {
+        assert_eq!(agent_args(Some("opencode"), None, "{}"), "");
+        assert_eq!(agent_args(None, None, "{}"), "");
     }
 }

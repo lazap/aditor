@@ -1,4 +1,5 @@
 import type { AgentInfo } from "../pty/api";
+import type { SessionSummary } from "../agents/api";
 import type { InsightTab } from "../settings/schema";
 import { patchLayout, useSetting } from "../settings/store";
 import { chordHint } from "../shortcuts/store";
@@ -10,6 +11,8 @@ interface Props {
   workspace: string;
   refreshToken: number;
   onAccountChanged(): void;
+  /** A session row's Resume: continue it, or show the tab it runs in. */
+  onResume(session: SessionSummary): void;
   onClose(): void;
 }
 

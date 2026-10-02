@@ -51,12 +51,19 @@ export const agentsAvailable = () => invoke<AgentInfo[]>("agents_available");
  * immediate exit cannot be missed.
  */
 export function ptySpawn(
-  args: { command: string | null; cwd: string; cols: number; rows: number },
+  args: {
+    command: string | null;
+    cwd: string;
+    cols: number;
+    rows: number;
+    /** A Claude Code session id to continue instead of starting fresh. */
+    resume?: string | null;
+  },
   onEvent: (event: PtyEvent) => void,
 ): Promise<string> {
   const channel = new Channel<PtyEvent>();
   channel.onmessage = onEvent;
-  return invoke<string>("pty_spawn", { ...args, onEvent: channel });
+  return invoke<string>("pty_spawn", { ...args, resume: args.resume ?? null, onEvent: channel });
 }
 
 /** xterm hands us a JS string; encode as UTF-8 so non-ASCII input survives. */

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AgentPicker } from "./AgentPicker";
 import { BranchPicker, type BranchAction } from "./BranchPicker";
 import { InsightPanel } from "./InsightPanel";
@@ -14,12 +15,13 @@ import { BottomPane } from "./BottomPane";
 import type { LineTarget } from "./FileViewer";
 import { SplitPane } from "./SplitPane";
 import { SessionTabs, type SessionTab } from "./SessionTabs";
+import { AgentPrompt } from "./AgentPrompt";
 import type { ToastMessage } from "./Toast";
 import type { Handlers } from "../shortcuts/useShortcuts";
 import { chordHint } from "../shortcuts/store";
 import { switchToNextAccount } from "../accounts/next";
 import { ptyWriteActive, SHELL_SESSION, type AgentInfo } from "../pty/api";
-import { createFile, fsDebounceMs, type FsChanged } from "../fs/api";
+import { createFile, FS_GIT, fsDebounceMs, type FsChanged, type FsGit } from "../fs/api";
 import {
   gitBranchCreate,
   gitBranchDelete,
@@ -46,11 +48,22 @@ import {
   type FileStatus,
   type RepoStatus,
 } from "../git/api";
-import { agentWatch, type AgentsChanged } from "../agents/api";
+import { agentWatch, type AgentsChanged, type SessionSummary } from "../agents/api";
 import { patch, patchLayout, settings, useSetting } from "../settings/store";
 import type { RailTab } from "../settings/schema";
 import { contextFrom } from "../templates/placeholders";
+import { notify, onPtyStatus, type Attention } from "../notify/api";
 import {
+  mcpAnswer,
+  onOpenRequest,
+  onPrompt,
+  onPromptCancel,
+  type AskAnswer,
+  type McpPrompt,
+  type ReviewAnswer,
+} from "../mcp/api";
+import {
+  basename,
   onDiffWindowClosed,
   openLogWindow,
   openViewerWindow,
@@ -91,6 +104,21 @@ interface Session {
   generation: number;
   /** undefined while running; null or a code once it has exited. */
   exitCode: number | null | undefined;
+  /** The Claude Code session it continues; restarting continues it again. */
+  resumeId?: string;
+  /** What the resumed session was called, for its tab. */
+  title?: string;
+  /** Its PTY, once spawned: how events about it are recognised as ours. */
+  ptyId?: string;
+  /** What the agent last reported: "busy", "idle", "waiting". Claude Code only. */
+  status?: string;
+  /** It finished, or is blocked on the user, while not on screen. */
+  attention?: Attention;
+}
+
+/** A resumed session's title, short enough for a tab. */
+function tabTitle(title: string): string {
+  return title.length > 28 ? `${title.slice(0, 27)}…` : title;
 }
 
 /** Rail tab glyphs. Stroked in `currentColor`, so the tab state colours them. */
@@ -153,6 +181,8 @@ interface Props {
   register(root: string, api: ViewApi | null): void;
   /** Whether any of this project's agents is still running, for the tab dot. */
   onRunning(root: string, running: boolean): void;
+  /** How many of this project's sessions want the user, for the tab dot and Dock badge. */
+  onAttention(root: string, count: number): void;
 }
 
 /**
@@ -173,6 +203,7 @@ export function ProjectView({
   showToast,
   register,
   onRunning,
+  onAttention,
 }: Props) {
   // What the project remembers, read once: this view lives as long as its tab.
   const [saved] = useState(() => loadProjectState(root));
@@ -202,6 +233,11 @@ export function ProjectView({
   useEffect(() => onDiffWindowClosed(() => setDiffFile(null)), []);
   const [expanded, setExpanded] = useState<Set<string>>(() => new Set(saved.expandedDirs));
   const [refreshToken, setRefreshToken] = useState(0);
+  /**
+   * Bumped when git moved outside Aditor -- a commit in a terminal touches
+   * only `.git`. Re-reads the status alone; the tree has nothing new to list.
+   */
+  const [gitToken, setGitToken] = useState(0);
   /**
    * What the watcher saw move in the tick that last bumped `refreshToken`, so
    * the tree re-lists only those directories. Null means everything, for the
@@ -271,14 +307,28 @@ export function ProjectView({
   const running = sessions.some((s) => s.exitCode === undefined);
   const watchClaude = sessions.some((s) => s.agentId === "claude");
 
-  const addSession = useCallback((agent: AgentInfo) => {
-    const key = nextKey.current++;
-    setSessions((prev) => {
-      const n = Math.max(0, ...prev.filter((s) => s.agentId === agent.id).map((s) => s.n)) + 1;
-      return [...prev, { key, agentId: agent.id, n, generation: 0, exitCode: undefined }];
-    });
-    setActiveKey(key);
-  }, []);
+  const addSession = useCallback(
+    (agent: AgentInfo, resume?: { id: string; title?: string }) => {
+      const key = nextKey.current++;
+      setSessions((prev) => {
+        const n = Math.max(0, ...prev.filter((s) => s.agentId === agent.id).map((s) => s.n)) + 1;
+        return [
+          ...prev,
+          {
+            key,
+            agentId: agent.id,
+            n,
+            generation: 0,
+            exitCode: undefined,
+            resumeId: resume?.id,
+            title: resume?.title,
+          },
+        ];
+      });
+      setActiveKey(key);
+    },
+    [],
+  );
 
   // The first session starts once the agent list is in: spawning against a
   // fallback and correcting it afterwards would kill and respawn the agent.
@@ -333,6 +383,27 @@ export function ProjectView({
     return () => void unlisten.then((u) => u());
   }, [root]);
 
+  // Git moved under us: a commit, stage or checkout from a terminal. A commit
+  // touches the index, HEAD and a ref in one burst, hence the debounce.
+  // Regaining focus re-reads too, for whatever the watcher coalesced away.
+  useEffect(() => {
+    let timer: number | undefined;
+    let debounce = 150;
+    void fsDebounceMs().then((ms) => (debounce = ms));
+    const bump = () => setGitToken((t) => t + 1);
+    const unGit = listen<FsGit>(FS_GIT, ({ payload }) => {
+      if (payload.root !== root) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(bump, debounce);
+    });
+    const unFocus = getCurrentWindow().onFocusChanged(({ payload }) => payload && bump());
+    return () => {
+      window.clearTimeout(timer);
+      void unGit.then((u) => u());
+      void unFocus.then((u) => u());
+    };
+  }, [root]);
+
   // Expire accents. Only ticks while something is actually accented.
   useEffect(() => {
     if (recentAt.size === 0) return;
@@ -356,7 +427,7 @@ export function ProjectView({
     return () => {
       stale = true;
     };
-  }, [root, refreshToken]);
+  }, [root, refreshToken, gitToken]);
 
   // Watch the agent's own state so the panel keeps up during a turn. Only
   // Claude Code has state to watch; any of this project's sessions running it
@@ -452,6 +523,7 @@ export function ProjectView({
 
   const sessionLabel = useCallback(
     (s: Session) => {
+      if (s.title) return tabTitle(s.title);
       const label = agentById(s.agentId)?.label ?? s.agentId;
       const twins = sessions.filter((o) => o.agentId === s.agentId).length;
       return twins > 1 || s.n > 1 ? `${label} ${s.n}` : label;
@@ -491,17 +563,198 @@ export function ProjectView({
     [sessions, activeKey],
   );
 
+  const setPtyId = useCallback((key: number, ptyId: string) => {
+    setSessions((prev) => prev.map((s) => (s.key === key ? { ...s, ptyId } : s)));
+  }, []);
+
+  /**
+   * A row in the agent panel: continue that Claude Code session in a new tab.
+   * One already running in a tab of ours is shown instead, and one running in
+   * some other terminal is resumed only on confirmation -- two processes
+   * appending to one transcript fork the conversation.
+   */
+  const resumeSession = useCallback(
+    async (summary: SessionSummary) => {
+      const live = summary.live;
+      if (live?.ptyId) {
+        const mine = sessions.find((s) => s.ptyId === live.ptyId);
+        if (mine) {
+          setActiveKey(mine.key);
+          setAgentFocus((t) => t + 1);
+          return;
+        }
+      }
+      const claude = agents.find((a) => a.id === "claude" && a.available);
+      if (!claude) {
+        showToast("Claude Code is not installed.", "error");
+        return;
+      }
+      if (live) {
+        const r = await ask({
+          title: "Resume Session",
+          body: (
+            <>
+              This session is still running in another terminal. Resuming it here
+              starts a second copy, and the two continue separately.
+            </>
+          ),
+          confirm: "Resume",
+        });
+        if (!r) return;
+      }
+      addSession(claude, { id: summary.id, title: summary.title ?? undefined });
+    },
+    [sessions, agents, ask, addSession, showToast],
+  );
+
   const setExit = useCallback((key: number, code: number | null) => {
-    setSessions((prev) => prev.map((s) => (s.key === key ? { ...s, exitCode: code } : s)));
+    setSessions((prev) =>
+      prev.map((s) => (s.key === key ? { ...s, exitCode: code, status: undefined } : s)),
+    );
   }, []);
 
   const restart = useCallback((key: number) => {
     setSessions((prev) =>
       prev.map((s) =>
-        s.key === key ? { ...s, generation: s.generation + 1, exitCode: undefined } : s,
+        s.key === key
+          ? { ...s, generation: s.generation + 1, exitCode: undefined, status: undefined, attention: undefined }
+          : s,
       ),
     );
   }, []);
+
+  // ----------------------------------------------------------- attention ---
+
+  // Read by the status listener, which is set up once rather than on every
+  // session change.
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+  const activeKeyRef = useRef(activeKey);
+  activeKeyRef.current = activeKey;
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const sessionLabelRef = useRef(sessionLabel);
+  sessionLabelRef.current = sessionLabel;
+
+  /**
+   * Session `key` finished, or is blocked on the user. Marked on its tab unless
+   * the user is looking right at it, and announced from outside the window if
+   * the settings ask for that.
+   */
+  const raise = useCallback(
+    (key: number, kind: Attention, detail?: string | null) => {
+      const s = sessionsRef.current.find((o) => o.key === key);
+      if (!s) return;
+      if (activeRef.current && activeKeyRef.current === key && document.hasFocus()) return;
+      setSessions((prev) => prev.map((o) => (o.key === key ? { ...o, attention: kind } : o)));
+      const prefs = settings().notifications;
+      if (!(kind === "done" ? prefs.onDone : prefs.onWaiting)) return;
+      void notify(
+        `${basename(root)} · ${sessionLabelRef.current(s)}`,
+        kind === "done" ? "Finished." : `Needs your input${detail ? `: ${detail}` : "."}`,
+      ).catch(() => {});
+    },
+    [root],
+  );
+
+  // What Claude Code reports about itself, through `status.rs`. Back at the
+  // prompt after working is "done"; blocked on a permission is "waiting".
+  useEffect(() => {
+    const unlisten = onPtyStatus((ev) => {
+      const s = sessionsRef.current.find((o) => o.ptyId === ev.id);
+      if (!s) return;
+      const was = s.status;
+      setSessions((prev) =>
+        prev.map((o) =>
+          o.key === s.key
+            ? // Working again means the user answered: nothing is owed any more.
+              { ...o, status: ev.status, attention: ev.status === "busy" ? undefined : o.attention }
+            : o,
+        ),
+      );
+      if (ev.status === "waiting") raise(s.key, "waiting", ev.waitingFor);
+      else if (ev.status === "idle" && was !== undefined && was !== "idle") raise(s.key, "done");
+    });
+    return () => void unlisten.then((u) => u());
+  }, [raise]);
+
+  /** A terminal bell, from an agent with no status to report. */
+  const onBell = useCallback(
+    (key: number) => {
+      const s = sessionsRef.current.find((o) => o.key === key);
+      if (s && s.agentId !== "claude") raise(key, "done");
+    },
+    [raise],
+  );
+
+  // Looking at a session settles what it was owed: on switching to it, and on
+  // coming back to the window.
+  useEffect(() => {
+    const settle = () => {
+      if (!activeRef.current || !document.hasFocus()) return;
+      const key = activeKeyRef.current;
+      setSessions((prev) =>
+        prev.some((o) => o.key === key && o.attention)
+          ? prev.map((o) => (o.key === key ? { ...o, attention: undefined } : o))
+          : prev,
+      );
+    };
+    settle();
+    window.addEventListener("focus", settle);
+    return () => window.removeEventListener("focus", settle);
+  }, [active, activeKey]);
+
+  // ----------------------------------------------------- agent requests ---
+
+  /** Questions from this project's agents, oldest first; each session shows its first. */
+  const [prompts, setPrompts] = useState<McpPrompt[]>([]);
+
+  // `open_file` / `show_diff`: the same paths a click takes, so the display
+  // settings apply. Never switches project tabs: the agent does not get to
+  // pull the user away from what they are looking at.
+  useEffect(() => {
+    const unlisten = onOpenRequest((r) => {
+      if (!sessionsRef.current.some((s) => s.ptyId === r.id)) return;
+      if (r.as === "changes" || r.path === null) {
+        setRailTab("git");
+        return;
+      }
+      openPathRef.current(r.path, r.as, r.line ?? undefined);
+    });
+    return () => void unlisten.then((u) => u());
+  }, []);
+
+  useEffect(() => {
+    const unPrompt = onPrompt((p) => {
+      const s = sessionsRef.current.find((o) => o.ptyId === p.id);
+      if (!s) return;
+      setPrompts((prev) => [...prev, p]);
+      raise(s.key, "waiting", p.kind === "ask" ? p.question : "review your changes");
+    });
+    const unCancel = onPromptCancel((requestId) =>
+      setPrompts((prev) => prev.filter((p) => p.requestId !== requestId)),
+    );
+    return () => {
+      void unPrompt.then((u) => u());
+      void unCancel.then((u) => u());
+    };
+  }, [raise]);
+
+  const answerPrompt = useCallback(
+    (requestId: string, answer: AskAnswer | ReviewAnswer) => {
+      setPrompts((prev) => prev.filter((p) => p.requestId !== requestId));
+      // Gone already if the call was withdrawn in the meantime; nothing to do.
+      void mcpAnswer(requestId, answer).catch(() => {});
+      setAgentFocus((t) => t + 1);
+    },
+    [],
+  );
+
+  const attentionCount = sessions.filter((s) => s.attention).length;
+  useEffect(() => {
+    onAttention(root, attentionCount);
+    return () => onAttention(root, 0);
+  }, [root, attentionCount, onAttention]);
 
   // ----------------------------------------------------------------- git ---
 
@@ -958,6 +1211,8 @@ export function ProjectView({
     },
     [root],
   );
+  const openPathRef = useRef(openPath);
+  openPathRef.current = openPath;
   const openFromTree = useCallback((path: string) => openPath(path, "file"), [openPath]);
   const openFromGit = useCallback((path: string) => openPath(path, "diff"), [openPath]);
   const openFromTerminal = useCallback(
@@ -1044,10 +1299,14 @@ export function ProjectView({
 
   // -------------------------------------------------------------- render ---
 
+  const changedPaths = useMemo(() => (repo?.files ?? []).map((f) => f.path), [repo]);
+
   const tabs: SessionTab[] = sessions.map((s) => ({
     key: s.key,
     label: sessionLabel(s),
     exited: s.exitCode !== undefined,
+    busy: s.status === "busy",
+    attention: s.attention ?? null,
   }));
 
   // One stable slot for the whole terminal area: SplitPane must never see its
@@ -1080,6 +1339,12 @@ export function ProjectView({
             onExit={setExit}
             onRestart={restart}
             onOpenPath={openFromTerminal}
+            onSpawned={setPtyId}
+            onBell={onBell}
+            prompt={prompts.find((p) => p.id === s.ptyId) ?? null}
+            changed={changedPaths}
+            refreshToken={refreshToken}
+            onAnswer={answerPrompt}
           />
         ))}
         {sessions.length === 0 && (
@@ -1311,6 +1576,7 @@ export function ProjectView({
                 // already covers the transcripts and the session registry.
                 refreshToken={agentsToken}
                 onAccountChanged={() => setAgentsToken((t) => t + 1)}
+                onResume={(s) => void resumeSession(s)}
                 onClose={toggleInsight}
               />
             </aside>
@@ -1349,6 +1615,13 @@ interface SessionPaneProps {
   onExit(key: number, code: number | null): void;
   onRestart(key: number): void;
   onOpenPath(path: string, line?: number): void;
+  onSpawned(key: number, ptyId: string): void;
+  onBell(key: number): void;
+  /** The question its agent is waiting on, if any. */
+  prompt: McpPrompt | null;
+  changed: string[];
+  refreshToken: number;
+  onAnswer(requestId: string, answer: AskAnswer | ReviewAnswer): void;
 }
 
 /**
@@ -1367,21 +1640,42 @@ function SessionPane({
   onExit,
   onRestart,
   onOpenPath,
+  onSpawned,
+  onBell,
+  prompt,
+  changed,
+  refreshToken,
+  onAnswer,
 }: SessionPaneProps) {
   const { key } = session;
   const handleExit = useCallback((code: number | null) => onExit(key, code), [onExit, key]);
+  const handleSpawned = useCallback((id: string) => onSpawned(key, id), [onSpawned, key]);
+  const handleBell = useCallback(() => onBell(key), [onBell, key]);
   if (!agent) return null;
   return (
     <div className="session-pane" hidden={!shown}>
       <TerminalPane
         command={agent.command}
         cwd={cwd}
+        resume={session.resumeId}
         generation={session.generation}
         focusToken={focusToken}
         visible={visible}
         onExit={handleExit}
         onOpenPath={onOpenPath}
+        onSpawned={handleSpawned}
+        onBell={handleBell}
       />
+      {prompt && session.exitCode === undefined && (
+        <AgentPrompt
+          key={prompt.requestId}
+          prompt={prompt}
+          changed={changed}
+          refreshToken={refreshToken}
+          visible={visible}
+          onAnswer={(answer) => onAnswer(prompt.requestId, answer)}
+        />
+      )}
       {session.exitCode !== undefined && (
         <div className="exit-overlay">
           <p>

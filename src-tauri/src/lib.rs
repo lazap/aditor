@@ -7,6 +7,7 @@ mod mcp;
 mod pty;
 mod search;
 mod settings;
+mod status;
 
 use std::sync::Arc;
 
@@ -17,12 +18,15 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_notification::init())
         .manage(Arc::new(pty::PtyRegistry::default()))
         .manage(fs::Workspace::default())
         .manage(agents::AgentState::default())
         .manage(search::SearchState::default())
+        .manage(status::StatusState::default())
         .setup(|app| {
             app.manage(mcp::start(app.handle().clone())?);
+            status::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -86,6 +90,8 @@ pub fn run() {
             settings::settings_read,
             settings::settings_write,
             mcp::mcp_tasks,
+            mcp::mcp_answer,
+            status::set_attention_count,
         ])
         // Agents run in their own process groups, so closing the window does not
         // hang them up -- without this they survive the app that spawned them.
@@ -106,6 +112,9 @@ pub fn run() {
                         mcp.clear(id);
                     }
                 }
+            }
+            if let Some(status) = window.try_state::<status::StatusState>() {
+                status.forget_window(window.app_handle(), window.label());
             }
             if let Some(ws) = window.try_state::<fs::Workspace>() {
                 let released = ws.release_window(window.label());

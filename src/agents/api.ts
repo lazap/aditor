@@ -27,6 +27,8 @@ export interface Live {
   status: string;
   waitingFor: string | null;
   name: string | null;
+  /** The Aditor terminal it runs in, when it is one of ours. */
+  ptyId: string | null;
 }
 
 export interface SessionSummary {

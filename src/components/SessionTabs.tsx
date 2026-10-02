@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentInfo } from "../pty/api";
+import type { Attention } from "../notify/api";
 import { chordHint } from "../shortcuts/store";
 
 export interface SessionTab {
@@ -7,6 +8,10 @@ export interface SessionTab {
   label: string;
   /** The agent has exited and the tab shows its overlay. */
   exited: boolean;
+  /** The agent is mid-turn. */
+  busy: boolean;
+  /** It finished, or is blocked on the user, while you were elsewhere. */
+  attention: Attention | null;
 }
 
 interface Props {
@@ -94,7 +99,15 @@ export function SessionTabs({
             role="tab"
             aria-selected={t.key === activeKey}
             data-exited={t.exited}
-            title={t.exited ? `${t.label} (exited)` : t.label}
+            title={
+              t.exited
+                ? `${t.label} (exited)`
+                : t.attention === "waiting"
+                  ? `${t.label} (needs you)`
+                  : t.attention === "done"
+                    ? `${t.label} (finished)`
+                    : t.label
+            }
             onClick={() => onSelect(t.key)}
             // Middle-click closes, as in a browser or an IDE.
             onAuxClick={(e) => {
@@ -103,6 +116,11 @@ export function SessionTabs({
               onClose(t.key);
             }}
           >
+            {t.attention ? (
+              <span className="session-tab-dot" data-attention={t.attention} aria-hidden />
+            ) : (
+              t.busy && <span className="session-tab-busy" aria-hidden />
+            )}
             <span className="session-tab-label">{t.label}</span>
             <button
               className="session-tab-close"

@@ -31,6 +31,14 @@ export interface FsChanged {
   paths: string[];
 }
 
+/** Git state in a workspace's repo moved -- a commit, stage or checkout, from anywhere. */
+export const FS_GIT = "fs://git";
+
+/** `fs://git`: which workspace. */
+export interface FsGit {
+  root: string;
+}
+
 export const listDir = async (root: string, path?: string): Promise<DirEntry[]> => {
   const raw = await invoke<RawDirEntry[]>("list_dir", { root, path: path ?? null });
   return raw.map((e) => ({ name: e.name, path: e.path, isDir: e.is_dir }));

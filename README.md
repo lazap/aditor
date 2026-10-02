@@ -36,6 +36,16 @@ works.
 - **A live task list** -- Aditor runs a small local MCP server and hands each
   agent it spawns an `update_tasks` tool, so the agent can publish its plan and
   you can watch it tick through in the **Tasks** tab.
+- **The agent can use the UI** -- the same server gives it `open_file` and
+  `show_diff` to put code in front of you, `ask_user` to ask a pick-one
+  question as a native prompt instead of prose, and `request_review` to have
+  you approve its changes, or send it back with comments, in the diff viewer.
+  Questions dock over the session that asked them; the rest of the window
+  carries on.
+- **Notifications** -- a session that finishes its turn or needs your input
+  while you are in another tab or app gets a dot on its tab, a macOS
+  notification and a count on the Dock icon. Claude Code reports its own
+  status; other agents are heard through the terminal bell.
 - **Prompt templates** -- the prompts you retype every day, typed into the agent
   without sending, with placeholders for the open file, branch and more. See
   [below](#prompt-templates).
@@ -63,7 +73,9 @@ works.
 **The agent panel**
 
 - **Session history** for the project -- every session with its branch, status,
-  age and token count, plus running totals and approximate cost.
+  age and token count, plus running totals and approximate cost. **Resume**
+  continues any of them in a new tab; one already open in a tab is shown
+  instead.
 - **Usage limits** -- the 5-hour and 7-day windows, with a refresh button that
   fetches the current numbers on request.
 - **Account switcher** -- keep several Claude logins and flip between them with

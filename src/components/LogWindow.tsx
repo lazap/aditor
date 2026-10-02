@@ -22,6 +22,7 @@ import {
   type RefLabel,
   type ResetMode,
 } from "../git/api";
+import { FS_GIT, fsDebounceMs, type FsGit } from "../fs/api";
 import { fullDate, relativeTime } from "../git/format";
 import { GRAPH_COLORS, layoutGraph, type GraphRow } from "../git/graph";
 import { useSetting } from "../settings/store";
@@ -130,16 +131,27 @@ export function LogWindow({ onClose }: { onClose(): void }) {
     return () => window.clearTimeout(id);
   }, [text]);
 
-  // A write from here or from the main window, or coming back to this window
-  // after working elsewhere, may have moved any ref.
+  // A write from here or from the main window, one from a terminal, or coming
+  // back to this window after working elsewhere, may have moved any ref.
   useEffect(() => {
     const bump = () => setReload((r) => r + 1);
     const unGit = listen<GitChanged>(GIT_CHANGED, ({ payload }) => {
       if (payload.root === ROOT) bump();
     });
+    // Outside writes come in bursts (index, HEAD, a ref): settle first.
+    let timer: number | undefined;
+    let debounce = 150;
+    void fsDebounceMs().then((ms) => (debounce = ms));
+    const unOutside = listen<FsGit>(FS_GIT, ({ payload }) => {
+      if (payload.root !== ROOT) return;
+      window.clearTimeout(timer);
+      timer = window.setTimeout(bump, debounce);
+    });
     const unFocus = getCurrentWindow().onFocusChanged(({ payload }) => payload && bump());
     return () => {
+      window.clearTimeout(timer);
       void unGit.then((u) => u());
+      void unOutside.then((u) => u());
       void unFocus.then((u) => u());
     };
   }, []);

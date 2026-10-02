@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { ProjectTabs } from "./components/ProjectTabs";
+import { setAttentionCount } from "./notify/api";
 import { ProjectView, type Dragging, type ViewApi } from "./components/ProjectView";
 import { useDialogs } from "./components/Modal";
 import { Toast, type ToastMessage } from "./components/Toast";
@@ -101,6 +102,23 @@ export default function App() {
     if (api) views.current.set(root, api);
     else views.current.delete(root);
   }, []);
+
+  /** Root -> how many of its sessions want the user, for the tab dot and the Dock badge. */
+  const [attention, setAttention] = useState<Map<string, number>>(new Map());
+  const onAttention = useCallback((root: string, count: number) => {
+    setAttention((prev) => {
+      if ((prev.get(root) ?? 0) === count) return prev;
+      const next = new Map(prev);
+      if (count > 0) next.set(root, count);
+      else next.delete(root);
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    let total = 0;
+    for (const n of attention.values()) total += n;
+    void setAttentionCount(total).catch(() => {});
+  }, [attention]);
 
   const onRunning = useCallback((root: string, on: boolean) => {
     setRunning((prev) => {
@@ -402,6 +420,7 @@ export default function App() {
             tabs={tabs}
             active={activeTab}
             running={running}
+            attention={attention}
             onSelect={setActiveTab}
             onClose={(root) => void closeTab(root)}
             onOpen={openPicker}
@@ -422,6 +441,7 @@ export default function App() {
             showToast={showToast}
             register={register}
             onRunning={onRunning}
+            onAttention={onAttention}
           />
         ))}
       </div>

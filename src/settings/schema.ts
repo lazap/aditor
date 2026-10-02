@@ -72,6 +72,14 @@ export interface Layout {
 
 export type SettingsTab = "general" | "templates" | "shortcuts";
 
+/** When to tell the user, from outside the tab, that a session wants them. */
+export interface Notifications {
+  /** The agent finished its turn. */
+  onDone: boolean;
+  /** The agent is blocked on the user: a permission prompt or a question. */
+  onWaiting: boolean;
+}
+
 export interface Settings {
   /** Bumped only for a change `store.ts` has to migrate. */
   version: number;
@@ -101,6 +109,7 @@ export interface Settings {
   appearance: Appearance;
   /** Underline file paths in the agent terminal and open them on click. */
   terminalFileLinks: boolean;
+  notifications: Notifications;
   /** Which tab the Settings dialog opens on. */
   settingsTab: SettingsTab;
 }
@@ -138,5 +147,6 @@ export const DEFAULTS: Settings = {
   keyboardMode: "standard",
   appearance: "dark",
   terminalFileLinks: true,
+  notifications: { onDone: true, onWaiting: true },
   settingsTab: "general",
 };

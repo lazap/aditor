@@ -217,6 +217,7 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
   let changed = !isObject(raw);
 
   const layout = isObject(src.layout) ? src.layout : {};
+  const notifications = isObject(src.notifications) ? src.notifications : {};
   const value: Settings = {
     version: DEFAULTS.version,
     shortcuts: isObject(src.shortcuts) ? (src.shortcuts as Settings["shortcuts"]) : DEFAULTS.shortcuts,
@@ -282,6 +283,16 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
       typeof src.terminalFileLinks === "boolean"
         ? src.terminalFileLinks
         : DEFAULTS.terminalFileLinks,
+    notifications: {
+      onDone:
+        typeof notifications.onDone === "boolean"
+          ? notifications.onDone
+          : DEFAULTS.notifications.onDone,
+      onWaiting:
+        typeof notifications.onWaiting === "boolean"
+          ? notifications.onWaiting
+          : DEFAULTS.notifications.onWaiting,
+    },
     settingsTab:
       src.settingsTab === "general" ||
       src.settingsTab === "templates" ||

@@ -30,6 +30,35 @@ fn is_noise(path: &Path) -> bool {
         .any(|c| IGNORED_DIRS.contains(&c.as_os_str().to_string_lossy().as_ref()))
 }
 
+/// Where git keeps the state the changes list shows: the repo's gitdir and,
+/// for a linked worktree, the common dir holding the refs. Either can sit
+/// outside the workspace -- a subdirectory of a repo opened on its own -- so
+/// the watcher adds them separately. `root/.git` is always in, so a `git init`
+/// after opening is noticed too.
+fn git_dirs(root: &Path) -> Vec<PathBuf> {
+    let mut dirs = vec![root.join(".git")];
+    if let Ok(repo) = git2::Repository::discover(root) {
+        for dir in [repo.path(), repo.commondir()] {
+            if let Ok(dir) = dir.canonicalize() {
+                if !dirs.contains(&dir) {
+                    dirs.push(dir);
+                }
+            }
+        }
+    }
+    dirs
+}
+
+/// Whether a path inside a git dir means the status may have moved: the
+/// index, HEAD and friends, refs, an operation in progress. Objects, reflogs
+/// and hooks follow from those or say nothing, and a `.lock` is a write still
+/// in flight -- its rename onto the real name is the event that counts.
+fn is_git_state(rel: &Path) -> bool {
+    let first = rel.components().next().map(|c| c.as_os_str().to_string_lossy());
+    !matches!(first.as_deref(), None | Some("objects" | "logs" | "hooks"))
+        && rel.extension().is_none_or(|e| e != "lock")
+}
+
 #[derive(Serialize)]
 pub struct DirEntry {
     name: String,
@@ -89,6 +118,12 @@ impl Workspace {
 struct Changed {
     root: String,
     paths: Vec<String>,
+}
+
+/// `fs://git`: git state in this workspace's repo moved, from anywhere.
+#[derive(Clone, Serialize)]
+struct GitMoved {
+    root: String,
 }
 
 /// Sniff for NUL in the head of a buffer. Shared with `git` so a file and its
@@ -187,20 +222,30 @@ pub fn open_workspace(
     // purpose -- the frontend debounces per path and refetches what it cares
     // about, which is far simpler than trying to interpret rename/atomic-save
     // sequences here.
+    // Git's own files are split out first: `is_noise` drops `.git`, which
+    // would hide a commit or a stage made in a terminal.
     let emitter = app.clone();
     let tag = root_str.clone();
+    let git = git_dirs(&root);
+    let watched_git = git.clone();
     let mut watcher = recommended_watcher(move |res: notify::Result<notify::Event>| {
         if let Ok(event) = res {
             if matches!(
                 event.kind,
                 EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
             ) {
-                let paths: Vec<String> = event
-                    .paths
-                    .iter()
-                    .filter(|p| !is_noise(p))
-                    .map(|p| p.to_string_lossy().to_string())
-                    .collect();
+                let mut git_moved = false;
+                let mut paths = Vec::new();
+                for p in &event.paths {
+                    match git.iter().find_map(|d| p.strip_prefix(d).ok()) {
+                        Some(rel) => git_moved |= is_git_state(rel),
+                        None if !is_noise(p) => paths.push(p.to_string_lossy().to_string()),
+                        None => {}
+                    }
+                }
+                if git_moved {
+                    let _ = emitter.emit("fs://git", GitMoved { root: tag.clone() });
+                }
                 if !paths.is_empty() {
                     let _ = emitter.emit(
                         "fs://changed",
@@ -218,6 +263,10 @@ pub fn open_workspace(
     watcher
         .watch(&root, RecursiveMode::Recursive)
         .map_err(|e| e.to_string())?;
+    for dir in watched_git.iter().filter(|d| !d.starts_with(&root) && d.is_dir()) {
+        // Best effort: the workspace still works without live git status.
+        let _ = watcher.watch(dir, RecursiveMode::Recursive);
+    }
 
     ws.open.lock().unwrap().insert(
         root,
@@ -483,6 +532,16 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         // Canonical, as `workspace_root` hands it over: /var is /private/var.
         dir.canonicalize().unwrap()
+    }
+
+    #[test]
+    fn git_state_is_refs_index_and_head_not_objects_or_locks() {
+        for moved in ["index", "HEAD", "MERGE_HEAD", "packed-refs", "refs/heads/main", "rebase-merge/done"] {
+            assert!(is_git_state(Path::new(moved)), "{moved}");
+        }
+        for quiet in ["", "index.lock", "refs/heads/main.lock", "objects/ab/cdef", "logs/HEAD", "hooks/pre-commit"] {
+            assert!(!is_git_state(Path::new(quiet)), "{quiet}");
+        }
     }
 
     #[test]

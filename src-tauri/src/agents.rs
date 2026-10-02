@@ -25,6 +25,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::fs::{Workspace, workspace_root};
+use crate::pty::PtyRegistry;
 
 // ---------------------------------------------------------------- shapes ---
 
@@ -87,6 +88,9 @@ pub struct Live {
     status: String,
     waiting_for: Option<String>,
     name: Option<String>,
+    /// The Aditor terminal it runs in, when it is one of ours -- so the panel
+    /// can switch to that tab instead of resuming the session a second time.
+    pty_id: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -552,16 +556,36 @@ fn project_dir(root: &Path, state: &AgentState) -> Option<PathBuf> {
 /// How long a failed full scan for a project's transcripts is trusted.
 const MISS_TTL: Duration = Duration::from_secs(30);
 
+/// One file of Claude Code's live-session registry, `~/.claude/sessions/<pid>.json`.
 #[derive(Deserialize)]
-struct LiveEntry {
-    pid: u32,
+pub(crate) struct LiveEntry {
+    pub(crate) pid: u32,
     #[serde(rename = "sessionId")]
     session_id: String,
     cwd: String,
-    status: Option<String>,
+    pub(crate) status: Option<String>,
     #[serde(rename = "waitingFor")]
-    waiting_for: Option<String>,
+    pub(crate) waiting_for: Option<String>,
     name: Option<String>,
+}
+
+/// The live-session registry directory.
+pub(crate) fn registry_dir() -> Option<PathBuf> {
+    home().map(|h| h.join(".claude").join("sessions"))
+}
+
+/// Every parseable entry in the registry whose process is still running.
+pub(crate) fn live_entries() -> Vec<LiveEntry> {
+    let Some(dir) = registry_dir() else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| p.extension().and_then(|e| e.to_str()) == Some("json"))
+        .filter_map(|p| std::fs::read_to_string(p).ok())
+        .filter_map(|t| serde_json::from_str::<LiveEntry>(&t).ok())
+        .filter(|e| pid_alive(e.pid))
+        .collect()
 }
 
 /// Is this PID still around? Guards against a registry file left behind by a
@@ -573,44 +597,22 @@ fn pid_alive(pid: u32) -> bool {
 }
 
 /// Live sessions whose cwd is this workspace, keyed by session id.
-fn live_sessions(root: &Path) -> HashMap<String, Live> {
-    let mut out = HashMap::new();
-    let dir = match home() {
-        Some(h) => h.join(".claude").join("sessions"),
-        None => return out,
-    };
-    let want = root.to_string_lossy().to_string();
-    let entries = match std::fs::read_dir(&dir) {
-        Ok(e) => e,
-        Err(_) => return out,
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("json") {
-            continue;
-        }
-        let text = match std::fs::read_to_string(&path) {
-            Ok(t) => t,
-            Err(_) => continue,
-        };
-        let e: LiveEntry = match serde_json::from_str(&text) {
-            Ok(e) => e,
-            Err(_) => continue,
-        };
-        if e.cwd != want || !pid_alive(e.pid) {
-            continue;
-        }
-        out.insert(
-            e.session_id,
-            Live {
+fn live_sessions(root: &Path, ptys: &PtyRegistry) -> HashMap<String, Live> {
+    let want = root.to_string_lossy();
+    live_entries()
+        .into_iter()
+        .filter(|e| e.cwd == want)
+        .map(|e| {
+            let live = Live {
                 pid: e.pid,
                 status: e.status.unwrap_or_else(|| "idle".to_string()),
                 waiting_for: e.waiting_for,
                 name: e.name,
-            },
-        );
-    }
-    out
+                pty_id: ptys.lookup_pid(e.pid).map(|(id, _)| id),
+            };
+            (e.session_id, live)
+        })
+        .collect()
 }
 
 /// One window of the agent's utilization block, which has the same shape in its
@@ -811,9 +813,9 @@ fn summarize(id: String, acc: &Accum, live: Option<Live>, fallback_ts: i64) -> S
     }
 }
 
-fn claude_sessions(root: &Path, state: &AgentState) -> AgentSessions {
+fn claude_sessions(root: &Path, state: &AgentState, ptys: &PtyRegistry) -> AgentSessions {
     let limits = usage_limits(state);
-    let mut live = live_sessions(root);
+    let mut live = live_sessions(root, ptys);
     let dir = match project_dir(root, state) {
         Some(d) => d,
         None => {
@@ -920,7 +922,11 @@ pub async fn agent_sessions(
     tauri::async_runtime::spawn_blocking(move || {
         // The one dispatch point. Another agent is a new arm here.
         match agent_id.as_str() {
-            "claude" => claude_sessions(&root, &app.state::<AgentState>()),
+            "claude" => claude_sessions(
+                &root,
+                &app.state::<AgentState>(),
+                &app.state::<Arc<PtyRegistry>>(),
+            ),
             _ => AgentSessions::unsupported(),
         }
     })
@@ -1028,7 +1034,7 @@ pub fn agent_watch(
     })
     .map_err(|e| e.to_string())?;
 
-    let registry = home.join(".claude").join("sessions");
+    let registry = registry_dir().unwrap_or_else(|| home.join(".claude").join("sessions"));
     if registry.is_dir() {
         watcher
             .watch(&registry, RecursiveMode::NonRecursive)

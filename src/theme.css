@@ -201,6 +201,43 @@ body,
   background: var(--st-added);
 }
 
+/* Wants the user: the accent, so it reads apart from the green "running". */
+.project-tab-dot[data-attention="true"],
+.session-tab-dot[data-attention="waiting"] {
+  background: var(--accent);
+}
+
+.session-tab-dot {
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--fg-dim);
+}
+
+/* Mid-turn: a small ring that turns, quiet enough to sit on every tab. */
+.session-tab-busy {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1.5px solid var(--fg-dim);
+  border-top-color: transparent;
+  animation: session-busy 0.9s linear infinite;
+}
+
+@keyframes session-busy {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .session-tab-busy {
+    animation: none;
+  }
+}
+
 .project-tab-close,
 .session-tab-close {
   appearance: none;
@@ -2027,10 +2064,18 @@ button.cwd:hover {
   background: var(--bg-hover);
 }
 
+.isession-row {
+  display: flex;
+  align-items: center;
+  padding-right: 8px;
+}
+
 .isession-head {
   display: flex;
   align-items: center;
   gap: 4px;
+  flex: 1 1 auto;
+  min-width: 0;
   width: 100%;
   padding: 4px 12px 0;
   background: none;
@@ -2040,6 +2085,32 @@ button.cwd:hover {
   text-align: left;
   font: inherit;
   font-size: 12.5px;
+}
+
+/* Revealed on hover, like the tree's row actions: ten rows of buttons would
+   bury the costs they sit beside. */
+.isession-resume {
+  flex: 0 0 auto;
+  margin-top: 4px;
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  padding: 0 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  visibility: hidden;
+}
+
+.isession:hover .isession-resume,
+.isession-resume:focus-visible {
+  visibility: visible;
+}
+
+.isession-resume:hover {
+  background: var(--bg-hover);
 }
 
 .isession-title {
@@ -3493,4 +3564,173 @@ button.cwd:hover {
 .find-footer {
   border-top: 1px solid var(--border);
   padding: 6px 12px;
+}
+
+/* ---- agent prompts (ask_user, request_review) ---- */
+
+/* Docked over the bottom of its own session, so the agent's last words stay
+   readable above it and every other session stays usable. */
+.agent-prompt {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: 12px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 70%;
+  padding: 12px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  box-shadow: 0 12px 36px var(--shadow);
+  color: var(--fg);
+  overflow-y: auto;
+}
+
+.agent-prompt[data-kind="review"] {
+  max-height: 88%;
+}
+
+.prompt-head {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prompt-badge {
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.prompt-question {
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.prompt-options {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.prompt-option {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 6px 10px;
+  appearance: none;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.prompt-option:hover {
+  background: var(--bg-hover);
+}
+
+.prompt-option:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.prompt-option[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--bg-selected);
+}
+
+.prompt-key {
+  flex: 0 0 auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.prompt-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.prompt-option-desc {
+  color: var(--fg-dim);
+  font-size: 12px;
+}
+
+.prompt-other,
+.prompt-comment {
+  padding: 5px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  resize: vertical;
+}
+
+.prompt-other:focus,
+.prompt-comment:focus {
+  border-color: var(--accent);
+}
+
+.prompt-files {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+}
+
+.prompt-file-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  width: 100%;
+  padding: 3px 4px;
+  appearance: none;
+  border: none;
+  border-radius: 4px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.prompt-file-head:hover {
+  background: var(--bg-hover);
+}
+
+.prompt-file-path {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.prompt-diff {
+  display: flex;
+  height: 280px;
+  margin: 2px 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.prompt-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
