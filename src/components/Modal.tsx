@@ -19,6 +19,8 @@ interface ModalProps {
   onCancel(): void;
   /** Wider card, for dialogs that list commits. */
   wide?: boolean;
+  /** Wider and taller still, for a dialog with a list beside a form. */
+  large?: boolean;
 }
 
 /**
@@ -35,6 +37,7 @@ export function Modal({
   onConfirm,
   onCancel,
   wide,
+  large,
 }: ModalProps) {
   const cardRef = useRef<HTMLDivElement>(null);
   // Whatever had focus gets it back, so a dialog opened from the keyboard
@@ -71,6 +74,7 @@ export function Modal({
       <div
         className="modal-card"
         data-wide={wide}
+        data-large={large}
         role="dialog"
         aria-modal="true"
         aria-label={title}

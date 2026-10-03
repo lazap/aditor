@@ -41,6 +41,9 @@ const GIT_MENU: readonly (CommandId | null)[] = [
   "git.stageAll",
 ];
 
+/** The Run submenu, in order; null is a separator. */
+const RUN_MENU: readonly (CommandId | null)[] = ["run.run", "run.stop", null, "run.choose", "run.edit"];
+
 /**
  * Chord key tokens -> the names Tauri's accelerator parser accepts.
  *
@@ -160,14 +163,19 @@ async function build(): Promise<void> {
   const find: MenuItem[] = [];
   for (const id of FIND_MENU) find.push(await item(id));
 
-  const git: (MenuItem | PredefinedMenuItem)[] = [];
-  for (const id of GIT_MENU) {
-    git.push(
-      id === null
-        ? await PredefinedMenuItem.new({ item: "Separator" })
-        : await item(id),
-    );
-  }
+  const section = async (ids: readonly (CommandId | null)[]) => {
+    const out: (MenuItem | PredefinedMenuItem)[] = [];
+    for (const id of ids) {
+      out.push(
+        id === null
+          ? await PredefinedMenuItem.new({ item: "Separator" })
+          : await item(id),
+      );
+    }
+    return out;
+  };
+  const git = await section(GIT_MENU);
+  const run = await section(RUN_MENU);
 
   // macOS keeps preferences in the application submenu, which `Menu.default()`
   // builds first. Inserting after the About row assumes only that much; if the
@@ -193,6 +201,7 @@ async function build(): Promise<void> {
   const subs = [
     await Submenu.new({ text: "Find", items: find }),
     await Submenu.new({ text: "Git", items: git }),
+    await Submenu.new({ text: "Run", items: run }),
   ];
   for (const [i, sub] of subs.entries()) {
     if (windowAt >= 0) await menu.insert(sub, windowAt + i);

@@ -39,13 +39,17 @@ export type CommandId =
   | "git.branches"
   | "git.newBranch"
   | "git.newTag"
-  | "git.fetch";
+  | "git.fetch"
+  | "run.run"
+  | "run.stop"
+  | "run.choose"
+  | "run.edit";
 
 export interface ShortcutCommand {
   id: CommandId;
   /** Shown in the shortcuts panel. */
   label: string;
-  group: "Focus" | "Tabs" | "Account" | "Prompt" | "Search" | "Git" | "App";
+  group: "Focus" | "Tabs" | "Account" | "Prompt" | "Search" | "Git" | "Run" | "App";
   /**
    * The binding shipped with the app; the user may override it. Null ships
    * the command unbound, for the user to give a chord in Settings.
@@ -115,6 +119,12 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   { id: "git.newTag", group: "Git", chord: null, label: "New tag…" },
   { id: "git.fetch", group: "Git", chord: null, label: "Fetch" },
   { id: "git.stageAll", group: "Git", chord: null, label: "Stage all changes" },
+  // On macOS IntelliJ runs with Ctrl-R, but Ctrl chords belong to the agent
+  // here (see keys.ts), and ⌘⇧R is the webview's reload. ⌘F2 is its Stop.
+  { id: "run.run", group: "Run", chord: "mod+r", label: "Run selected configuration" },
+  { id: "run.stop", group: "Run", chord: "mod+f2", label: "Stop selected configuration" },
+  { id: "run.choose", group: "Run", chord: null, label: "Choose run configuration…" },
+  { id: "run.edit", group: "Run", chord: null, label: "Edit run configurations…" },
   { id: "project.open", group: "App", chord: "mod+o", label: "Open project…" },
   { id: "file.new", group: "App", chord: "mod+n", label: "New file…" },
   { id: "app.settings", group: "App", chord: "mod+,", label: "Settings…" },
@@ -127,6 +137,7 @@ export const GROUPS: ReadonlyArray<ShortcutCommand["group"]> = [
   "Prompt",
   "Search",
   "Git",
+  "Run",
   "App",
 ];
 

@@ -14,7 +14,18 @@ import {
   ptySpawn,
   ptyWrite,
   setActiveSession,
+  type PtyEvent,
 } from "../pty/api";
+import { ptyRun } from "../run/api";
+
+/** A run configuration's shell line, in place of an agent command. */
+export interface RunSpec {
+  /** The open workspace it runs in; `cwd` is relative to it. */
+  root: string;
+  script: string;
+  cwd: string;
+  env: Record<string, string>;
+}
 
 interface Props {
   /** Command to run in the login shell; null spawns an interactive shell. */
@@ -22,6 +33,11 @@ interface Props {
   cwd: string;
   /** A Claude Code session to continue, rather than starting a new one. */
   resume?: string;
+  /**
+   * Run this instead of `command`. Must keep its identity between renders:
+   * like `command`, a new one respawns.
+   */
+  run?: RunSpec;
   /** Bumping this respawns -- how the agent picker switches agents. */
   generation: number;
   /** Bumping this takes the caret, without touching the session. */
@@ -45,6 +61,7 @@ export function TerminalPane({
   command,
   cwd,
   resume,
+  run,
   generation,
   focusToken,
   visible,
@@ -147,20 +164,23 @@ export function TerminalPane({
 
     (async () => {
       try {
-        const id = await ptySpawn(
-          { command, cwd, cols: term.cols, rows: term.rows, resume },
-          (ev) => {
-            if (disposed) return;
-            if (ev.kind === "output") term.write(fromBase64(ev.bytes));
-            else onExit(ev.code);
-          },
-        );
+        const onEvent = (ev: PtyEvent) => {
+          if (disposed) return;
+          if (ev.kind === "output") term.write(fromBase64(ev.bytes));
+          else onExit(ev.code);
+        };
+        const size = { cols: term.cols, rows: term.rows };
+        const id = run
+          ? await ptyRun({ ...run, ...size }, onEvent)
+          : await ptySpawn({ command, cwd, ...size, resume }, onEvent);
         if (disposed) {
           void ptyKill(id);
           return;
         }
         sessionId = id;
         sessionRef.current = id;
+        // A rerun after fixing what stopped the last start.
+        setError(null);
         onSpawnedRef.current?.(id);
         // Published so the prompt-template chooser can type into this session
         // without a prop that would re-enter this component. Only from the pane
@@ -173,7 +193,11 @@ export function TerminalPane({
 
         if (visibleRef.current) term.focus();
       } catch (e) {
-        if (!disposed) setError(String(e));
+        if (disposed) return;
+        setError(String(e));
+        // A run that never started has still finished, as far as whatever
+        // waits on it -- a Run button, a before-launch chain -- is concerned.
+        if (run) onExit(null);
       }
     })();
 
@@ -210,7 +234,7 @@ export function TerminalPane({
       setLiveTerm(null);
       term.dispose();
     };
-  }, [command, cwd, resume, generation, onExit]);
+  }, [command, cwd, resume, run, generation, onExit]);
 
   // Separate from the spawn effect for the same reason as focus below: turning
   // the setting on or off adds or drops the provider on the live terminal and

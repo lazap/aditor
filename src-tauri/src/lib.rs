@@ -5,6 +5,7 @@ mod git;
 mod git_log;
 mod mcp;
 mod pty;
+mod run;
 mod search;
 mod settings;
 mod status;
@@ -31,6 +32,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
+            pty::pty_run,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,
@@ -89,6 +91,9 @@ pub fn run() {
             accounts::claude_account_forget,
             settings::settings_read,
             settings::settings_write,
+            run::run_configs_read,
+            run::run_configs_write,
+            run::run_detect,
             mcp::mcp_tasks,
             mcp::mcp_answer,
             status::set_attention_count,

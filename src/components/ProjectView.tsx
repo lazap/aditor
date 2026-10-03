@@ -4,7 +4,9 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { AgentPicker } from "./AgentPicker";
 import { BranchPicker, type BranchAction } from "./BranchPicker";
 import { InsightPanel } from "./InsightPanel";
-import { TerminalPane } from "./TerminalPane";
+import { TerminalPane, type RunSpec } from "./TerminalPane";
+import { RunPicker } from "./RunPicker";
+import { RunConfigDialog } from "./RunConfigDialog";
 import { FileTree } from "./FileTree";
 import { ChangesList, type GitOp, type ListRequest } from "./ChangesList";
 import { GIT_CHANGED, type GitChanged } from "./LogWindow";
@@ -20,7 +22,11 @@ import type { ToastMessage } from "./Toast";
 import type { Handlers } from "../shortcuts/useShortcuts";
 import { chordHint } from "../shortcuts/store";
 import { switchToNextAccount } from "../accounts/next";
-import { ptyWriteActive, SHELL_SESSION, type AgentInfo } from "../pty/api";
+import { ptyKill, ptyWriteActive, SHELL_SESSION, type AgentInfo } from "../pty/api";
+import { useRunConfigs } from "../run/useRunConfigs";
+import { RUN_FILE } from "../run/api";
+import { toScript } from "../run/command";
+import { launchChain, type RunConfig } from "../run/schema";
 import { createFile, FS_GIT, fsDebounceMs, type FsChanged, type FsGit } from "../fs/api";
 import {
   gitBranchCreate,
@@ -114,7 +120,20 @@ interface Session {
   status?: string;
   /** It finished, or is blocked on the user, while not on screen. */
   attention?: Attention;
+  /** A run configuration's process rather than an agent: `agentId` is "run". */
+  run?: RunSession;
 }
+
+/** What a run tab runs. The spec is fixed per launch, so a rerun picks up an
+ *  edit to the configuration and a mere re-render never respawns. */
+interface RunSession {
+  configId: string;
+  name: string;
+  spec: RunSpec;
+}
+
+/** `agentId` of a run tab: no agent has it. */
+const RUN_AGENT = "run";
 
 /** A resumed session's title, short enough for a tab. */
 function tabTitle(title: string): string {
@@ -302,7 +321,7 @@ export function ProjectView({
   const panelAgent =
     currentAgent && currentAgent.id !== SHELL_SESSION.id
       ? currentAgent
-      : (agentById(sessions.find((s) => s.agentId !== SHELL_SESSION.id)?.agentId) ??
+      : (agentById(sessions.find((s) => s.agentId !== SHELL_SESSION.id && !s.run)?.agentId) ??
         resolveAgent(agentPref));
   const running = sessions.some((s) => s.exitCode === undefined);
   const watchClaude = sessions.some((s) => s.agentId === "claude");
@@ -463,6 +482,23 @@ export function ProjectView({
 
   // ------------------------------------------------------------ sessions ---
 
+  /**
+   * Run tabs something is waiting on to exit -- a configuration whose
+   * before-launch this is. Settled with the exit code, or null when the tab
+   * closes or reruns first and no exit will come.
+   */
+  // Read at call time by the listeners and run callbacks below, which are not
+  // rebuilt on every session change.
+  const sessionsRef = useRef(sessions);
+  sessionsRef.current = sessions;
+
+  const runWaiters = useRef(new Map<number, (code: number | null) => void>());
+  const settleRun = useCallback((key: number, code: number | null) => {
+    const waiter = runWaiters.current.get(key);
+    runWaiters.current.delete(key);
+    waiter?.(code);
+  }, []);
+
   /** The agent to start next time here and in new projects. A plain terminal
    *  is a one-off, never what a project opens with. */
   const rememberAgent = useCallback(
@@ -482,7 +518,8 @@ export function ProjectView({
   const pickAgent = useCallback(
     (agent: AgentInfo) => {
       rememberAgent(agent);
-      if (activeKey === null) {
+      // A run tab is the configuration's, not a slot for an agent.
+      if (activeKey === null || sessions.find((s) => s.key === activeKey)?.run) {
         addSession(agent);
         return;
       }
@@ -497,7 +534,7 @@ export function ProjectView({
         }),
       );
     },
-    [rememberAgent, activeKey, addSession],
+    [rememberAgent, activeKey, addSession, sessions],
   );
 
   /** + in the session strip: an agent, or a plain terminal in this folder. */
@@ -523,6 +560,10 @@ export function ProjectView({
 
   const sessionLabel = useCallback(
     (s: Session) => {
+      if (s.run) {
+        const twins = sessions.filter((o) => o.run?.configId === s.run?.configId).length;
+        return twins > 1 ? `${s.run.name} ${s.n}` : s.run.name;
+      }
       if (s.title) return tabTitle(s.title);
       const label = agentById(s.agentId)?.label ?? s.agentId;
       const twins = sessions.filter((o) => o.agentId === s.agentId).length;
@@ -550,8 +591,10 @@ export function ProjectView({
       const neighbour = rest[Math.min(at, rest.length - 1)]?.key ?? null;
       setSessions((prev) => prev.filter((o) => o.key !== key));
       setActiveKey((cur) => (cur === key ? neighbour : cur));
+      // Whatever waited on it -- a run's before-launch -- will not see an exit.
+      settleRun(key, null);
     },
-    [sessions, ask, sessionLabel],
+    [sessions, ask, sessionLabel, settleRun],
   );
 
   const cycleSession = useCallback(
@@ -607,11 +650,15 @@ export function ProjectView({
     [sessions, agents, ask, addSession, showToast],
   );
 
-  const setExit = useCallback((key: number, code: number | null) => {
-    setSessions((prev) =>
-      prev.map((s) => (s.key === key ? { ...s, exitCode: code, status: undefined } : s)),
-    );
-  }, []);
+  const setExit = useCallback(
+    (key: number, code: number | null) => {
+      setSessions((prev) =>
+        prev.map((s) => (s.key === key ? { ...s, exitCode: code, status: undefined } : s)),
+      );
+      settleRun(key, code);
+    },
+    [settleRun],
+  );
 
   const restart = useCallback((key: number) => {
     setSessions((prev) =>
@@ -623,12 +670,145 @@ export function ProjectView({
     );
   }, []);
 
+  // ---------------------------------------------------------------- runs ---
+
+  const runs = useRunConfigs(root);
+  const [runSelectedId, setRunSelectedId] = useState<string | null>(saved.lastRunConfig);
+  const runSelected =
+    runs.configs.find((c) => c.id === runSelectedId) ?? runs.configs[0] ?? null;
+  const [editingRuns, setEditingRuns] = useState(false);
+  /** Bumped by "Choose run configuration…": the topbar's run menu opens. */
+  const [runMenuRequest, setRunMenuRequest] = useState(0);
+  const runningOf = (id: string | undefined) =>
+    sessions.filter((s) => s.run?.configId === id && s.exitCode === undefined);
+
+  const selectRun = useCallback(
+    (id: string) => {
+      setRunSelectedId(id);
+      saveProjectState(root, { lastRunConfig: id });
+    },
+    [root],
+  );
+
+  const runSpec = useCallback(
+    (c: RunConfig): RunSpec => ({ root, script: toScript(c, runs.context), cwd: c.cwd, env: c.env }),
+    [root, runs.context],
+  );
+
+  /**
+   * Start `c` in a tab and resolve with its exit code. A tab of the same
+   * configuration is reused when it has exited, or -- for a single-instance
+   * one -- even while it runs, which restarts it; otherwise a new tab opens.
+   */
+  const launchRun = useCallback(
+    (c: RunConfig): Promise<number | null> => {
+      const run: RunSession = { configId: c.id, name: c.name, spec: runSpec(c) };
+      const mine = sessionsRef.current.filter((s) => s.run?.configId === c.id);
+      const reuse =
+        (c.singleInstance ? mine[0] : undefined) ?? mine.find((s) => s.exitCode !== undefined);
+      let key: number;
+      if (reuse) {
+        key = reuse.key;
+        // The process it replaces will never report its exit.
+        settleRun(key, null);
+        setSessions((prev) =>
+          prev.map((s) =>
+            s.key === key
+              ? { ...s, run, generation: s.generation + 1, exitCode: undefined, attention: undefined }
+              : s,
+          ),
+        );
+      } else {
+        key = nextKey.current++;
+        setSessions((prev) => {
+          const n =
+            Math.max(0, ...prev.filter((s) => s.run?.configId === c.id).map((s) => s.n)) + 1;
+          return [
+            ...prev,
+            { key, agentId: RUN_AGENT, n, generation: 0, exitCode: undefined, run },
+          ];
+        });
+      }
+      setActiveKey(key);
+      return new Promise((resolve) => runWaiters.current.set(key, resolve));
+    },
+    [runSpec, settleRun],
+  );
+
+  /** Run configuration `id`, after its before-launch chain has succeeded. */
+  const runConfig = useCallback(
+    async (id: string) => {
+      const chain = launchChain(runs.configs, id);
+      if (!chain || chain.length === 0) {
+        showToast("Its before-launch steps run in a circle; fix them in Edit Configurations.", "error");
+        return;
+      }
+      selectRun(id);
+      for (const step of chain.slice(0, -1)) {
+        const code = await launchRun(step);
+        if (code !== 0) {
+          showToast(
+            `${step.name} ${code === null ? "was stopped" : `failed with exit code ${code}`}, so ${chain[chain.length - 1].name} did not run.`,
+            "error",
+          );
+          return;
+        }
+      }
+      void launchRun(chain[chain.length - 1]);
+    },
+    [runs.configs, launchRun, selectRun, showToast],
+  );
+
+  /** Stop every running instance of configuration `id`. */
+  const stopRun = useCallback((id: string) => {
+    for (const s of sessionsRef.current) {
+      if (s.run?.configId === id && s.exitCode === undefined && s.ptyId) void ptyKill(s.ptyId);
+    }
+  }, []);
+
+  /** A run tab's Rerun: the configuration as it is now, in the same tab. */
+  const rerun = useCallback(
+    (key: number) => {
+      const s = sessionsRef.current.find((o) => o.key === key);
+      const c = runs.configs.find((o) => o.id === s?.run?.configId);
+      if (!s?.run) return;
+      settleRun(key, null);
+      const run = c ? { configId: c.id, name: c.name, spec: runSpec(c) } : s.run;
+      setSessions((prev) =>
+        prev.map((o) =>
+          o.key === key
+            ? { ...o, run, generation: o.generation + 1, exitCode: undefined, attention: undefined }
+            : o,
+        ),
+      );
+    },
+    [runs.configs, runSpec, settleRun],
+  );
+
+  const restartSession = useCallback(
+    (key: number) =>
+      sessionsRef.current.find((o) => o.key === key)?.run ? rerun(key) : restart(key),
+    [rerun, restart],
+  );
+
+  // The project may have grown a pom.xml or a script since it was opened.
+  const { redetect } = runs;
+  useEffect(() => {
+    if (editingRuns) redetect();
+  }, [editingRuns, redetect]);
+
+  const saveRuns = useCallback(
+    async (next: RunConfig[]) => {
+      await runs.save(next);
+      setEditingRuns(false);
+    },
+    [runs],
+  );
+
   // ----------------------------------------------------------- attention ---
 
   // Read by the status listener, which is set up once rather than on every
   // session change.
-  const sessionsRef = useRef(sessions);
-  sessionsRef.current = sessions;
   const activeKeyRef = useRef(activeKey);
   activeKeyRef.current = activeKey;
   const activeRef = useRef(active);
@@ -1148,6 +1328,18 @@ export function ProjectView({
         showToast("Fetched.");
       });
     },
+    "run.run": () => {
+      if (runSelected) void runConfig(runSelected.id);
+      else setEditingRuns(true);
+    },
+    "run.stop": () => {
+      if (runSelected) stopRun(runSelected.id);
+    },
+    "run.choose": () => {
+      if (runs.configs.length > 0) setRunMenuRequest((t) => t + 1);
+      else setEditingRuns(true);
+    },
+    "run.edit": () => setEditingRuns(true),
   };
 
   /**
@@ -1337,7 +1529,7 @@ export function ProjectView({
             visible={active && s.key === activeKey}
             focusToken={agentFocus}
             onExit={setExit}
-            onRestart={restart}
+            onRestart={restartSession}
             onOpenPath={openFromTerminal}
             onSpawned={setPtyId}
             onBell={onBell}
@@ -1390,6 +1582,16 @@ export function ProjectView({
           onPick={pickAgent}
         />
         <div className="topbar-right">
+          <RunPicker
+            configs={runs.configs}
+            selected={runSelected}
+            running={runningOf(runSelected?.id).length}
+            openRequest={runMenuRequest}
+            onSelect={selectRun}
+            onRun={() => runSelected && void runConfig(runSelected.id)}
+            onStop={() => runSelected && stopRun(runSelected.id)}
+            onEdit={() => setEditingRuns(true)}
+          />
           <button
             className="shortcuts-open"
             onClick={() => commands["prompt.templates"]?.()}
@@ -1596,6 +1798,22 @@ export function ProjectView({
           onClose={() => setFinding(null)}
         />
       )}
+      {editingRuns && (
+        <RunConfigDialog
+          root={root}
+          configs={runs.configs}
+          initialId={runSelected?.id ?? null}
+          detected={runs.detected}
+          context={runs.context}
+          fileError={runs.error}
+          onSave={saveRuns}
+          onCancel={() => setEditingRuns(false)}
+          onOpenFile={() => {
+            setEditingRuns(false);
+            openPath(`${root}/${RUN_FILE}`, "file");
+          }}
+        />
+      )}
       {pushing && <PushDialog root={root} onPush={push} onCancel={() => setPushing(false)} />}
       {dialogs}
     </div>
@@ -1651,13 +1869,14 @@ function SessionPane({
   const handleExit = useCallback((code: number | null) => onExit(key, code), [onExit, key]);
   const handleSpawned = useCallback((id: string) => onSpawned(key, id), [onSpawned, key]);
   const handleBell = useCallback(() => onBell(key), [onBell, key]);
-  if (!agent) return null;
+  if (!agent && !session.run) return null;
   return (
     <div className="session-pane" hidden={!shown}>
       <TerminalPane
-        command={agent.command}
+        command={agent?.command ?? null}
         cwd={cwd}
         resume={session.resumeId}
+        run={session.run?.spec}
         generation={session.generation}
         focusToken={focusToken}
         visible={visible}
@@ -1676,17 +1895,31 @@ function SessionPane({
           onAnswer={(answer) => onAnswer(prompt.requestId, answer)}
         />
       )}
-      {session.exitCode !== undefined && (
-        <div className="exit-overlay">
-          <p>
-            {label} exited
-            {session.exitCode === null ? "" : ` (code ${session.exitCode})`}
-          </p>
-          <button className="restart" onClick={() => onRestart(key)}>
-            Restart
-          </button>
-        </div>
-      )}
+      {session.exitCode !== undefined &&
+        (session.run ? (
+          // Under the output rather than over it: the last lines are usually
+          // why it stopped.
+          <div className="run-exit" data-ok={session.exitCode === 0}>
+            <span>
+              {session.exitCode === null
+                ? "Process stopped"
+                : `Process finished with exit code ${session.exitCode}`}
+            </span>
+            <button className="restart" onClick={() => onRestart(key)}>
+              Rerun
+            </button>
+          </div>
+        ) : (
+          <div className="exit-overlay">
+            <p>
+              {label} exited
+              {session.exitCode === null ? "" : ` (code ${session.exitCode})`}
+            </p>
+            <button className="restart" onClick={() => onRestart(key)}>
+              Restart
+            </button>
+          </div>
+        ))}
     </div>
   );
 }

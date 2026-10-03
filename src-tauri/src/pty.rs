@@ -12,7 +12,7 @@
 
 use std::collections::HashMap;
 use std::io::{Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
 use std::sync::{Arc, Condvar, Mutex};
@@ -25,6 +25,7 @@ use serde::Serialize;
 use tauri::ipc::Channel;
 use tauri::{State, WebviewWindow};
 
+use crate::fs::{workspace_root, Workspace};
 use crate::mcp::{McpServer, PROMPT_TIMEOUT};
 
 /// Flush pending PTY output at least this often. One event per read syscall
@@ -34,6 +35,8 @@ const FLUSH_INTERVAL: Duration = Duration::from_millis(4);
 /// ...or sooner, if this much has piled up.
 const FLUSH_BYTES: usize = 32 * 1024;
 const READ_BUF: usize = 8 * 1024;
+/// How long a stopped run gets to exit on SIGTERM before it is SIGKILLed.
+const KILL_GRACE: Duration = Duration::from_secs(2);
 
 pub struct PtySession {
     /// Feeds the session's writer thread. A write to the PTY master blocks once
@@ -56,6 +59,45 @@ pub struct PtySession {
     pid: Option<u32>,
     /// Where it was started: the workspace an MCP tool call's paths resolve in.
     cwd: PathBuf,
+    /// A run configuration rather than an agent: a shell line that may have
+    /// started a tree of processes (`npm run dev` -> node -> esbuild), which
+    /// the killer alone would orphan. Killed by process group instead.
+    group: bool,
+}
+
+impl PtySession {
+    fn kill(mut self) {
+        match (self.group, self.pid) {
+            (true, Some(pid)) => kill_group(pid),
+            _ => {
+                let _ = self.killer.kill();
+            }
+        }
+    }
+}
+
+/// SIGTERM the process group `pid` leads, and SIGKILL whatever is left of it
+/// after a grace period. portable-pty `setsid`s the child, so the shell leads
+/// its own group and everything it started is in it. The grace lets a dev
+/// server shut down cleanly; the SIGKILL is for one that ignores SIGTERM.
+fn kill_group(pid: u32) {
+    let pgid = pid as libc::pid_t;
+    // SAFETY: plain signal syscalls on a group id we spawned.
+    unsafe {
+        libc::killpg(pgid, libc::SIGTERM);
+        // A job-control shell would also get SIGHUP from the closing pty; a
+        // `-c` shell may be waiting on a child that only listens for that.
+        libc::killpg(pgid, libc::SIGHUP);
+    }
+    std::thread::spawn(move || {
+        std::thread::sleep(KILL_GRACE);
+        // SAFETY: as above. Signal 0 only checks the group still exists.
+        unsafe {
+            if libc::killpg(pgid, 0) == 0 {
+                libc::killpg(pgid, libc::SIGKILL);
+            }
+        }
+    });
 }
 
 #[derive(Default)]
@@ -212,6 +254,35 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
         }
     }
     cmd.cwd(cwd);
+    terminal_env(&mut cmd);
+    // `ask_user` and `request_review` wait on the user. Claude Code's default
+    // tool timeout would abort them first, so allow as long as the server
+    // waits -- unless the user already chose a timeout of their own.
+    if std::env::var_os("MCP_TOOL_TIMEOUT").is_none() {
+        cmd.env("MCP_TOOL_TIMEOUT", PROMPT_TIMEOUT.as_millis().to_string());
+    }
+    cmd
+}
+
+/// Build `$SHELL -l -c '<script>'` for a run configuration. Unlike an agent's
+/// command this is a whole shell line -- `cargo build && ./target/app` -- so
+/// there is no `exec`, and the session is killed by process group instead
+/// (see `PtySession::group`). ECHO stays on: a program reading stdin should
+/// show what you type.
+fn run_command(script: &str, cwd: &Path, env: &HashMap<String, String>) -> CommandBuilder {
+    let mut cmd = CommandBuilder::new(user_shell());
+    cmd.args(["-l", "-c", script]);
+    cmd.cwd(cwd);
+    terminal_env(&mut cmd);
+    for (key, value) in env {
+        cmd.env(key, value);
+    }
+    cmd
+}
+
+/// What every PTY we spawn gets: our terminal identity, minus whatever the
+/// process that launched Aditor exported about itself.
+fn terminal_env(cmd: &mut CommandBuilder) {
     // Claude Code and opencode both render full-colour TUIs; without these they
     // fall back to something much plainer.
     cmd.env("TERM", "xterm-256color");
@@ -222,12 +293,6 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
     // TERM_PROGRAM_VERSION would claim a version that is not ours.
     cmd.env("TERM_PROGRAM", "Aditor");
     cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
-    // `ask_user` and `request_review` wait on the user. Claude Code's default
-    // tool timeout would abort them first, so allow as long as the server
-    // waits -- unless the user already chose a timeout of their own.
-    if std::env::var_os("MCP_TOOL_TIMEOUT").is_none() {
-        cmd.env("MCP_TOOL_TIMEOUT", PROMPT_TIMEOUT.as_millis().to_string());
-    }
 
     for key in INHERITED_SESSION_VARS {
         cmd.env_remove(key);
@@ -243,7 +308,6 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
             cmd.env_remove(&key);
         }
     }
-    cmd
 }
 
 /// Output read but not yet sent, shared by a session's reader and ticker.
@@ -327,22 +391,86 @@ pub fn pty_spawn(
             return Err(format!("{r} is not a session id"));
         }
     }
-    let pair = native_pty_system()
+    let pair = open_pty(cols, rows)?;
+
+    // Allocated before the spawn: the agent's MCP URL carries it.
+    let id = registry.new_id();
+    let args = agent_args(command.as_deref(), resume.as_deref(), &mcp.config_for(&id));
+    let child = pair
+        .slave
+        .spawn_command(shell_command(command.as_deref(), &args, &cwd))
+        .map_err(|e| format!("spawn failed: {e}"))?;
+    start_session(
+        &window,
+        &registry,
+        id,
+        pair,
+        child,
+        PathBuf::from(&cwd),
+        false,
+        on_event,
+    )
+}
+
+/// Run a configuration's shell line in `cwd`, which must be inside the open
+/// workspace `root`. Its output reaches the pane the same way an agent's does;
+/// `pty_write`, `pty_resize` and `pty_kill` all work on the id it returns.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub fn pty_run(
+    window: WebviewWindow,
+    registry: State<'_, Arc<PtyRegistry>>,
+    ws: State<'_, Workspace>,
+    root: String,
+    script: String,
+    cwd: String,
+    env: HashMap<String, String>,
+    cols: u16,
+    rows: u16,
+    on_event: Channel<PtyEvent>,
+) -> Result<String, String> {
+    let root = workspace_root(&ws, &root)?;
+    // Canonicalized, so neither `..` nor a symlink can lead out of the project.
+    let dir = root
+        .join(&cwd)
+        .canonicalize()
+        .map_err(|e| format!("working directory {cwd}: {e}"))?;
+    if !dir.starts_with(&root) || !dir.is_dir() {
+        return Err(format!("working directory {cwd} is not a folder in the project"));
+    }
+    let pair = open_pty(cols, rows)?;
+    let id = registry.new_id();
+    let child = pair
+        .slave
+        .spawn_command(run_command(&script, &dir, &env))
+        .map_err(|e| format!("spawn failed: {e}"))?;
+    start_session(&window, &registry, id, pair, child, dir, true, on_event)
+}
+
+fn open_pty(cols: u16, rows: u16) -> Result<portable_pty::PtyPair, String> {
+    native_pty_system()
         .openpty(PtySize {
             rows,
             cols,
             pixel_width: 0,
             pixel_height: 0,
         })
-        .map_err(|e| format!("openpty failed: {e}"))?;
+        .map_err(|e| format!("openpty failed: {e}"))
+}
 
-    // Allocated before the spawn: the agent's MCP URL carries it.
-    let id = registry.new_id();
-    let args = agent_args(command.as_deref(), resume.as_deref(), &mcp.config_for(&id));
-    let mut child = pair
-        .slave
-        .spawn_command(shell_command(command.as_deref(), &args, &cwd))
-        .map_err(|e| format!("spawn failed: {e}"))?;
+/// Register a freshly spawned child under `id` and start the threads that
+/// carry its input and output.
+#[allow(clippy::too_many_arguments)]
+fn start_session(
+    window: &WebviewWindow,
+    registry: &PtyRegistry,
+    id: String,
+    pair: portable_pty::PtyPair,
+    mut child: Box<dyn portable_pty::Child + Send + Sync>,
+    cwd: PathBuf,
+    group: bool,
+    on_event: Channel<PtyEvent>,
+) -> Result<String, String> {
     // The slave fd must be dropped or the master never sees EOF on child exit.
     drop(pair.slave);
 
@@ -374,7 +502,8 @@ pub fn pty_spawn(
             killer: child.clone_killer(),
             window: window.label().to_string(),
             pid: child.process_id(),
-            cwd: PathBuf::from(&cwd),
+            cwd,
+            group,
         },
     );
 
@@ -494,8 +623,9 @@ pub fn pty_kill(
     mcp: State<'_, McpServer>,
     id: String,
 ) -> Result<(), String> {
-    if let Some(mut session) = registry.sessions.lock().unwrap().remove(&id) {
-        let _ = session.killer.kill();
+    let session = registry.sessions.lock().unwrap().remove(&id);
+    if let Some(session) = session {
+        session.kill();
     }
     mcp.clear(&id);
     Ok(())
@@ -518,8 +648,8 @@ pub fn kill_window(registry: &PtyRegistry, label: &str) -> Vec<String> {
         .map(|(id, _)| id.clone())
         .collect();
     for id in &ids {
-        if let Some(mut session) = sessions.remove(id) {
-            let _ = session.killer.kill();
+        if let Some(session) = sessions.remove(id) {
+            session.kill();
         }
     }
     ids
@@ -606,6 +736,32 @@ fn probe(&(id, label, command): &(&str, &str, Option<&str>)) -> AgentInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Stopping a run must take the processes its shell line started with it,
+    /// not just the shell: `npm run dev` leaves node behind otherwise.
+    #[test]
+    fn stopping_a_run_kills_its_whole_process_group() {
+        let dir = std::env::temp_dir();
+        let env = HashMap::new();
+        // Two children in the background, then a foreground wait: the shell is
+        // not exec'd away, exactly like a compound run line.
+        let script = "sleep 300 & sleep 300 & wait";
+        let pair = open_pty(80, 24).unwrap();
+        let mut child = pair.slave.spawn_command(run_command(script, &dir, &env)).unwrap();
+        let pid = child.process_id().unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let alive = |pgid: u32| unsafe { libc::killpg(pgid as libc::pid_t, 0) == 0 };
+        assert!(alive(pid), "the run's process group should exist");
+
+        kill_group(pid);
+        let _ = child.wait();
+        // The children got SIGTERM along with the shell.
+        let deadline = std::time::Instant::now() + Duration::from_secs(4);
+        while alive(pid) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        assert!(!alive(pid), "a child of the run outlived Stop");
+    }
 
     #[test]
     fn accepts_only_uuid_session_ids() {

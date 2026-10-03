@@ -20,6 +20,7 @@ dependencies = [
  "tauri-plugin-notification",
  "tauri-plugin-opener",
  "tiny_http",
+ "toml 0.8.2",
  "ureq",
 ]
 

@@ -35,7 +35,8 @@ ignore = "0.4.33"
 notify = "8"
 tauri-plugin-dialog = "2"
 git2 = "0.21"
-# Only for kill(pid, 0): the liveness probe behind the agent session registry.
+# kill(pid, 0) for the agent session registry's liveness probe, and killpg to
+# stop a run configuration with everything it started.
 libc = "0.2"
 # The live limits refresh in `agents.rs` -- its only network call.
 ureq = { version = "3", features = ["json"] }
@@ -43,6 +44,8 @@ ureq = { version = "3", features = ["json"] }
 tiny_http = "0.12"
 # Native "agent finished / needs you" notifications, from `status.rs` events.
 tauri-plugin-notification = "2"
+# Cargo.toml and pyproject.toml, for the run configurations `run.rs` suggests.
+toml = "0.8"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

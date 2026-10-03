@@ -30,6 +30,11 @@ export interface ProjectState {
    * change, and stays unlocked until they lock it again.
    */
   writable: string[];
+  /**
+   * The run configuration the topbar has selected. Kept here rather than in
+   * the project's `run.json`: which one you run is yours, the list is shared.
+   */
+  lastRunConfig: string | null;
 }
 
 /** Where a diff or a file opens: under the terminal, or in a window of its own. */
@@ -119,6 +124,7 @@ export const EMPTY_PROJECT_STATE: ProjectState = {
   expandedDirs: [],
   lastAgent: null,
   writable: [],
+  lastRunConfig: null,
 };
 
 export const DEFAULTS: Settings = {
