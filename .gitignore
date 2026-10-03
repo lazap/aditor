@@ -30,3 +30,5 @@ dist-release
 # tweak that fixes one machine's Xcode breaks a clone that does not share it.
 # See the troubleshooting section of the README.
 src-tauri/.cargo/config.toml
+
+.aditor
