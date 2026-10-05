@@ -1,9 +1,8 @@
 name: CI
 
+# Manual only: macOS runner minutes are billed at 10x on a private repo.
 on:
-  push:
-    branches: [master]
-  pull_request:
+  workflow_dispatch:
 
 jobs:
   check:
