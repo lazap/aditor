@@ -1,0 +1,55 @@
+name: Release
+
+# Manual on purpose: scripts/release.sh creates the v<version> tag itself and
+# refuses to run if it already exists, so a tag-push trigger would always fail
+# its preflight. Bump the three version fields, push, then run this.
+on:
+  workflow_dispatch:
+    inputs:
+      draft:
+        description: Leave the release as a draft
+        type: boolean
+        default: false
+      prerelease:
+        description: Mark the release as a prerelease
+        type: boolean
+        default: false
+
+# Two runs racing for the same tag would both pass the "tag is free" check.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    # The app is macOS-only; macos-latest is Apple Silicon, which matches the
+    # aarch64 artifacts release.sh names.
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Full history and tags: release.sh generates notes from
+          # `git describe` and `git log <prev-tag>..HEAD`.
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # gh and jq ship on the macOS runner image; GH_TOKEN authenticates gh.
+      - name: Build and publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          args=()
+          [ "${{ inputs.draft }}" = true ] && args+=(--draft)
+          [ "${{ inputs.prerelease }}" = true ] && args+=(--prerelease)
+          npm run release -- "${args[@]}"

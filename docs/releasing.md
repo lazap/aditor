@@ -41,6 +41,20 @@ through:
 npm run release -- --draft
 ```
 
+### From GitHub Actions
+
+`.github/workflows/release.yml` runs the same script on a clean macOS runner,
+which sidesteps every local toolchain problem below. Bump and push the version
+as above, then start it from the Actions tab or with:
+
+```bash
+gh workflow run release.yml                        # publish
+gh workflow run release.yml -f draft=true          # or leave it a draft
+```
+
+It is manual rather than tag-triggered because the script creates the tag
+itself and refuses to run when it already exists.
+
 The release is created as a draft either way and flipped live only once every
 asset has uploaded, so a failed upload never leaves a published release with
 missing downloads. Artifacts land in `dist-release/` and are attached to it:
