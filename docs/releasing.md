@@ -69,6 +69,27 @@ on any machine but the one that built them. The generated release notes carry
 the unblock instructions for recipients -- see
 [Install](../README.md#install).
 
+The ad-hoc signature covers the whole bundle because `tauri.conf.json` sets
+`bundle.macOS.signingIdentity` to `"-"`. Without it only the binary carries the
+linker's signature, and a quarantined download reports itself as *damaged*
+rather than unverified -- a state no Gatekeeper prompt gets past. The script
+runs `codesign --verify --deep --strict` on the bundle and refuses to ship one
+that fails.
+
+### Homebrew
+
+A cask in a separate tap repo installs from these releases, so treat the zip as
+a contract and change none of it without updating the cask:
+
+- the asset is named `Aditor_<version>_aarch64.zip`, attached to tag
+  `v<version>`
+- it unpacks to `Aditor.app` at its root (`ditto --keepParent`)
+- its hash is the matching line in `SHA256SUMS.txt`
+
+The cask points at the zip, not the DMG, because the DMG is optional -- a failed
+`SetFile` ships the zip alone. Since builds are not notarized, the cask clears
+the quarantine flag itself in a `postflight` step.
+
 To build without releasing, `npm run tauri build` still works on its own. Output
 lands in `src-tauri/target/release/bundle/`: `macos/Aditor.app` and, when DMG
 packaging succeeds, `dmg/Aditor_<version>_aarch64.dmg`.

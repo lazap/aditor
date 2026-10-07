@@ -160,6 +160,13 @@ APP_VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$A
 [ "$APP_VERSION" = "$VERSION" ] || die \
   "$APP is version ${APP_VERSION:-unknown}, not $VERSION -- it is left over from an earlier build. Move $BUNDLE aside, then re-run without --skip-build."
 
+# A bundle signed only by the linker passes for a local build but reads as
+# "damaged" once a download quarantines it, and no Gatekeeper prompt gets past
+# that. Tauri signs the whole bundle ad-hoc via bundle.macOS.signingIdentity;
+# refuse to ship anything whose signature does not hold up.
+codesign --verify --deep --strict "$APP" 2>/dev/null \
+  || die "$APP has an invalid code signature -- check bundle.macOS.signingIdentity in src-tauri/tauri.conf.json."
+
 # --- Package ------------------------------------------------------------
 case "$(uname -m)" in
   arm64) ARCH=aarch64 ;;   # match Tauri's own DMG naming
@@ -223,8 +230,9 @@ Apple Silicon (`aarch64`) only. Unzip and move `Aditor.app` into
 `/Applications`.
 
 Builds are ad-hoc signed and not notarized, so macOS blocks them on first
-launch on any machine but the one that built them. Right-click the app and
-choose **Open**, or clear the quarantine flag:
+launch on any machine but the one that built them. Try to open the app once,
+then approve it under System Settings > Privacy & Security > **Open Anyway**,
+or clear the quarantine flag:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Aditor.app

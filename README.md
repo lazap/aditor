@@ -99,7 +99,8 @@ Grab the latest `.dmg` or `.zip` from
 `/Applications`.
 
 Builds are ad-hoc signed and not notarized, so macOS blocks them on first
-launch. Right-click the app and choose **Open**, or clear the quarantine flag:
+launch. Try to open the app once, then approve it under System Settings >
+Privacy & Security > **Open Anyway**, or clear the quarantine flag:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Aditor.app
