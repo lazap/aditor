@@ -13,11 +13,11 @@
  *     colour identify it far more reliably than a shrunken mascot would.
  *
  * Colour is what actually makes the rail scannable, so it lives here beside the
- * glyph it belongs to instead of in theme.css. These are per-language data, not
+ * glyph it belongs to instead of in the theme. These are per-language data, not
  * theme: they are meaningless without their glyph, they have exactly one
- * consumer, and they are deliberately outside the palette that theme.css,
- * editor/theme.ts and TerminalPane must keep in step (that one is about the
- * editor surface -- background, foreground, accent, selection). Directory and
+ * consumer, and they are deliberately outside the palette in theme/presets.ts
+ * (that one is about the editor surface -- background, foreground, accent,
+ * selection -- and a custom theme can change it). Directory and
  * fallback colours are the exception and do read theme tokens, because those
  * ones really are theme.
  */

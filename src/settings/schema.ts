@@ -43,8 +43,12 @@ export type DiffDisplay = "pane" | "window";
 /** How the read-only viewers take the keyboard: as-is, or with vim motions. */
 export type KeyboardMode = "standard" | "vim";
 
-/** Colour scheme: follow macOS, or pin one. */
-export type Appearance = "system" | "light" | "dark";
+/**
+ * Which theme applies: the light or dark one of a pair, following macOS, or
+ * one pinned. Before custom themes this was "system" | "light" | "dark";
+ * `store.ts` migrates the old values.
+ */
+export type Appearance = "system" | "fixed";
 
 /** Which panel the left rail shows. */
 export type RailTab = "files" | "git";
@@ -75,7 +79,7 @@ export interface Layout {
   sections: Record<string, boolean>;
 }
 
-export type SettingsTab = "general" | "templates" | "shortcuts";
+export type SettingsTab = "general" | "themes" | "templates" | "shortcuts";
 
 /** When to tell the user, from outside the tab, that a session wants them. */
 export interface Notifications {
@@ -112,6 +116,11 @@ export interface Settings {
   layout: Layout;
   keyboardMode: KeyboardMode;
   appearance: Appearance;
+  /** Theme id when `appearance` is "fixed". */
+  theme: string;
+  /** The pair `appearance: "system"` switches between. */
+  systemLight: string;
+  systemDark: string;
   /** Underline file paths in the agent terminal and open them on click. */
   terminalFileLinks: boolean;
   notifications: Notifications;
@@ -151,7 +160,10 @@ export const DEFAULTS: Settings = {
     sections: {},
   },
   keyboardMode: "standard",
-  appearance: "dark",
+  appearance: "fixed",
+  theme: "dark",
+  systemLight: "light",
+  systemDark: "dark",
   terminalFileLinks: true,
   notifications: { onDone: true, onWaiting: true },
   settingsTab: "general",

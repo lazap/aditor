@@ -1,50 +1,8 @@
-/* Two token sets: dark here, IntelliJ Light under [data-theme="light"] below.
-   The chrome and every CodeMirror view read these directly; the colours that
-   cannot be variables -- xterm's palette, a new window's background -- live in
-   theme.ts. Keep the three in step when any changes. */
+/* No palette here: every colour token (--bg, --fg, --syn-*, --st-*, --graph-*
+   and the rest) is set on the document by applyTheme in theme.ts, from a
+   preset in theme/presets.ts or a custom theme filled in from one. The full
+   list is COLOR_GROUPS in theme/model.ts. */
 :root {
-  --bg: #14161a;
-  --bg-raised: #1a1d23;
-  --border: #262a33;
-  --fg: #d7dae0;
-  --fg-dim: #7c8495;
-  --accent: #7aa2f7;
-  --danger: #f7768e;
-
-  /* Rows and buttons: under the pointer, chosen, under the keyboard cursor,
-     and touched by the agent a moment ago. */
-  --bg-hover: #22262f;
-  --bg-selected: #2a3550;
-  --bg-cursor: #202634;
-  --bg-recent: #223046;
-  --shadow: rgb(0 0 0 / 45%);
-  --overlay: rgba(20, 22, 26, 0.88);
-
-  /* Editor (editor/theme.ts and the vim, search and jump-line extensions). */
-  --editor-bg: #14161a;
-  --caret: #7aa2f7;
-  --gutter-fg: #4a5163;
-  --active-line: #1a1d23;
-  --selection: #2d3343;
-  --selection-focused: #33405c;
-  --jump-line: #243049;
-  --search-match: rgba(224, 175, 104, 0.3);
-  --vim-cursor: rgba(122, 162, 247, 0.45);
-
-  /* Syntax. */
-  --syn-keyword: #bb9af7;
-  --syn-property: #d7dae0;
-  --syn-variable: #c0caf5;
-  --syn-function: #7aa2f7;
-  --syn-type: #7dcfff;
-  --syn-string: #9ece6a;
-  --syn-number: #ff9e64;
-  --syn-punctuation: #7c8495;
-  --syn-comment: #565f89;
-  --syn-meta: #e0af68;
-  --syn-heading: #7aa2f7;
-  --syn-link: #7dcfff;
-
   --topbar-h: 38px;
   /* What the macOS traffic lights take from the tabs strip and the chooser
      when the title bar is overlaid; 0 wherever the native bar is kept. */
@@ -54,62 +12,8 @@
   /* Starting width of the agent panel; the user's drag overrides it inline. */
   --insight-w: 300px;
 
-  color-scheme: dark;
   font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
   font-size: 13px;
-}
-
-/* After IntelliJ Light: white editor, #f7f8fa panels, its blue, and its
-   syntax colours. Also overrides the file-tree and git-status tokens declared
-   with their sections further down. */
-:root[data-theme="light"] {
-  --bg: #ffffff;
-  --bg-raised: #f7f8fa;
-  --border: #d9dbe1;
-  --fg: #080808;
-  --fg-dim: #4b4f5c;
-  --accent: #3574f0;
-  --danger: #db3b4b;
-
-  --bg-hover: #dfe1e5;
-  --bg-selected: #d4e2ff;
-  --bg-cursor: #e4e6ea;
-  --bg-recent: #e6eeff;
-  --shadow: rgb(0 0 0 / 14%);
-  --overlay: rgba(255, 255, 255, 0.88);
-
-  --editor-bg: #ffffff;
-  --caret: #000000;
-  --gutter-fg: #868a94;
-  --active-line: #f5f8fe;
-  --selection: #d4e2ff;
-  --selection-focused: #a6d2ff;
-  --jump-line: #fdf0c4;
-  --search-match: rgba(242, 200, 80, 0.45);
-  --vim-cursor: rgba(53, 116, 240, 0.35);
-
-  --syn-keyword: #0033b3;
-  --syn-property: #871094;
-  --syn-variable: #080808;
-  --syn-function: #00627a;
-  --syn-type: #000000;
-  --syn-string: #067d17;
-  --syn-number: #1750eb;
-  --syn-punctuation: #080808;
-  --syn-comment: #6a6a6a;
-  --syn-meta: #85720a;
-  --syn-heading: #0033b3;
-  --syn-link: #287bde;
-
-  --icon-dir: #4b4f5c;
-
-  --st-modified: #0a77d8;
-  --st-added: #067d17;
-  --st-deleted: #4b4f5c;
-  --st-renamed: #007f9a;
-  --st-conflicted: #d5756c;
-
-  color-scheme: light;
 }
 
 * {
@@ -1059,12 +963,10 @@ body,
 
 /* ---- file tree ---- */
 
-/* Structural tree colour. The per-language brand colours are NOT here: they
-   live in components/fileIcons.tsx, because #3178c6 is TypeScript's blue rather
-   than Aditor's, and must not move when this palette does. */
-:root {
-  --icon-dir: #8ba0c9;
-}
+/* Structural tree colour is --icon-dir, a theme token. The per-language brand
+   colours are NOT theme: they live in components/fileIcons.tsx, because
+   #3178c6 is TypeScript's blue rather than Aditor's, and must not move when
+   the palette does. */
 
 .tree {
   padding: 6px 0;
@@ -1441,14 +1343,6 @@ button.cwd:hover {
 }
 
 /* ---- git status ---- */
-
-:root {
-  --st-modified: #e0af68;
-  --st-added: #9ece6a;
-  --st-deleted: #f7768e;
-  --st-renamed: #7aa2f7;
-  --st-conflicted: #ff9e64;
-}
 
 .tree-status {
   margin-left: auto;
@@ -3157,6 +3051,117 @@ button.cwd:hover {
   color: var(--danger);
 }
 
+/* ---- themes ---- */
+
+.theme-select {
+  flex: 0 0 auto;
+  min-width: 180px;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  outline: none;
+}
+
+.theme-select:focus {
+  border-color: var(--accent);
+}
+
+/* The list keeps its place while the long colour editor scrolls past it. */
+.themes .templates-list {
+  position: sticky;
+  top: 0;
+  max-height: none;
+}
+
+.theme-dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  margin-right: 6px;
+  border: 2px solid;
+  border-radius: 50%;
+  vertical-align: -1px;
+}
+
+.theme-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+.theme-colors {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 2px 12px;
+}
+
+.theme-color {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+/* The native picker, invisible over a swatch that can show any CSS colour --
+   including the alpha a colour input cannot. */
+.theme-swatch {
+  position: relative;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.theme-swatch input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.theme-swatch input:disabled {
+  cursor: default;
+}
+
+.theme-color-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.theme-color-text {
+  flex: 0 0 auto;
+  width: 96px;
+  padding: 2px 6px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+}
+
+.theme-color-text:not(:disabled):hover,
+.theme-color-text:focus {
+  border-color: var(--border);
+  color: var(--fg);
+  outline: none;
+}
+
+.theme-color-text[data-invalid="true"] {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
 /* ---- the template chooser ---- */
 
 /* In the picker window the list and the preview take whatever height the
@@ -3278,31 +3283,7 @@ button.cwd:hover {
 
 /* ---- git: dialogs, menus, log, blame ---- */
 
-/* Commit graph lanes. Eight, cycled; IntelliJ-like hues in each theme. */
-:root {
-  --graph-0: #7aa2f7;
-  --graph-1: #9ece6a;
-  --graph-2: #e0af68;
-  --graph-3: #bb9af7;
-  --graph-4: #7dcfff;
-  --graph-5: #f7768e;
-  --graph-6: #ff9e64;
-  --graph-7: #73daca;
-  /* Blame gutter: the newest commit's tint; older ones fade from it. */
-  --blame-tint: 122, 162, 247;
-}
-
-:root[data-theme="light"] {
-  --graph-0: #3574f0;
-  --graph-1: #208a3c;
-  --graph-2: #c27d00;
-  --graph-3: #8a3fd1;
-  --graph-4: #0b8fa8;
-  --graph-5: #d1384b;
-  --graph-6: #d9661f;
-  --graph-7: #1d8f7a;
-  --blame-tint: 53, 116, 240;
-}
+/* Commit graph lanes are --graph-0..7, eight theme tokens, cycled. */
 
 /* Right-click menus: the agent menu's card, pinned at the pointer. */
 .context-menu {
@@ -3653,11 +3634,11 @@ button.cwd:hover {
   border-top: 1px solid var(--border);
 }
 
-.cm-blame-line[data-age="0"] { background: rgba(var(--blame-tint), 0.03); }
-.cm-blame-line[data-age="1"] { background: rgba(var(--blame-tint), 0.07); }
-.cm-blame-line[data-age="2"] { background: rgba(var(--blame-tint), 0.11); }
-.cm-blame-line[data-age="3"] { background: rgba(var(--blame-tint), 0.16); }
-.cm-blame-line[data-age="4"] { background: rgba(var(--blame-tint), 0.22); color: var(--fg); }
+.cm-blame-line[data-age="0"] { background: color-mix(in srgb, var(--blame-tint) 3%, transparent); }
+.cm-blame-line[data-age="1"] { background: color-mix(in srgb, var(--blame-tint) 7%, transparent); }
+.cm-blame-line[data-age="2"] { background: color-mix(in srgb, var(--blame-tint) 11%, transparent); }
+.cm-blame-line[data-age="3"] { background: color-mix(in srgb, var(--blame-tint) 16%, transparent); }
+.cm-blame-line[data-age="4"] { background: color-mix(in srgb, var(--blame-tint) 22%, transparent); color: var(--fg); }
 .cm-blame-line[data-age="new"] { color: var(--st-added); }
 
 .cm-blame-line:hover {

@@ -4,10 +4,10 @@ import { HighlightStyle, syntaxHighlighting } from "@codemirror/language";
 import { tags as t } from "@lezer/highlight";
 
 /**
- * CodeMirror theme drawn from the tokens in theme.css rather than pulling in
+ * CodeMirror theme drawn from the theme tokens rather than pulling in
  * one-dark. Three panes sharing one window should look like one program, and
- * because every colour here is a `var(--…)`, switching `data-theme` on the
- * document repaints a live view without rebuilding it.
+ * because every colour here is a `var(--…)`, `applyTheme` setting the tokens
+ * on the document repaints a live view without rebuilding it.
  */
 export const aditorEditorTheme = EditorView.theme({
   "&": { color: "var(--fg)", backgroundColor: "var(--editor-bg)", height: "100%" },
@@ -34,7 +34,7 @@ export const aditorEditorTheme = EditorView.theme({
 /**
  * The one thing CSS cannot carry: CodeMirror's own base themes -- the merge
  * view's inserted and deleted lines among them -- pick their colours from this
- * facet. Reconfigure it alongside `data-theme`.
+ * facet. Reconfigure it when the theme's kind changes.
  */
 export const darkMode = new Compartment();
 export const darkModeFor = (theme: "light" | "dark") => EditorView.darkTheme.of(theme === "dark");

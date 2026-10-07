@@ -9,6 +9,7 @@ mod run;
 mod search;
 mod settings;
 mod status;
+mod themes;
 
 use std::sync::Arc;
 
@@ -91,6 +92,11 @@ pub fn run() {
             accounts::claude_account_forget,
             settings::settings_read,
             settings::settings_write,
+            themes::themes_list,
+            themes::theme_write,
+            themes::theme_delete,
+            themes::theme_import,
+            themes::theme_export,
             run::run_configs_read,
             run::run_configs_write,
             run::run_detect,

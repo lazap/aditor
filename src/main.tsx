@@ -10,13 +10,15 @@ import { LogWindow } from "./components/LogWindow";
 import { flush, hydrate, syncWithPeers } from "./settings/store";
 import { flushEdits } from "./editor/autosave";
 
-/** Everything a closing window still owes the disk: typed edits, then settings. */
+/** Everything a closing window still owes the disk: typed edits, settings, themes. */
 const flushAll = async () => {
   await flushEdits();
   await flush();
+  await flushThemes();
 };
 import { adopt } from "./shortcuts/store";
 import { watchTheme } from "./theme";
+import { flushThemes, loadThemes } from "./theme/store";
 import { installTitlebar } from "./titlebar";
 
 /**
@@ -52,14 +54,14 @@ function root() {
 // document is loaded to completion first, and only then does React mount.
 // `hydrate` never rejects: a settings file we cannot read is a reason to start
 // from defaults, not a reason the app fails to open.
-void hydrate().then(() => {
+void Promise.all([hydrate(), loadThemes()]).then(() => {
   // The keymap is the one reader that cannot wait for a render: imports are
   // evaluated before the disk read, so it is handed the document explicitly.
   adopt();
   // A rebinding made in the Settings window reaches the keymap -- and through
   // it the menu's accelerators -- here.
   syncWithPeers(adopt);
-  // After hydrate, so the first paint is already in the saved theme.
+  // After hydrate and the themes, so the first paint is already in the saved theme.
   watchTheme();
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     root(),

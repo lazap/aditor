@@ -212,7 +212,7 @@ const isObject = (v: unknown): v is Record<string, unknown> =>
  * checked rather than trusted. `changed` says whether the result differs from
  * what we read, which is what decides if hydration writes back.
  */
-function normalize(raw: unknown): { value: Settings; changed: boolean } {
+export function normalize(raw: unknown): { value: Settings; changed: boolean } {
   const src = isObject(raw) ? raw : {};
   let changed = !isObject(raw);
 
@@ -276,9 +276,12 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
         ? src.keyboardMode
         : DEFAULTS.keyboardMode,
     appearance:
-      src.appearance === "system" || src.appearance === "light" || src.appearance === "dark"
+      src.appearance === "system" || src.appearance === "fixed"
         ? src.appearance
         : DEFAULTS.appearance,
+    theme: themeId(src.theme, DEFAULTS.theme),
+    systemLight: themeId(src.systemLight, DEFAULTS.systemLight),
+    systemDark: themeId(src.systemDark, DEFAULTS.systemDark),
     terminalFileLinks:
       typeof src.terminalFileLinks === "boolean"
         ? src.terminalFileLinks
@@ -295,11 +298,19 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
     },
     settingsTab:
       src.settingsTab === "general" ||
+      src.settingsTab === "themes" ||
       src.settingsTab === "templates" ||
       src.settingsTab === "shortcuts"
         ? src.settingsTab
         : DEFAULTS.settingsTab,
   };
+
+  // Before custom themes, appearance named the theme itself.
+  if (src.appearance === "light" || src.appearance === "dark") {
+    value.appearance = "fixed";
+    value.theme = src.appearance;
+    changed = true;
+  }
 
   // `app.shortcuts` became `app.settings` when the panel became a tab. Without
   // this the rebinding is dropped by `sane()` in shortcuts/store.ts and the
@@ -331,6 +342,10 @@ function normalize(raw: unknown): { value: Settings; changed: boolean } {
  * release leaves a stale key, which costs nothing, whereas dropping keys we do
  * not recognise would discard the state of any section not currently mounted.
  */
+/** A theme id. Whether it names a theme is `theme.ts`'s question, at use. */
+const themeId = (raw: unknown, fallback: string): string =>
+  typeof raw === "string" && raw !== "" ? raw : fallback;
+
 function sectionState(raw: unknown): Record<string, boolean> {
   if (!isObject(raw)) return { ...DEFAULTS.layout.sections };
   const out: Record<string, boolean> = {};

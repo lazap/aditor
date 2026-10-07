@@ -5,7 +5,7 @@ import { WebglAddon } from "@xterm/addon-webgl";
 import { isReservedForApp } from "../shortcuts/store";
 import { useSetting } from "../settings/store";
 import { createFileLinkProvider } from "../pty/fileLinks";
-import { currentTheme, terminalMinContrast, terminalThemes, useTheme } from "../theme";
+import { currentThemeDef, terminalOptions, useThemeDef } from "../theme";
 import {
   activeSession,
   fromBase64,
@@ -81,7 +81,7 @@ export function TerminalPane({
    */
   const [liveTerm, setLiveTerm] = useState<Terminal | null>(null);
   const fileLinks = useSetting((s) => s.terminalFileLinks);
-  const theme = useTheme();
+  const theme = useThemeDef();
   // Read at click time rather than depended on: any new dependency of the spawn
   // effect is one more way to kill and restart the agent.
   const onOpenPathRef = useRef(onOpenPath);
@@ -108,10 +108,8 @@ export function TerminalPane({
 
     // Read rather than depended on, like onOpenPath: the effect below repaints
     // a live terminal, so a theme change never respawns the agent.
-    const startTheme = currentTheme();
     const term = new Terminal({
-      theme: terminalThemes[startTheme],
-      minimumContrastRatio: terminalMinContrast(startTheme),
+      ...terminalOptions(currentThemeDef()),
       fontFamily:
         'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace',
       fontSize: 13,
@@ -251,8 +249,9 @@ export function TerminalPane({
 
   useEffect(() => {
     if (!liveTerm) return;
-    liveTerm.options.theme = terminalThemes[theme];
-    liveTerm.options.minimumContrastRatio = terminalMinContrast(theme);
+    const { theme: palette, minimumContrastRatio } = terminalOptions(theme);
+    liveTerm.options.theme = palette;
+    liveTerm.options.minimumContrastRatio = minimumContrastRatio;
   }, [liveTerm, theme]);
 
   // Its own effect, and `focusToken` stays out of the spawn effect: adding it

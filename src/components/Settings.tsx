@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { patch, settings } from "../settings/store";
 import type { SettingsTab } from "../settings/schema";
 import { GeneralTab } from "./settings/GeneralTab";
+import { ThemesTab } from "./settings/ThemesTab";
 import { TemplatesTab } from "./settings/TemplatesTab";
 import { ShortcutsTab } from "./settings/ShortcutsTab";
 
@@ -11,6 +12,7 @@ interface Props {
 
 const TABS: ReadonlyArray<{ id: SettingsTab; label: string }> = [
   { id: "general", label: "General" },
+  { id: "themes", label: "Themes" },
   { id: "templates", label: "Prompt templates" },
   { id: "shortcuts", label: "Shortcuts" },
 ];
@@ -71,6 +73,7 @@ export function Settings({ onClose }: Props) {
 
         <div className="settings-panel" role="tabpanel">
           {tab === "general" && <GeneralTab />}
+          {tab === "themes" && <ThemesTab onNote={setNote} />}
           {tab === "templates" && <TemplatesTab onNote={setNote} />}
           {tab === "shortcuts" && (
             <ShortcutsTab onNote={setNote} onRecording={setRecording} />
