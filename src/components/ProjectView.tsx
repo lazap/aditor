@@ -80,6 +80,8 @@ import { loadProjectState, saveProjectState, setWritable } from "../projects";
 
 /** How long a watcher-touched path stays accented. */
 const RECENT_MS = 8000;
+/** How many opened files Find file remembers for its empty query. */
+const RECENT_FILES = 20;
 
 /**
  * Debounce for `agents://changed`. Coarser than the file watcher's: a live
@@ -237,6 +239,10 @@ export function ProjectView({
   const seeded = useRef(false);
 
   const [openFile, setOpenFile] = useState<string | null>(saved.openFile);
+  /** Files opened in this window, newest first and relative: Find file's empty list. */
+  const [recentFiles, setRecentFiles] = useState<string[]>(() =>
+    saved.openFile?.startsWith(`${root}/`) ? [saved.openFile.slice(root.length + 1)] : [],
+  );
   /** How the pane's file was opened: as the file (tree) or its diff (git). */
   const [openedAs, setOpenedAs] = useState<ViewerMode>("file");
   /** The line to show in the pane's file, when it came from a terminal link. */
@@ -1388,6 +1394,10 @@ export function ProjectView({
    */
   const openPath = useCallback(
     (path: string, as: ViewerMode, line?: number) => {
+      if (as === "file" && path.startsWith(`${root}/`)) {
+        const rel = path.slice(root.length + 1);
+        setRecentFiles((prev) => [rel, ...prev.filter((p) => p !== rel)].slice(0, RECENT_FILES));
+      }
       const { diffDisplay, fileDisplay } = settings().layout;
       if ((as === "diff" ? diffDisplay : fileDisplay) === "window") {
         void openViewerWindow(root, path, as, line);
@@ -1796,6 +1806,7 @@ export function ProjectView({
             openPath(`${root}/${rel}`, "file", line);
           }}
           onClose={() => setFinding(null)}
+          recent={recentFiles}
         />
       )}
       {editingRuns && (

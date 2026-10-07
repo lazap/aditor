@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { FileIcon } from "./fileIcons";
 import { eventChord, formatChord } from "../shortcuts/keys";
 import { keymap, useBindings } from "../shortcuts/store";
-import { rank } from "../search/fuzzy";
+import { parseFileQuery, rank, type Ranked } from "../search/fuzzy";
 import {
   listFiles,
   searchContent,
@@ -19,6 +19,8 @@ interface Props {
   /** `rel` is relative to the root; `line` is set for a content hit. */
   onOpen(rel: string, line?: number): void;
   onClose(): void;
+  /** Files opened lately, relative and newest first: what an empty query lists. */
+  recent?: readonly string[];
 }
 
 /** Rows a name search shows; past this the query wants narrowing anyway. */
@@ -26,6 +28,9 @@ const FILE_ROWS = 100;
 /** Same pause the tree uses for the watcher, so typing is not a scan per key. */
 const DEBOUNCE_MS = 150;
 const PAGE = 10;
+/** What a gitignored file gives up in the ranking: ties go to tracked files. */
+const IGNORED_BIAS = -3;
+const NO_MATCH = { score: 0, positions: [] };
 
 /**
  * Find a file by name, or a line by its text: one card, two modes, each with
@@ -35,7 +40,7 @@ const PAGE = 10;
  * The file list is read once per opening and ranked in the webview; content is
  * searched by the backend on each (debounced) change, newest call winning.
  */
-export function FindPopup({ root, mode, onMode, onOpen, onClose }: Props) {
+export function FindPopup({ root, mode, onMode, onOpen, onClose, recent = [] }: Props) {
   const [query, setQuery] = useState("");
   const [at, setAt] = useState(0);
   const [files, setFiles] = useState<FileList | null>(null);
@@ -92,10 +97,25 @@ export function FindPopup({ root, mode, onMode, onOpen, onClose }: Props) {
     return () => clearTimeout(timer);
   }, [mode, needle, root]);
 
-  const ranked = useMemo(
-    () => (mode === "files" && files ? rank(needle, files.files, (f) => f, FILE_ROWS) : []),
-    [mode, files, needle],
-  );
+  // Names are read as IntelliJ reads them: spaces are wildcards, `:N` a line.
+  const fileQuery = useMemo(() => parseFileQuery(query), [query]);
+  const ignored = useMemo(() => new Set(files?.ignored), [files]);
+
+  const ranked = useMemo((): Ranked<string>[] => {
+    if (mode !== "files" || !files) return [];
+    if (fileQuery.name === "") {
+      // Nothing typed yet: what was open lately comes first, as in IntelliJ.
+      const present = new Set(files.files);
+      const first = recent.filter((f) => present.has(f));
+      const seen = new Set(first);
+      return [...first, ...files.files.filter((f) => !seen.has(f))]
+        .slice(0, FILE_ROWS)
+        .map((item) => ({ item, match: NO_MATCH }));
+    }
+    return rank(fileQuery.name, files.files, (f) => f, FILE_ROWS, (f) =>
+      ignored.has(f) ? IGNORED_BIAS : 0,
+    );
+  }, [mode, files, fileQuery.name, recent, ignored]);
   const matches = mode === "content" ? (hits?.matches ?? []) : [];
   const count = mode === "files" ? ranked.length : matches.length;
   const index = Math.min(at, Math.max(0, count - 1));
@@ -109,7 +129,7 @@ export function FindPopup({ root, mode, onMode, onOpen, onClose }: Props) {
   const choose = (i: number) => {
     if (mode === "files") {
       const r = ranked[i];
-      if (r) onOpen(r.item);
+      if (r) onOpen(r.item, fileQuery.line);
     } else {
       const m = matches[i];
       if (m) onOpen(m.path, m.line);
@@ -224,6 +244,7 @@ export function FindPopup({ root, mode, onMode, onOpen, onClose }: Props) {
                 index={i}
                 path={r.item}
                 positions={r.match.positions}
+                ignored={ignored.has(r.item)}
                 selected={i === index}
                 onHover={() => setAt(i)}
                 onClick={() => choose(i)}
@@ -251,17 +272,20 @@ export function FindPopup({ root, mode, onMode, onOpen, onClose }: Props) {
 interface RowProps {
   index: number;
   selected: boolean;
+  /** Gitignored: listed, but dimmed. */
+  ignored?: boolean;
   onHover(): void;
   onClick(): void;
 }
 
-function Row({ index, selected, onHover, onClick, children }: RowProps & { children: ReactNode }) {
+function Row({ index, selected, ignored, onHover, onClick, children }: RowProps & { children: ReactNode }) {
   return (
     <div
       className="find-row"
       role="option"
       aria-selected={selected}
       data-selected={selected}
+      data-ignored={ignored}
       data-index={index}
       onMouseMove={onHover}
       onMouseDown={(e) => e.preventDefault()}

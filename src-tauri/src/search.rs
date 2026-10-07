@@ -1,10 +1,13 @@
 //! Finding things in the workspace: every file's path, for the fuzzy file
 //! finder, and a literal text search across their contents.
 //!
-//! Both walk the same files the tree would show -- .gitignore applies, dotfiles
-//! do not hide -- so the finder never offers something the tree would not.
+//! Both walk the files the tree shows -- dotfiles do not hide. The finder also
+//! offers gitignored files, as the tree does (dimmed), but not what is inside
+//! a gitignored directory: a `.env` is worth finding, `node_modules` is not.
+//! The content search keeps to what .gitignore lets through.
 
-use std::path::Path;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -34,6 +37,8 @@ pub struct SearchState {
 pub struct FileList {
     /// Relative to the root, `/`-separated.
     files: Vec<String>,
+    /// The subset of `files` a .gitignore matches.
+    ignored: Vec<String>,
     truncated: bool,
 }
 
@@ -80,9 +85,37 @@ pub async fn list_files(ws: State<'_, Workspace>, root: String) -> Result<FileLi
 }
 
 fn list_files_in(root: &Path, cap: usize) -> FileList {
-    let mut files = Vec::new();
+    // First what .gitignore lets through, keeping the directories it entered...
+    let mut kept_files = HashSet::new();
+    let mut kept_dirs = HashSet::new();
     let mut truncated = false;
     for entry in walker(root).build().filter_map(Result::ok) {
+        match entry.file_type() {
+            Some(t) if t.is_dir() => {
+                kept_dirs.insert(entry.into_path());
+            }
+            Some(t) if t.is_file() => {
+                if kept_files.len() == cap {
+                    truncated = true;
+                    break;
+                }
+                kept_files.insert(entry.into_path());
+            }
+            _ => {}
+        }
+    }
+
+    // ...then every file directly in those directories, ignored or not.
+    let kept_dirs: std::sync::Arc<HashSet<PathBuf>> = std::sync::Arc::new(kept_dirs);
+    let mut all = WalkBuilder::new(root);
+    all.hidden(false).git_ignore(false).git_global(false).filter_entry(move |e| {
+        e.file_name() != ".git"
+            && (!e.file_type().is_some_and(|t| t.is_dir()) || kept_dirs.contains(e.path()))
+    });
+
+    let mut files = Vec::new();
+    let mut ignored = Vec::new();
+    for entry in all.build().filter_map(Result::ok) {
         if !entry.file_type().is_some_and(|t| t.is_file()) {
             continue;
         }
@@ -90,11 +123,17 @@ fn list_files_in(root: &Path, cap: usize) -> FileList {
             truncated = true;
             break;
         }
-        if let Some(rel) = relative(root, entry.path()) {
-            files.push(rel);
+        let Some(rel) = relative(root, entry.path()) else { continue };
+        if !kept_files.contains(entry.path()) {
+            if truncated {
+                // Past the first walk's cap, "not kept" no longer means ignored.
+                continue;
+            }
+            ignored.push(rel.clone());
         }
+        files.push(rel);
     }
-    FileList { files, truncated }
+    FileList { files, ignored, truncated }
 }
 
 /// Search every text file for `query`, literally. Smart-case, as `rg -S`:
@@ -256,20 +295,25 @@ mod tests {
     }
 
     #[test]
-    fn lists_files_relative_and_respects_gitignore() {
+    fn lists_ignored_files_but_not_ignored_directories() {
         let root = scratch("list");
         std::fs::create_dir_all(root.join("src")).unwrap();
         std::fs::create_dir_all(root.join("target")).unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
-        std::fs::write(root.join(".gitignore"), "target\n").unwrap();
+        std::fs::write(root.join(".gitignore"), "target\n.env*\n").unwrap();
         std::fs::write(root.join("src/main.rs"), "").unwrap();
+        std::fs::write(root.join("src/.env.local"), "").unwrap();
         std::fs::write(root.join("target/out"), "").unwrap();
         std::fs::write(root.join(".git/HEAD"), "").unwrap();
         std::fs::write(root.join(".env"), "").unwrap();
 
-        let mut files = list_files_in(&root, MAX_FILES).files;
+        let list = list_files_in(&root, MAX_FILES);
+        let mut files = list.files;
         files.sort();
-        assert_eq!(files, vec![".env", ".gitignore", "src/main.rs"]);
+        assert_eq!(files, vec![".env", ".gitignore", "src/.env.local", "src/main.rs"]);
+        let mut ignored = list.ignored;
+        ignored.sort();
+        assert_eq!(ignored, vec![".env", "src/.env.local"]);
     }
 
     #[test]

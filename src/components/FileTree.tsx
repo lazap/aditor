@@ -72,7 +72,9 @@ function flatten(
   const rows: Row[] = [];
   const missing: string[] = [];
 
-  const walk = (dir: string, depth: number) => {
+  // Inside an ignored directory everything is ignored, though the directory's
+  // own pattern does not match its children's names.
+  const walk = (dir: string, depth: number, ignored: boolean) => {
     const kids = cache.get(dir);
     if (kids === undefined) {
       const message = errors.get(dir);
@@ -83,12 +85,13 @@ function flatten(
       return;
     }
     kids.forEach((entry, i) => {
-      rows.push({ kind: "item", entry, depth, pos: i + 1, size: kids.length });
-      if (entry.isDir && expanded.has(entry.path)) walk(entry.path, depth + 1);
+      const item = ignored && !entry.ignored ? { ...entry, ignored } : entry;
+      rows.push({ kind: "item", entry: item, depth, pos: i + 1, size: kids.length });
+      if (entry.isDir && expanded.has(entry.path)) walk(entry.path, depth + 1, item.ignored);
     });
   };
 
-  walk(root, 0);
+  walk(root, 0, false);
   return { rows, missing };
 }
 
@@ -419,6 +422,7 @@ function Tree({
               data-selected={entry.path === selected}
               data-recent={recent.has(entry.path)}
               data-status={status}
+              data-ignored={entry.ignored}
               style={{ paddingLeft: 8 + depth * 12 }}
               title={entry.path}
               onClick={(e) => {

@@ -64,6 +64,9 @@ pub struct DirEntry {
     name: String,
     path: String,
     is_dir: bool,
+    /// Matched by a .gitignore. Still listed -- a `.env` is the user's to see
+    /// -- but the tree dims it.
+    ignored: bool,
 }
 
 #[derive(Serialize)]
@@ -318,19 +321,30 @@ fn list_dir_in(root: &Path, path: Option<&str>) -> Result<Vec<DirEntry>, String>
         None => root.to_path_buf(),
     };
 
-    let mut entries: Vec<DirEntry> = WalkBuilder::new(&dir)
-        .max_depth(Some(1))
-        .hidden(false) // show dotfiles; .gitignore still applies
-        .git_ignore(true)
-        .git_global(true)
-        .parents(true)
-        .build()
-        .filter_map(Result::ok)
-        .filter(|e| e.path() != dir.as_path())
+    // One level twice: everything, then what .gitignore lets through. The
+    // difference is what gets dimmed. Cheaper and more faithful than
+    // reassembling the ignore rules (nested files, globals, parents) by hand.
+    let level = |git_ignore: bool| {
+        WalkBuilder::new(&dir)
+            .max_depth(Some(1))
+            .hidden(false) // show dotfiles
+            .git_ignore(git_ignore)
+            .git_global(git_ignore)
+            .parents(true)
+            .build()
+            .filter_map(Result::ok)
+            .filter(|e| e.path() != dir.as_path())
+    };
+    let kept: HashSet<PathBuf> = level(true).map(|e| e.into_path()).collect();
+
+    let mut entries: Vec<DirEntry> = level(false)
+        // `hidden(false)` would otherwise list the repository itself.
+        .filter(|e| e.file_name() != ".git")
         .map(|e| DirEntry {
             name: e.file_name().to_string_lossy().to_string(),
             path: e.path().to_string_lossy().to_string(),
             is_dir: e.file_type().is_some_and(|t| t.is_dir()),
+            ignored: !kept.contains(e.path()),
         })
         .collect();
 
@@ -597,6 +611,33 @@ mod tests {
         assert_eq!(mode & 0o777, 0o750);
         let names: Vec<_> = std::fs::read_dir(&root).unwrap().flatten().map(|e| e.file_name()).collect();
         assert_eq!(names, vec![std::ffi::OsString::from("run.sh")]);
+    }
+
+    #[test]
+    fn lists_gitignored_entries_as_ignored() {
+        let root = scratch("list-ignored");
+        // .gitignore only counts inside a repository.
+        std::fs::create_dir_all(root.join(".git")).unwrap();
+        std::fs::create_dir_all(root.join("target")).unwrap();
+        std::fs::create_dir_all(root.join("src")).unwrap();
+        std::fs::write(root.join(".gitignore"), ".env\ntarget\n").unwrap();
+        std::fs::write(root.join(".env"), "").unwrap();
+        std::fs::write(root.join("src/main.rs"), "").unwrap();
+
+        let listed: Vec<(String, bool)> = list_dir_in(&root, None)
+            .unwrap()
+            .into_iter()
+            .map(|e| (e.name, e.ignored))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                ("src".to_string(), false),
+                ("target".to_string(), true),
+                (".env".to_string(), true),
+                (".gitignore".to_string(), false),
+            ]
+        );
     }
 
     #[test]

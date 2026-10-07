@@ -8,6 +8,7 @@ import { ProjectView, type Dragging, type ViewApi } from "./components/ProjectVi
 import { useDialogs } from "./components/Modal";
 import { Toast, type ToastMessage } from "./components/Toast";
 import { useShortcuts, type Handlers } from "./shortcuts/useShortcuts";
+import { useDoubleShift } from "./shortcuts/useDoubleShift";
 import { COMMANDS, type CommandId } from "./shortcuts/registry";
 import { claimAppMenu, installAppMenu } from "./menu";
 import { agentsAvailable, reapOrphansOnce, type AgentInfo } from "./pty/api";
@@ -382,6 +383,9 @@ export default function App() {
   useEffect(() => {
     commandsRef.current = commands;
   });
+  // IntelliJ's double Shift, for Find file. Through the same commands, so it
+  // reaches the active tab and is inert while the chooser is up.
+  useDoubleShift(() => commandsRef.current["find.files"]?.());
   useEffect(() => {
     void installAppMenu((id) => commandsRef.current[id]?.());
     // One menu bar for every window: whichever editor has focus owns it.

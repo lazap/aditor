@@ -3,6 +3,8 @@ import { invoke } from "@tauri-apps/api/core";
 /** Every file the tree would show, relative to the root. */
 export interface FileList {
   files: string[];
+  /** The subset of `files` a .gitignore matches. */
+  ignored: string[];
   /** The walk stopped at its cap; there are more. */
   truncated: boolean;
 }

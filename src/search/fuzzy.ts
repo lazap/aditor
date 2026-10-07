@@ -27,7 +27,9 @@ function boundaryBonus(path: string, i: number): number {
 
 /**
  * Score `path` against `query`, or null when it does not match. Case is
- * ignored unless the query has a capital, as in the content search.
+ * ignored, as in IntelliJ's Go to File: a capital in the query narrows nothing,
+ * though the path's own capitals still count as word starts (`fv` ranks
+ * `FileViewer` well).
  *
  * A greedy left-to-right scan would be cheaper but misses the best alignment;
  * this is the usual small DP over (query, path), fine for the tens of thousands
@@ -35,9 +37,8 @@ function boundaryBonus(path: string, i: number): number {
  */
 export function fuzzyMatch(query: string, path: string): FuzzyMatch | null {
   if (query === "") return { score: 0, positions: [] };
-  const fold = query === query.toLowerCase();
-  const p = fold ? path.toLowerCase() : path;
-  const q = query;
+  const p = path.toLowerCase();
+  const q = query.toLowerCase();
   const n = q.length;
   const m = p.length;
   if (n > m) return null;
@@ -111,18 +112,47 @@ export interface Ranked<T> {
   match: FuzzyMatch;
 }
 
-/** The `limit` best matches of `query` among `items`, best first. */
+/**
+ * The `limit` best matches of `query` among `items`, best first. `bias`, when
+ * given, is added to each match's score -- to push some items down a little
+ * without hiding them.
+ */
 export function rank<T>(
   query: string,
   items: readonly T[],
   key: (item: T) => string,
   limit: number,
+  bias?: (item: T) => number,
 ): Ranked<T>[] {
   const out: Ranked<T>[] = [];
   for (const item of items) {
     const match = fuzzyMatch(query, key(item));
-    if (match) out.push({ item, match });
+    if (match) {
+      if (bias) match.score += bias(item);
+      out.push({ item, match });
+    }
   }
   out.sort((a, b) => b.match.score - a.match.score);
   return out.slice(0, limit);
+}
+
+/** A file-name query as IntelliJ reads it. */
+export interface FileQuery {
+  /** What to match, with whitespace dropped. */
+  name: string;
+  /** 1-based, from a trailing `:N` (or `:N:col`). */
+  line?: number;
+}
+
+/**
+ * Spaces are wildcards -- `file view` finds `FileViewer.tsx`, which the
+ * subsequence match gives for free once they are gone -- and a trailing
+ * `:42` asks for that line, so `FileTree.tsx:42` pasted from a stack trace
+ * lands on it.
+ */
+export function parseFileQuery(raw: string): FileQuery {
+  const m = /^(.*?):(\d+)(?::\d+)?$/.exec(raw.trim());
+  const name = (m ? m[1] : raw).replace(/\s+/g, "");
+  const line = m ? Number(m[2]) : 0;
+  return line > 0 ? { name, line } : { name };
 }

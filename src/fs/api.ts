@@ -4,6 +4,8 @@ export interface DirEntry {
   name: string;
   path: string;
   isDir: boolean;
+  /** Matched by a .gitignore: listed, but dimmed. */
+  ignored: boolean;
 }
 
 /** Mirrors the tagged enum in fs.rs -- refusals are values, not errors. */
@@ -16,6 +18,7 @@ interface RawDirEntry {
   name: string;
   path: string;
   is_dir: boolean;
+  ignored: boolean;
 }
 
 export const openWorkspace = (path: string) =>
@@ -41,7 +44,7 @@ export interface FsGit {
 
 export const listDir = async (root: string, path?: string): Promise<DirEntry[]> => {
   const raw = await invoke<RawDirEntry[]>("list_dir", { root, path: path ?? null });
-  return raw.map((e) => ({ name: e.name, path: e.path, isDir: e.is_dir }));
+  return raw.map((e) => ({ name: e.name, path: e.path, isDir: e.is_dir, ignored: e.ignored }));
 };
 
 export const readFile = (root: string, path: string) =>

@@ -1190,6 +1190,14 @@ body,
   color: var(--fg);
 }
 
+/* Gitignored: listed, as IntelliJ lists them, but faded back so tracked files
+   stay the ones that read. After the icon rule above, which it must beat. */
+.tree-row[data-ignored="true"] .tree-name,
+.tree-row[data-ignored="true"] .tree-icon,
+.find-row[data-ignored="true"] > * {
+  opacity: 0.5;
+}
+
 .tree-error {
   padding: 8px 12px;
   color: var(--danger);
