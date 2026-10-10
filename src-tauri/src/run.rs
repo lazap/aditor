@@ -68,6 +68,39 @@ fn read_from(root: &Path) -> Result<Value, String> {
     }
 }
 
+/// One configuration from the file, as far as the agent needs to know it.
+pub(crate) struct ConfigRef {
+    pub id: String,
+    pub name: String,
+    pub kind: String,
+}
+
+/// The types `src/run/schema.ts` can run; anything else it drops on load.
+const TYPES: [&str; 8] = ["shell", "npm", "cargo", "python", "go", "maven", "gradle", "java"];
+
+/// The configurations in `root`'s run.json, by id and name, for the MCP
+/// tools. Read loosely, the way `normalize` reads it: an entry the frontend
+/// would drop is skipped, and one without a name is called by its type.
+pub(crate) fn config_refs(root: &Path) -> Result<Vec<ConfigRef>, String> {
+    let file = read_from(root)?;
+    let Some(list) = file["configs"].as_array() else {
+        return Ok(Vec::new());
+    };
+    Ok(list
+        .iter()
+        .filter_map(|c| {
+            let id = c["id"].as_str().filter(|s| !s.is_empty())?;
+            let kind = c["type"].as_str().filter(|t| TYPES.contains(t))?;
+            let name = c["name"]
+                .as_str()
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .unwrap_or(kind);
+            Some(ConfigRef { id: id.to_string(), name: name.to_string(), kind: kind.to_string() })
+        })
+        .collect())
+}
+
 /// Temp file and rename, so the watcher -- and an agent reading it -- never
 /// sees half a file. Ordinary permissions: this is a project file meant to be
 /// committed, not a private one.

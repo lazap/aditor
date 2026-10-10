@@ -478,6 +478,11 @@ body,
   padding: 3px 12px;
 }
 
+.run-exit-actions {
+  display: flex;
+  gap: 8px;
+}
+
 /* ---- run configurations dialog ---- */
 
 .modal-card[data-large="true"] {
@@ -4035,6 +4040,26 @@ button.cwd:hover {
 
 .agent-prompt[data-kind="review"] {
   max-height: 88%;
+}
+
+/* Focus sits on the card itself while a start request is up; the accent
+   border already says where it is. */
+.agent-prompt:focus {
+  outline: none;
+}
+
+.prompt-command {
+  margin: 0;
+  padding: 6px 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 8em;
+  overflow-y: auto;
 }
 
 .prompt-head {

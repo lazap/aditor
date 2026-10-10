@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -26,11 +26,21 @@ use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::fs::inside_workspace;
 use crate::pty::PtyRegistry;
+use crate::run::{config_refs, ConfigRef};
+use crate::run_log::{now_ms, RunLog};
 
 const PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// No JSON-RPC message this server understands comes anywhere near this.
 const MAX_BODY: u64 = 1024 * 1024;
+
+/// `read_run_output` lines when the agent does not say, and at most.
+const RUN_LINES: usize = 100;
+const MAX_RUN_LINES: usize = 2000;
+/// A tool result this long is already more than the model wants to read.
+const MAX_RUN_CHARS: usize = 64 * 1024;
+/// The longest `start_run` will wait for a run to finish.
+const MAX_RUN_WAIT: u64 = 600;
 
 /// How long a question waits for the user. Matches the `MCP_TOOL_TIMEOUT`
 /// `pty.rs` gives Claude Code, so neither side gives up first.
@@ -240,6 +250,9 @@ fn handle(inner: &Inner, mut req: Request) {
                 show_diff_tool(),
                 ask_user_tool(),
                 request_review_tool(),
+                list_runs_tool(),
+                read_run_output_tool(),
+                start_run_tool(),
             ] }),
         ),
         "tools/call" => rpc_result(id, call_tool(inner, &pty, &msg["params"])),
@@ -374,6 +387,54 @@ fn request_review_tool() -> Value {
     })
 }
 
+fn list_runs_tool() -> Value {
+    json!({
+        "name": "list_runs",
+        "description": "List the project's run configurations in Aditor (dev servers, test \
+            suites, builds -- whatever the user set up to run) and whether each is running \
+            or how it last exited.",
+        "inputSchema": { "type": "object", "properties": {} },
+    })
+}
+
+fn read_run_output_tool() -> Value {
+    json!({
+        "name": "read_run_output",
+        "description": "Read what one of the project's run configurations printed in \
+            Aditor, as plain text: the dev server the user has running, the test run that \
+            just failed. Use it when the user mentions an error from the app, a failing \
+            run, or asks you to check the logs, instead of asking them to paste output.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "The configuration's name, as list_runs gives it" },
+                "lines": { "type": "integer", "minimum": 1, "maximum": MAX_RUN_LINES, "description": "How many of the last lines to return (default 100)" },
+                "grep": { "type": "string", "description": "Only lines containing this text, ignoring case" },
+            },
+            "required": ["name"],
+        },
+    })
+}
+
+fn start_run_tool() -> Value {
+    json!({
+        "name": "start_run",
+        "description": "Ask the user to start one of the project's run configurations in \
+            Aditor, or restart it if it is already running -- e.g. to rerun the tests after \
+            a fix, or restart the dev server so it picks up a change. The user approves \
+            every start. With wait_seconds, waits for the run to finish (or the time to \
+            pass) and returns its output; otherwise returns once it is starting.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "The configuration's name, as list_runs gives it" },
+                "wait_seconds": { "type": "integer", "minimum": 0, "maximum": MAX_RUN_WAIT, "description": "Wait up to this long for it to exit, then return its output. Use for tests and builds; leave 0 for servers, or a few seconds to catch a failed start." },
+            },
+            "required": ["name"],
+        },
+    })
+}
+
 /// `path` from the agent, as an absolute path inside the folder its PTY runs in.
 fn resolve(cwd: &Path, path: &str) -> Result<PathBuf, String> {
     let p = Path::new(path);
@@ -404,6 +465,9 @@ fn call_tool(inner: &Inner, pty: &str, params: &Value) -> Value {
         "show_diff" => show_diff(inner, pty, args),
         "ask_user" => ask_user(inner, pty, args),
         "request_review" => request_review(inner, pty, args),
+        "list_runs" => list_runs(inner, pty),
+        "read_run_output" => read_run_output(inner, pty, args),
+        "start_run" => start_run(inner, pty, args),
         _ => Err("Unknown tool.".to_string()),
     };
     match result {
@@ -574,6 +638,179 @@ fn describe_review(answer: &Value) -> String {
     }
 }
 
+fn registry(inner: &Inner) -> Arc<PtyRegistry> {
+    Arc::clone(&inner.app.state::<Arc<PtyRegistry>>())
+}
+
+/// The configuration the agent named: by id, else by name, ignoring case.
+fn find_config<'a>(configs: &'a [ConfigRef], name: &str) -> Option<&'a ConfigRef> {
+    let name = name.trim();
+    configs
+        .iter()
+        .find(|c| c.id == name)
+        .or_else(|| configs.iter().find(|c| c.name.eq_ignore_ascii_case(name)))
+}
+
+/// "Configured runs: "Dev", "Tests"." -- for a name that matched nothing.
+fn known_names(configs: &[ConfigRef]) -> String {
+    if configs.is_empty() {
+        return "The project has no run configurations; the user adds them with Run > Edit \
+            Configurations in Aditor."
+            .to_string();
+    }
+    let names: Vec<String> = configs.iter().map(|c| format!("\"{}\"", c.name)).collect();
+    format!("Configured runs: {}.", names.join(", "))
+}
+
+fn list_runs(inner: &Inner, pty: &str) -> Result<String, String> {
+    let (window, cwd) = owner(inner, pty)?;
+    let configs = config_refs(&cwd)?;
+    let runs = registry(inner).runs(&window, &cwd);
+    if configs.is_empty() && runs.is_empty() {
+        return Ok(known_names(&configs));
+    }
+    let mut out = String::from("Run configurations:\n");
+    for c in &configs {
+        let state = runs
+            .iter()
+            .map(|r| r.lock().unwrap())
+            .find(|r| r.config_id == c.id)
+            .map(|r| r.status())
+            .unwrap_or_else(|| "not started".to_string());
+        out.push_str(&format!("- \"{}\" ({}): {state}\n", c.name, c.kind));
+    }
+    // A tab can outlive its configuration being removed from the file.
+    for r in &runs {
+        let r = r.lock().unwrap();
+        if !configs.iter().any(|c| c.id == r.config_id) {
+            out.push_str(&format!("- \"{}\" (no longer configured): {}\n", r.name, r.status()));
+        }
+    }
+    out.push_str("\nRead a run's output with read_run_output; start or restart one with start_run.");
+    Ok(out)
+}
+
+fn read_run_output(inner: &Inner, pty: &str, args: &Value) -> Result<String, String> {
+    let name = args["name"].as_str().ok_or("`name` is required.")?;
+    let lines = args["lines"].as_u64().map_or(RUN_LINES, |n| n as usize).clamp(1, MAX_RUN_LINES);
+    let grep = args["grep"].as_str();
+    let (window, cwd) = owner(inner, pty)?;
+    let configs = config_refs(&cwd)?;
+    let config = find_config(&configs, name);
+    let wanted = name.trim();
+    let run = registry(inner).runs(&window, &cwd).into_iter().find(|r| {
+        let r = r.lock().unwrap();
+        match config {
+            Some(c) => r.config_id == c.id,
+            None => r.name.eq_ignore_ascii_case(wanted),
+        }
+    });
+    match (run, config) {
+        (Some(run), _) => Ok(describe_output(&run.lock().unwrap(), lines, grep)),
+        (None, Some(c)) => Ok(format!(
+            "\"{}\" has not been started in Aditor, so it has no output to read. Start it \
+            with start_run.",
+            c.name
+        )),
+        (None, None) => Err(format!("No run is called \"{wanted}\". {}", known_names(&configs))),
+    }
+}
+
+/// A run's status and the tail of its output, as the model will read it.
+fn describe_output(log: &RunLog, lines: usize, grep: Option<&str>) -> String {
+    let tail = log.tail(lines, grep);
+    let mut out = format!("\"{}\" {}.\n", log.name, log.status());
+    let grep = grep.filter(|g| !g.is_empty());
+    if tail.shown == 0 {
+        out.push_str(match grep {
+            Some(_) => "No line of its output contains that text.",
+            None => "It has printed nothing yet.",
+        });
+        return out;
+    }
+    let trimmed = if tail.trimmed { ", older output was dropped" } else { "" };
+    out.push_str(&match grep {
+        Some(g) => format!(
+            "The last {} lines containing \"{g}\" ({} lines kept{trimmed}):\n",
+            tail.shown, tail.total
+        ),
+        None => format!("The last {} of {} lines{trimmed}:\n", tail.shown, tail.total),
+    });
+    let text = &tail.text;
+    if text.len() > MAX_RUN_CHARS {
+        let mut cut = text.len() - MAX_RUN_CHARS;
+        while !text.is_char_boundary(cut) {
+            cut += 1;
+        }
+        out.push_str("[... cut to the last 64 KB]\n");
+        out.push_str(&text[cut..]);
+    } else {
+        out.push_str(text);
+    }
+    out
+}
+
+fn start_run(inner: &Inner, pty: &str, args: &Value) -> Result<String, String> {
+    let name = args["name"].as_str().ok_or("`name` is required.")?;
+    let wait = args["wait_seconds"].as_u64().unwrap_or(0).min(MAX_RUN_WAIT);
+    let (window, cwd) = owner(inner, pty)?;
+    let configs = config_refs(&cwd)?;
+    let c = find_config(&configs, name)
+        .ok_or_else(|| format!("No run is called \"{}\". {}", name.trim(), known_names(&configs)))?;
+
+    let answer = ask(inner, pty, "run", json!({ "configId": c.id, "name": c.name }))?;
+    let comment = answer["comment"].as_str().map(str::trim).filter(|s| !s.is_empty());
+    match answer["decision"].as_str() {
+        Some("run") => {}
+        Some("declined") => {
+            return Ok(match comment {
+                Some(why) => format!("The user declined to run \"{}\": {why}", c.name),
+                None => format!("The user declined to run \"{}\".", c.name),
+            })
+        }
+        Some("error") => return Err(comment.unwrap_or("Aditor could not start it.").to_string()),
+        _ => return Ok("The user dismissed the request without deciding.".to_string()),
+    }
+    // Approved: the window starts it now, so anything older is the last run.
+    let approved = now_ms();
+    if wait == 0 {
+        return Ok(format!(
+            "The user approved. \"{}\" is starting in a tab of its own; call \
+            read_run_output to see what it prints.",
+            c.name
+        ));
+    }
+
+    let deadline = Instant::now() + Duration::from_secs(wait);
+    let registry = registry(inner);
+    loop {
+        // The session asking may close while it waits.
+        owner(inner, pty)?;
+        let run = registry.runs(&window, &cwd).into_iter().find(|r| {
+            let r = r.lock().unwrap();
+            r.config_id == c.id && r.started_ms >= approved
+        });
+        let late = Instant::now() >= deadline;
+        match run {
+            Some(run) => {
+                let log = run.lock().unwrap();
+                if log.exit.is_some() || late {
+                    return Ok(describe_output(&log, RUN_LINES, None));
+                }
+            }
+            None if late => {
+                return Ok(format!(
+                    "The user approved, but \"{}\" has not started yet -- its before-launch \
+                    steps may still be running. Check with list_runs.",
+                    c.name
+                ))
+            }
+            None => {}
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+}
+
 /// The user answered question `request_id`. Only the window it was shown in
 /// may answer it.
 #[tauri::command]
@@ -632,6 +869,33 @@ mod tests {
             "The user answered: use C"
         );
         assert!(describe_choice(&json!({ "dismissed": true })).starts_with("The user dismissed"));
+    }
+
+    fn config(id: &str, name: &str) -> ConfigRef {
+        ConfigRef { id: id.into(), name: name.into(), kind: "npm".into() }
+    }
+
+    #[test]
+    fn finds_runs_by_id_or_name_ignoring_case() {
+        let configs = [config("a1", "Dev server"), config("b2", "Tests")];
+        assert_eq!(find_config(&configs, "b2").unwrap().name, "Tests");
+        assert_eq!(find_config(&configs, " dev SERVER ").unwrap().id, "a1");
+        assert!(find_config(&configs, "build").is_none());
+        assert_eq!(known_names(&configs), "Configured runs: \"Dev server\", \"Tests\".");
+    }
+
+    #[test]
+    fn describes_run_output() {
+        let mut log = RunLog::new("Tests".into(), "b2".into(), PathBuf::from("/"));
+        assert!(describe_output(&log, 10, None).ends_with("It has printed nothing yet."));
+        log.push(b"\x1b[32mok\x1b[0m a\r\nFAIL b\nok c\n");
+        log.exit = Some(Some(1));
+        let text = describe_output(&log, 10, None);
+        assert!(text.starts_with("\"Tests\" exited with code 1.\n"));
+        assert!(text.ends_with("The last 3 of 3 lines:\nok a\nFAIL b\nok c"));
+        let text = describe_output(&log, 10, Some("fail"));
+        assert!(text.ends_with("(3 lines kept):\nFAIL b"));
+        assert!(describe_output(&log, 10, Some("panic")).ends_with("contains that text."));
     }
 
     #[test]

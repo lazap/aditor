@@ -27,6 +27,7 @@ use tauri::{State, WebviewWindow};
 
 use crate::fs::{workspace_root, Workspace};
 use crate::mcp::{McpServer, PROMPT_TIMEOUT};
+use crate::run_log::RunLog;
 
 /// Flush pending PTY output at least this often. One event per read syscall
 /// floods the IPC bridge when an agent dumps a long file; batching keeps
@@ -63,6 +64,9 @@ pub struct PtySession {
     /// started a tree of processes (`npm run dev` -> node -> esbuild), which
     /// the killer alone would orphan. Killed by process group instead.
     group: bool,
+    /// A run's output, as text the agent can read. Kept until the tab closes
+    /// or reruns, so a run that crashed can still be asked about.
+    log: Option<Arc<Mutex<RunLog>>>,
 }
 
 impl PtySession {
@@ -129,6 +133,29 @@ impl PtyRegistry {
             .get(id)
             .map(|s| (s.window.clone(), s.cwd.clone()))
     }
+
+    /// The runs window `window` has open in workspace `root`, newest first.
+    pub fn runs(&self, window: &str, root: &Path) -> Vec<Arc<Mutex<RunLog>>> {
+        let sessions = self.sessions.lock().unwrap();
+        let mut runs: Vec<(u64, Arc<Mutex<RunLog>>)> = sessions
+            .iter()
+            .filter(|(_, s)| s.window == window)
+            .filter_map(|(id, s)| Some((id_seq(id), Arc::clone(s.log.as_ref()?))))
+            .filter(|(_, log)| log.lock().unwrap().root == root)
+            .collect();
+        runs.sort_by_key(|r| std::cmp::Reverse(r.0));
+        runs.into_iter().map(|(_, log)| log).collect()
+    }
+
+    /// Session `id`'s run output, if it is a run.
+    fn log(&self, id: &str) -> Option<Arc<Mutex<RunLog>>> {
+        self.sessions.lock().unwrap().get(id)?.log.clone()
+    }
+}
+
+/// The counter behind a `pty-N` id: later spawns sort higher.
+fn id_seq(id: &str) -> u64 {
+    id.strip_prefix("pty-").and_then(|n| n.parse().ok()).unwrap_or(0)
 }
 
 /// What a session tells the pane that spawned it, over the channel that pane
@@ -344,7 +371,9 @@ const TASKS_NUDGE: &str = "You are running inside Aditor, an editor built around
     Aditor's Tasks panel. When you point the user at code, call `open_file` so they see it. \
     When you need the user to pick between a few concrete options, call `ask_user` instead \
     of asking in prose. Call `request_review` only when the user asked to review changes \
-    before you go on.";
+    before you go on. The user's dev servers, test runs and builds run in Aditor too: when \
+    they mention an error from one, read it with `read_run_output` instead of asking them \
+    to paste it.";
 
 /// A Claude Code session id: a UUID. Checked rather than trusted, since it
 /// lands on a shell command line.
@@ -408,6 +437,7 @@ pub fn pty_spawn(
         child,
         PathBuf::from(&cwd),
         false,
+        None,
         on_event,
     )
 }
@@ -425,6 +455,8 @@ pub fn pty_run(
     script: String,
     cwd: String,
     env: HashMap<String, String>,
+    name: String,
+    config_id: String,
     cols: u16,
     rows: u16,
     on_event: Channel<PtyEvent>,
@@ -444,7 +476,21 @@ pub fn pty_run(
         .slave
         .spawn_command(run_command(&script, &dir, &env))
         .map_err(|e| format!("spawn failed: {e}"))?;
-    start_session(&window, &registry, id, pair, child, dir, true, on_event)
+    let log = Arc::new(Mutex::new(RunLog::new(name, config_id, root)));
+    start_session(&window, &registry, id, pair, child, dir, true, Some(log), on_event)
+}
+
+/// The last `lines` lines run `id` printed, as plain text: what the run tab's
+/// "Send to agent" pastes.
+#[tauri::command]
+pub fn run_output(
+    registry: State<'_, Arc<PtyRegistry>>,
+    id: String,
+    lines: usize,
+) -> Result<String, String> {
+    let log = registry.log(&id).ok_or("That run is no longer open.")?;
+    let tail = log.lock().unwrap().tail(lines, None);
+    Ok(tail.text)
 }
 
 fn open_pty(cols: u16, rows: u16) -> Result<portable_pty::PtyPair, String> {
@@ -469,6 +515,7 @@ fn start_session(
     mut child: Box<dyn portable_pty::Child + Send + Sync>,
     cwd: PathBuf,
     group: bool,
+    log: Option<Arc<Mutex<RunLog>>>,
     on_event: Channel<PtyEvent>,
 ) -> Result<String, String> {
     // The slave fd must be dropped or the master never sees EOF on child exit.
@@ -504,6 +551,7 @@ fn start_session(
             pid: child.process_id(),
             cwd,
             group,
+            log: log.clone(),
         },
     );
 
@@ -551,6 +599,9 @@ fn start_session(
                 match reader.read(&mut buf) {
                     Ok(0) => break,
                     Ok(n) => {
+                        if let Some(log) = &log {
+                            log.lock().unwrap().push(&buf[..n]);
+                        }
                         let mut o = lock.lock().unwrap();
                         let was_empty = o.bytes.is_empty();
                         o.bytes.extend_from_slice(&buf[..n]);
@@ -573,6 +624,9 @@ fn start_session(
             arrived.notify_one();
 
             let code = child.wait().ok().map(|s| s.exit_code() as i32);
+            if let Some(log) = &log {
+                log.lock().unwrap().exit = Some(code);
+            }
             let _ = events.send(PtyEvent::Exit { code });
         });
     }

@@ -1,7 +1,16 @@
 import { useEffect, useRef, useState } from "react";
 import { DiffViewer } from "./DiffViewer";
 import { useSetting } from "../settings/store";
-import type { AskAnswer, AskPrompt, McpPrompt, ReviewAnswer, ReviewPrompt } from "../mcp/api";
+import type {
+  AskAnswer,
+  AskPrompt,
+  McpPrompt,
+  PromptAnswer,
+  ReviewAnswer,
+  ReviewPrompt,
+  RunAnswer,
+  RunPrompt,
+} from "../mcp/api";
 
 interface Props {
   prompt: McpPrompt;
@@ -11,7 +20,7 @@ interface Props {
   refreshToken: number;
   /** Its session is on screen: only then does it take the caret. */
   visible: boolean;
-  onAnswer(answer: AskAnswer | ReviewAnswer): void;
+  onAnswer(answer: PromptAnswer): void;
 }
 
 /**
@@ -24,12 +33,14 @@ export function AgentPrompt({ prompt, changed, refreshToken, visible, onAnswer }
 
   // Take the caret from the terminal, or the keys meant for the card would go
   // to the agent, which is waiting on this and not reading.
+  // A start request takes it on the card itself, not on Run: Enter meant for
+  // the terminal must not approve a command.
   useEffect(() => {
     if (!visible) return;
-    cardRef.current
-      ?.querySelector<HTMLElement>(".prompt-option, textarea, .modal-primary")
-      ?.focus();
-  }, [visible, prompt.requestId]);
+    const card = cardRef.current;
+    if (prompt.kind === "run") card?.focus();
+    else card?.querySelector<HTMLElement>(".prompt-option, textarea, .modal-primary")?.focus();
+  }, [visible, prompt.requestId, prompt.kind]);
 
   const dismiss = () =>
     onAnswer(prompt.kind === "ask" ? { dismissed: true } : { decision: "dismissed", comment: "" });
@@ -39,8 +50,9 @@ export function AgentPrompt({ prompt, changed, refreshToken, visible, onAnswer }
       className="agent-prompt"
       data-kind={prompt.kind}
       ref={cardRef}
+      tabIndex={-1}
       role="dialog"
-      aria-label={prompt.kind === "ask" ? "The agent asks" : "Review requested"}
+      aria-label={LABELS[prompt.kind]}
       onKeyDown={(e) => {
         // The window's shortcut listener must not act on keys meant for the card.
         e.stopPropagation();
@@ -52,6 +64,8 @@ export function AgentPrompt({ prompt, changed, refreshToken, visible, onAnswer }
     >
       {prompt.kind === "ask" ? (
         <Ask prompt={prompt} onAnswer={onAnswer} onDismiss={dismiss} />
+      ) : prompt.kind === "run" ? (
+        <RunRequest prompt={prompt} onAnswer={onAnswer} onDismiss={dismiss} />
       ) : (
         <Review
           prompt={prompt}
@@ -62,6 +76,45 @@ export function AgentPrompt({ prompt, changed, refreshToken, visible, onAnswer }
         />
       )}
     </div>
+  );
+}
+
+const LABELS: Record<McpPrompt["kind"], string> = {
+  ask: "The agent asks",
+  review: "Review requested",
+  run: "The agent wants to start a run",
+};
+
+function RunRequest({
+  prompt,
+  onAnswer,
+  onDismiss,
+}: {
+  prompt: RunPrompt;
+  onAnswer(a: RunAnswer): void;
+  onDismiss(): void;
+}) {
+  return (
+    <>
+      <div className="prompt-head">
+        <span className="prompt-badge">Start run</span>
+        <span className="prompt-question">
+          The agent wants to start <strong>{prompt.name}</strong>.
+        </span>
+      </div>
+      {prompt.command && <pre className="prompt-command">{prompt.command}</pre>}
+      <div className="prompt-actions">
+        <button className="modal-cancel" onClick={onDismiss}>
+          Dismiss
+        </button>
+        <button className="modal-cancel" onClick={() => onAnswer({ decision: "declined" })}>
+          Don't run
+        </button>
+        <button className="modal-primary" onClick={() => onAnswer({ decision: "run" })}>
+          Run
+        </button>
+      </div>
+    </>
   );
 }
 

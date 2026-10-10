@@ -22,9 +22,9 @@ import type { ToastMessage } from "./Toast";
 import type { Handlers } from "../shortcuts/useShortcuts";
 import { chordHint } from "../shortcuts/store";
 import { switchToNextAccount } from "../accounts/next";
-import { ptyKill, ptyWriteActive, SHELL_SESSION, type AgentInfo } from "../pty/api";
+import { ptyKill, ptyPaste, ptyWriteActive, SHELL_SESSION, type AgentInfo } from "../pty/api";
 import { useRunConfigs } from "../run/useRunConfigs";
-import { RUN_FILE } from "../run/api";
+import { RUN_FILE, runOutput } from "../run/api";
 import { toScript } from "../run/command";
 import { launchChain, type RunConfig } from "../run/schema";
 import { createFile, FS_GIT, fsDebounceMs, type FsChanged, type FsGit } from "../fs/api";
@@ -64,9 +64,8 @@ import {
   onOpenRequest,
   onPrompt,
   onPromptCancel,
-  type AskAnswer,
   type McpPrompt,
-  type ReviewAnswer,
+  type PromptAnswer,
 } from "../mcp/api";
 import {
   basename,
@@ -136,6 +135,21 @@ interface RunSession {
 
 /** `agentId` of a run tab: no agent has it. */
 const RUN_AGENT = "run";
+
+/** What a session's attention notice says it is waiting on. */
+function promptDetail(p: McpPrompt): string {
+  switch (p.kind) {
+    case "ask":
+      return p.question;
+    case "review":
+      return "review your changes";
+    case "run":
+      return `start ${p.name}`;
+  }
+}
+
+/** Lines of a run's output "Send to agent" pastes. */
+const SEND_LINES = 80;
 
 /** A resumed session's title, short enough for a tab. */
 function tabTitle(title: string): string {
@@ -697,7 +711,14 @@ export function ProjectView({
   );
 
   const runSpec = useCallback(
-    (c: RunConfig): RunSpec => ({ root, script: toScript(c, runs.context), cwd: c.cwd, env: c.env }),
+    (c: RunConfig): RunSpec => ({
+      root,
+      script: toScript(c, runs.context),
+      cwd: c.cwd,
+      env: c.env,
+      name: c.name,
+      configId: c.id,
+    }),
     [root, runs.context],
   );
 
@@ -705,9 +726,10 @@ export function ProjectView({
    * Start `c` in a tab and resolve with its exit code. A tab of the same
    * configuration is reused when it has exited, or -- for a single-instance
    * one -- even while it runs, which restarts it; otherwise a new tab opens.
+   * `focus` false leaves the session on screen where it is: an agent's start.
    */
   const launchRun = useCallback(
-    (c: RunConfig): Promise<number | null> => {
+    (c: RunConfig, focus: boolean): Promise<number | null> => {
       const run: RunSession = { configId: c.id, name: c.name, spec: runSpec(c) };
       const mine = sessionsRef.current.filter((s) => s.run?.configId === c.id);
       const reuse =
@@ -735,7 +757,7 @@ export function ProjectView({
           ];
         });
       }
-      setActiveKey(key);
+      if (focus) setActiveKey(key);
       return new Promise((resolve) => runWaiters.current.set(key, resolve));
     },
     [runSpec, settleRun],
@@ -743,7 +765,7 @@ export function ProjectView({
 
   /** Run configuration `id`, after its before-launch chain has succeeded. */
   const runConfig = useCallback(
-    async (id: string) => {
+    async (id: string, focus = true) => {
       const chain = launchChain(runs.configs, id);
       if (!chain || chain.length === 0) {
         showToast("Its before-launch steps run in a circle; fix them in Edit Configurations.", "error");
@@ -751,7 +773,7 @@ export function ProjectView({
       }
       selectRun(id);
       for (const step of chain.slice(0, -1)) {
-        const code = await launchRun(step);
+        const code = await launchRun(step, focus);
         if (code !== 0) {
           showToast(
             `${step.name} ${code === null ? "was stopped" : `failed with exit code ${code}`}, so ${chain[chain.length - 1].name} did not run.`,
@@ -760,10 +782,18 @@ export function ProjectView({
           return;
         }
       }
-      void launchRun(chain[chain.length - 1]);
+      void launchRun(chain[chain.length - 1], focus);
     },
     [runs.configs, launchRun, selectRun, showToast],
   );
+
+  // Read by the agent-request listeners, which are set up once.
+  const runConfigRef = useRef(runConfig);
+  runConfigRef.current = runConfig;
+  const runConfigsRef = useRef(runs.configs);
+  runConfigsRef.current = runs.configs;
+  const runSpecRef = useRef(runSpec);
+  runSpecRef.current = runSpec;
 
   /** Stop every running instance of configuration `id`. */
   const stopRun = useCallback((id: string) => {
@@ -894,6 +924,8 @@ export function ProjectView({
 
   /** Questions from this project's agents, oldest first; each session shows its first. */
   const [prompts, setPrompts] = useState<McpPrompt[]>([]);
+  const promptsRef = useRef(prompts);
+  promptsRef.current = prompts;
 
   // `open_file` / `show_diff`: the same paths a click takes, so the display
   // settings apply. Never switches project tabs: the agent does not get to
@@ -914,8 +946,22 @@ export function ProjectView({
     const unPrompt = onPrompt((p) => {
       const s = sessionsRef.current.find((o) => o.ptyId === p.id);
       if (!s) return;
+      if (p.kind === "run") {
+        const ask = p;
+        // What the backend read from run.json may already be gone from here.
+        const c = runConfigsRef.current.find((o) => o.id === ask.configId);
+        if (!c) {
+          void mcpAnswer(ask.requestId, {
+            decision: "error",
+            comment: `"${ask.name}" is no longer a run configuration in this project.`,
+          }).catch(() => {});
+          return;
+        }
+        // Shown as it will run, so the user approves the command, not a name.
+        p = { ...ask, command: runSpecRef.current(c).script };
+      }
       setPrompts((prev) => [...prev, p]);
-      raise(s.key, "waiting", p.kind === "ask" ? p.question : "review your changes");
+      raise(s.key, "waiting", promptDetail(p));
     });
     const unCancel = onPromptCancel((requestId) =>
       setPrompts((prev) => prev.filter((p) => p.requestId !== requestId)),
@@ -927,13 +973,67 @@ export function ProjectView({
   }, [raise]);
 
   const answerPrompt = useCallback(
-    (requestId: string, answer: AskAnswer | ReviewAnswer) => {
-      setPrompts((prev) => prev.filter((p) => p.requestId !== requestId));
+    (requestId: string, answer: PromptAnswer) => {
+      const p = promptsRef.current.find((o) => o.requestId === requestId);
+      if (p?.kind === "run" && "decision" in answer && answer.decision === "run") {
+        const chain = launchChain(runConfigsRef.current, p.configId);
+        if (!chain || chain.length === 0) {
+          answer = {
+            decision: "error",
+            comment: `"${p.name}" could not start: its before-launch steps run in a circle.`,
+          };
+        } else {
+          void runConfigRef.current(p.configId, false);
+        }
+      }
+      setPrompts((prev) => prev.filter((o) => o.requestId !== requestId));
       // Gone already if the call was withdrawn in the meantime; nothing to do.
       void mcpAnswer(requestId, answer).catch(() => {});
       setAgentFocus((t) => t + 1);
     },
     [],
+  );
+
+  /** The agent session last on screen: where a run's output is sent. */
+  const lastAgentKey = useRef<number | null>(null);
+  useEffect(() => {
+    const s = sessions.find((o) => o.key === activeKey);
+    if (s && !s.run) lastAgentKey.current = s.key;
+  }, [sessions, activeKey]);
+
+  /**
+   * Type run `key`'s last lines into an agent, without sending, and show that
+   * agent: the one last on screen if it still runs, else any that does.
+   */
+  const sendRunToAgent = useCallback(
+    async (key: number) => {
+      const all = sessionsRef.current;
+      const s = all.find((o) => o.key === key);
+      if (!s?.run || !s.ptyId) return;
+      const live = (o: Session) => !o.run && o.ptyId && o.exitCode === undefined;
+      const target =
+        all.find((o) => o.key === lastAgentKey.current && live(o)) ?? all.find(live);
+      if (!target?.ptyId) {
+        showToast("No agent is running to send the output to.", "error");
+        return;
+      }
+      try {
+        const out = await runOutput(s.ptyId, SEND_LINES);
+        const how =
+          s.exitCode === undefined
+            ? "is running"
+            : s.exitCode === null
+              ? "was stopped"
+              : `exited with code ${s.exitCode}`;
+        const body = out.trim() === "" ? "It printed nothing." : `Its last lines:\n\n\`\`\`\n${out}\n\`\`\``;
+        await ptyPaste(target.ptyId, `The run "${s.run.name}" ${how}. ${body}\n`);
+        setActiveKey(target.key);
+        setAgentFocus((t) => t + 1);
+      } catch (e) {
+        showToast(`Could not send the output: ${String(e)}`, "error");
+      }
+    },
+    [showToast],
   );
 
   const attentionCount = sessions.filter((s) => s.attention).length;
@@ -1547,6 +1647,7 @@ export function ProjectView({
             changed={changedPaths}
             refreshToken={refreshToken}
             onAnswer={answerPrompt}
+            onSendToAgent={sendRunToAgent}
           />
         ))}
         {sessions.length === 0 && (
@@ -1850,7 +1951,9 @@ interface SessionPaneProps {
   prompt: McpPrompt | null;
   changed: string[];
   refreshToken: number;
-  onAnswer(requestId: string, answer: AskAnswer | ReviewAnswer): void;
+  onAnswer(requestId: string, answer: PromptAnswer): void;
+  /** A run tab's "Send to agent": its last lines, typed into an agent. */
+  onSendToAgent(key: number): void;
 }
 
 /**
@@ -1875,6 +1978,7 @@ function SessionPane({
   changed,
   refreshToken,
   onAnswer,
+  onSendToAgent,
 }: SessionPaneProps) {
   const { key } = session;
   const handleExit = useCallback((code: number | null) => onExit(key, code), [onExit, key]);
@@ -1916,9 +2020,18 @@ function SessionPane({
                 ? "Process stopped"
                 : `Process finished with exit code ${session.exitCode}`}
             </span>
-            <button className="restart" onClick={() => onRestart(key)}>
-              Rerun
-            </button>
+            <span className="run-exit-actions">
+              <button
+                className="restart"
+                onClick={() => onSendToAgent(key)}
+                title="Type its last lines into the agent, without sending"
+              >
+                Send to Agent
+              </button>
+              <button className="restart" onClick={() => onRestart(key)}>
+                Rerun
+              </button>
+            </span>
           </div>
         ) : (
           <div className="exit-overlay">

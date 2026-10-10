@@ -42,6 +42,11 @@ works.
   you approve its changes, or send it back with comments, in the diff viewer.
   Questions dock over the session that asked them; the rest of the window
   carries on.
+- **The agent can read your runs** -- `list_runs` and `read_run_output` let it
+  read what your dev server or test run printed instead of asking you to paste
+  it, and `start_run` lets it restart one after a fix, once you approve the
+  command. A finished run tab's **Send to Agent** types its last lines into the
+  agent for you.
 - **Notifications** -- a session that finishes its turn or needs your input
   while you are in another tab or app gets a dot on its tab, a macOS
   notification and a count on the Dock icon. Claude Code reports its own

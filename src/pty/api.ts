@@ -128,9 +128,17 @@ export function useActiveSession(): string | null {
 export async function ptyWriteActive(text: string): Promise<boolean> {
   const id = activeSession();
   if (!id) return false;
-  const body = text.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
-  await ptyWrite(id, `\x1b[200~${body}\x1b[201~`);
+  await ptyPaste(id, text);
   return true;
+}
+
+/**
+ * Type `text` into session `id` as one bracketed paste: the agent takes it as
+ * a single input, newlines and all, and nothing is sent until Enter.
+ */
+export function ptyPaste(id: string, text: string): Promise<void> {
+  const body = text.replace(/\r\n?/g, "\n").replace(/\n+$/, "");
+  return ptyWrite(id, `\x1b[200~${body}\x1b[201~`);
 }
 
 /**

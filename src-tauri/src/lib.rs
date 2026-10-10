@@ -6,6 +6,7 @@ mod git_log;
 mod mcp;
 mod pty;
 mod run;
+mod run_log;
 mod search;
 mod settings;
 mod status;
@@ -34,6 +35,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             pty::pty_spawn,
             pty::pty_run,
+            pty::run_output,
             pty::pty_write,
             pty::pty_resize,
             pty::pty_kill,

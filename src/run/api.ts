@@ -23,6 +23,10 @@ export interface Detected {
 /** What the project looks like it can run, for the configurations dialog. */
 export const runDetect = (root: string) => invoke<Detected>("run_detect", { root });
 
+/** The last `lines` lines run PTY `id` printed, escape sequences stripped. */
+export const runOutput = (id: string, lines: number) =>
+  invoke<string>("run_output", { id, lines });
+
 /** Where the file lives, relative to the root. The watcher reports this path. */
 export const RUN_FILE = ".aditor/run.json";
 
@@ -38,6 +42,8 @@ export function ptyRun(
     /** Relative to `root`. */
     cwd: string;
     env: Record<string, string>;
+    name: string;
+    configId: string;
     cols: number;
     rows: number;
   },

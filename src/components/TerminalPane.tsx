@@ -25,6 +25,9 @@ export interface RunSpec {
   script: string;
   cwd: string;
   env: Record<string, string>;
+  /** The configuration it came from: how the agent asks for its output. */
+  name: string;
+  configId: string;
 }
 
 interface Props {

@@ -65,7 +65,16 @@ export interface ReviewPrompt extends PromptBase {
   paths: string[] | null;
 }
 
-export type McpPrompt = AskPrompt | ReviewPrompt;
+/** `start_run`: may the agent start a run configuration? */
+export interface RunPrompt extends PromptBase {
+  kind: "run";
+  configId: string;
+  name: string;
+  /** The shell line it will run, filled in by the window before it shows. */
+  command?: string;
+}
+
+export type McpPrompt = AskPrompt | ReviewPrompt | RunPrompt;
 
 export type AskAnswer =
   | { dismissed: true }
@@ -89,5 +98,13 @@ export const onPrompt = (cb: (p: McpPrompt) => void): Promise<UnlistenFn> =>
 export const onPromptCancel = (cb: (requestId: string) => void): Promise<UnlistenFn> =>
   here().listen<{ requestId: string }>("mcp://prompt-cancel", (e) => cb(e.payload.requestId));
 
-export const mcpAnswer = (requestId: string, answer: AskAnswer | ReviewAnswer) =>
+export interface RunAnswer {
+  /** "error": the window could not start it; `comment` says why. */
+  decision: "run" | "declined" | "dismissed" | "error";
+  comment?: string;
+}
+
+export type PromptAnswer = AskAnswer | ReviewAnswer | RunAnswer;
+
+export const mcpAnswer = (requestId: string, answer: PromptAnswer) =>
   invoke<void>("mcp_answer", { requestId, answer });
