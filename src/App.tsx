@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ProjectPicker } from "./components/ProjectPicker";
@@ -22,6 +22,7 @@ import {
   TEMPLATES_INSERT,
 } from "./window";
 import { forgetProject, loadRecents, rememberProject, type RecentProject } from "./projects";
+import { worktreeInfo, worktreeLabel, worktreeRemove, type WorktreeInfo } from "./worktree/api";
 
 /** Keeps the rail and the terminal both usable. */
 const INSIGHT_MIN = 220;
@@ -64,6 +65,9 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<string | null>(null);
   /** Roots with an agent still running, for the tab dot and the close prompt. */
   const [running, setRunning] = useState<Set<string>>(new Set());
+  /** Tabs that are worktrees Aditor made, however they were opened. */
+  const [worktrees, setWorktrees] = useState<Map<string, WorktreeInfo>>(new Map());
+  const probed = useRef(new Set<string>());
   /** Saved and URL tabs are reopened before the chooser is offered. */
   const [booted, setBooted] = useState(false);
 
@@ -308,9 +312,90 @@ export default function App() {
 
   const forgetRecent = useCallback((path: string) => setRecents(forgetProject(path)), []);
 
+  const openWorktree = useCallback(
+    (info: WorktreeInfo) => {
+      setWorktrees((prev) => new Map(prev).set(info.path, info));
+      probed.current.add(info.path);
+      void openInTab(info.path);
+    },
+    [openInTab],
+  );
+
+  // Which tabs are worktrees: asked once per root, whether it came from + in a
+  // session strip, the saved tabs at launch, or the folder picker.
+  useEffect(() => {
+    for (const root of tabs) {
+      if (probed.current.has(root)) continue;
+      probed.current.add(root);
+      void worktreeInfo(root)
+        .then((info) => info && setWorktrees((prev) => new Map(prev).set(root, info)))
+        .catch(() => {});
+    }
+  }, [tabs]);
+
+  const tabLabels = useMemo(
+    () => new Map([...worktrees].map(([root, w]) => [root, worktreeLabel(w)])),
+    [worktrees],
+  );
+
+  /**
+   * Remove a closed worktree tab's checkout. Its watcher goes first; git
+   * refuses a dirty worktree, and that refusal is the message.
+   */
+  const removeWorktree = useCallback(
+    async (w: WorktreeInfo, deleteBranch: boolean) => {
+      await closeWorkspace(w.path).catch(() => {});
+      try {
+        const r = await worktreeRemove(w.path, deleteBranch);
+        setRecents(forgetProject(w.path));
+        probed.current.delete(w.path);
+        setWorktrees((prev) => {
+          const next = new Map(prev);
+          next.delete(w.path);
+          return next;
+        });
+        showToast(
+          r.branchKept
+            ? `Removed the worktree. Kept branch ${w.branch}: ${r.branchKept}`
+            : `Removed the worktree${deleteBranch && w.branch ? ` and branch ${w.branch}` : ""}.`,
+        );
+      } catch (e) {
+        showToast(`The worktree was kept: ${String(e)}`, "error");
+      }
+    },
+    [showToast],
+  );
+
   const closeTab = useCallback(
     async (root: string) => {
-      if (running.has(root)) {
+      const wt = worktrees.get(root);
+      let remove: { deleteBranch: boolean } | null = null;
+      if (wt) {
+        const r = await ask({
+          title: "Close Worktree",
+          body: (
+            <>
+              {running.has(root) && <>Agents in it are still running; closing stops them. </>}
+              Keep <code>{wt.path}</code> to come back to, or remove it.
+            </>
+          ),
+          choices: [
+            { id: "keep", label: "Keep the worktree" },
+            {
+              id: "remove",
+              label: "Remove the worktree",
+              hint: "Refused if it has uncommitted changes",
+            },
+          ],
+          initialChoice: "keep",
+          checks: wt.branch
+            ? [{ id: "branch", label: `When removing, also delete ${wt.branch} if it is merged` }]
+            : [],
+          confirm: "Close",
+        });
+        if (!r) return;
+        if (r.choice === "remove") remove = { deleteBranch: !!r.checks.branch };
+      } else if (running.has(root)) {
         const r = await ask({
           title: "Close Project",
           body: (
@@ -330,9 +415,10 @@ export default function App() {
       setTabs((prev) => prev.filter((t) => t !== root));
       setActiveTab((cur) => (cur === root ? (rest[Math.min(at, rest.length - 1)] ?? null) : cur));
       onRunning(root, false);
-      void closeWorkspace(root).catch(() => {});
+      if (wt && remove) void removeWorktree(wt, remove.deleteBranch);
+      else void closeWorkspace(root).catch(() => {});
     },
-    [running, tabs, ask, onRunning],
+    [worktrees, running, tabs, ask, onRunning, removeWorktree],
   );
 
   const cycleTab = useCallback(
@@ -425,6 +511,7 @@ export default function App() {
             active={activeTab}
             running={running}
             attention={attention}
+            labels={tabLabels}
             onSelect={setActiveTab}
             onClose={(root) => void closeTab(root)}
             onOpen={openPicker}
@@ -446,6 +533,8 @@ export default function App() {
             register={register}
             onRunning={onRunning}
             onAttention={onAttention}
+            worktree={worktrees.get(root) ?? null}
+            onOpenWorktree={openWorktree}
           />
         ))}
       </div>

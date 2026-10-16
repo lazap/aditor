@@ -76,6 +76,7 @@ import {
   type ViewerMode,
 } from "../window";
 import { loadProjectState, saveProjectState, setWritable } from "../projects";
+import { worktreeCreate, worktreeLabel, type WorktreeInfo } from "../worktree/api";
 
 /** How long a watcher-touched path stays accented. */
 const RECENT_MS = 8000;
@@ -218,6 +219,10 @@ interface Props {
   onRunning(root: string, running: boolean): void;
   /** How many of this project's sessions want the user, for the tab dot and Dock badge. */
   onAttention(root: string, count: number): void;
+  /** Set when this project is a worktree Aditor made for a session. */
+  worktree: WorktreeInfo | null;
+  /** Open a worktree just made from this project as a tab of its own. */
+  onOpenWorktree(info: WorktreeInfo): void;
 }
 
 /**
@@ -239,6 +244,8 @@ export function ProjectView({
   register,
   onRunning,
   onAttention,
+  worktree,
+  onOpenWorktree,
 }: Props) {
   // What the project remembers, read once: this view lives as long as its tab.
   const [saved] = useState(() => loadProjectState(root));
@@ -565,6 +572,40 @@ export function ProjectView({
     },
     [rememberAgent, addSession],
   );
+
+  const worktreeAgent =
+    repo?.isRepo ? (agents.find((a) => a.id === "claude" && a.available) ?? null) : null;
+
+  /**
+   * + in the session strip: Claude Code on a new branch in a worktree of its
+   * own, opened as a project tab -- so its tree, changes and runs are that
+   * checkout's, and parallel agents never edit the same files.
+   */
+  const newWorktreeSession = useCallback(async () => {
+    const r = await ask({
+      title: "New Worktree Session",
+      body: (
+        <>
+          A new branch off <code>{repo?.branch ?? "HEAD"}</code>, checked out in its own folder
+          and opened as a project tab with Claude Code running.
+        </>
+      ),
+      input: { label: "Branch name", initial: `wt-${Date.now().toString(36).slice(-4)}` },
+      confirm: "Create",
+      validate: refNameError,
+    });
+    if (!r) return;
+    let info: WorktreeInfo;
+    try {
+      info = await worktreeCreate(root, r.text.trim());
+    } catch (e) {
+      showToast(String(e), "error");
+      return;
+    }
+    // The new tab seeds its first session from the project's agent.
+    saveProjectState(info.path, { lastAgent: "claude" });
+    onOpenWorktree(info);
+  }, [ask, repo?.branch, root, showToast, onOpenWorktree]);
 
   // ⌘⇧T asks the same question as +. With no session strip on screen there is
   // nothing to ask from, so it starts the project's agent straight away.
@@ -1625,6 +1666,7 @@ export function ProjectView({
           onSelect={setActiveKey}
           onClose={(key) => void closeSession(key)}
           onNew={startSession}
+          onNewWorktree={worktreeAgent ? () => void newWorktreeSession() : undefined}
         />
       )}
       <div className="session-stack">
@@ -1670,7 +1712,7 @@ export function ProjectView({
             onClick={onPickProject}
             title={chordHint(`${root} — click to open another project`, "project.open")}
           >
-            {root.split("/").filter(Boolean).pop() || root}
+            {worktree ? worktreeLabel(worktree) : root.split("/").filter(Boolean).pop() || root}
           </button>
           {repo?.isRepo && repo.branch && (
             <BranchPicker

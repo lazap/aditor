@@ -24,6 +24,8 @@ interface Props {
   onSelect(key: number): void;
   onClose(key: number): void;
   onNew(choice: AgentInfo): void;
+  /** Claude Code in a new worktree; absent outside a git repo or without Claude. */
+  onNewWorktree?(): void;
 }
 
 /**
@@ -39,6 +41,7 @@ export function SessionTabs({
   onSelect,
   onClose,
   onNew,
+  onNewWorktree,
 }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -171,6 +174,21 @@ export function SessionTabs({
                 </span>
               </button>
             ))}
+            {onNewWorktree && (
+              <button
+                className="agent-option"
+                role="menuitem"
+                onClick={() => {
+                  close();
+                  onNewWorktree();
+                }}
+              >
+                <span className="agent-option-text">
+                  <span className="agent-option-label">Claude Code in new worktree</span>
+                  <span className="agent-option-meta">own branch and folder, in a new tab</span>
+                </span>
+              </button>
+            )}
           </div>
         )}
       </div>

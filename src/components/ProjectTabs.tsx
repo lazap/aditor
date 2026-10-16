@@ -8,6 +8,8 @@ interface Props {
   running: Set<string>;
   /** Roots with sessions waiting on the user, and how many. */
   attention: Map<string, number>;
+  /** Tabs named other than by their folder: a worktree's repo and branch. */
+  labels: Map<string, string>;
   onSelect(root: string): void;
   onClose(root: string): void;
   onOpen(): void;
@@ -18,7 +20,17 @@ interface Props {
  * projects opened into one frame. Each project behind its tab keeps its tree,
  * its git state and its agents running; this strip only picks which is shown.
  */
-export function ProjectTabs({ tabs, active, running, attention, onSelect, onClose, onOpen }: Props) {
+export function ProjectTabs({
+  tabs,
+  active,
+  running,
+  attention,
+  labels,
+  onSelect,
+  onClose,
+  onOpen,
+}: Props) {
+  const label = (root: string) => labels.get(root) ?? basename(root);
   return (
     // The strip is the window's title bar: its empty stretch drags the window
     // and a double-click there zooms it. The tabs inside are not drag regions.
@@ -46,10 +58,10 @@ export function ProjectTabs({ tabs, active, running, attention, onSelect, onClos
           ) : (
             running.has(root) && <span className="project-tab-dot" aria-label="Agent running" />
           )}
-          <span className="project-tab-label">{basename(root)}</span>
+          <span className="project-tab-label">{label(root)}</span>
           <button
             className="project-tab-close"
-            aria-label={`Close ${basename(root)}`}
+            aria-label={`Close ${label(root)}`}
             title={chordHint("Close project", "project.close")}
             onClick={(e) => {
               e.stopPropagation();

@@ -11,6 +11,7 @@ mod search;
 mod settings;
 mod status;
 mod themes;
+mod worktree;
 
 use std::sync::Arc;
 
@@ -78,6 +79,9 @@ pub fn run() {
             git::git_tag_delete,
             git::git_push_tag,
             git::git_operation_continue,
+            worktree::worktree_create,
+            worktree::worktree_info,
+            worktree::worktree_remove,
             git::git_operation_abort,
             git_log::git_log,
             git_log::git_commit_details,

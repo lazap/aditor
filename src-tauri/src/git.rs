@@ -456,7 +456,7 @@ static GIT_GATE: Mutex<()> = Mutex::new(());
 
 /// Run a git write on a worker thread. Sync commands run on the macOS main
 /// thread and freeze the webview, and a push can take seconds.
-async fn off_thread<T, F>(f: F) -> Result<T, String>
+pub(crate) async fn off_thread<T, F>(f: F) -> Result<T, String>
 where
     F: FnOnce() -> Result<T, String> + Send + 'static,
     T: Send + 'static,
@@ -545,7 +545,7 @@ fn askpass() -> Option<&'static Path> {
 /// Bounded by `GIT_TIMEOUT`: a push stalled on the network, or a hook waiting
 /// on something that never comes, would otherwise hold `GIT_GATE` until the
 /// app restarts, and every later git action would queue behind it.
-fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
+pub(crate) fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
     let mut cmd = Command::new(crate::pty::user_shell());
     cmd.args(["-l", "-c", "exec git \"$@\"", "git"])
         .args(args)
@@ -837,7 +837,7 @@ pub async fn git_fetch(ws: State<'_, Workspace>, root: String) -> Result<(), Str
 
 /// A name git will take as a ref or revision rather than as an option: these
 /// all reach commands where a leading dash would be parsed as a flag.
-fn check_name(name: &str, what: &str) -> Result<(), String> {
+pub(crate) fn check_name(name: &str, what: &str) -> Result<(), String> {
     if name.trim().is_empty() || name.starts_with('-') || name.chars().any(char::is_whitespace) {
         return Err(format!("{name:?} is not a valid {what}."));
     }
