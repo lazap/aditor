@@ -4,6 +4,7 @@ import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { setAttentionCount } from "./notify/api";
+import { useAwake } from "./awake/api";
 import { ProjectView, type Dragging, type ViewApi } from "./components/ProjectView";
 import { useDialogs } from "./components/Modal";
 import { Toast, type ToastMessage } from "./components/Toast";
@@ -50,6 +51,7 @@ const SHELL_COMMANDS: readonly CommandId[] = [
   "project.next",
   "project.prev",
   "app.settings",
+  "app.keepAwake",
 ];
 
 /**
@@ -434,6 +436,9 @@ export default function App() {
     void openSettingsWindow().catch(() => showToast("Could not open Settings.", "error"));
   }, [showToast]);
 
+  const showError = useCallback((text: string) => showToast(text, "error"), [showToast]);
+  const [awake, toggleAwake] = useAwake(showError);
+
   const openPicker = useCallback(() => {
     setPending(null);
     setPicking(true);
@@ -451,6 +456,7 @@ export default function App() {
     "project.next": () => cycleTab(1),
     "project.prev": () => cycleTab(-1),
     "app.settings": openSettings,
+    "app.keepAwake": toggleAwake,
   };
   const commands: Handlers = showPicker ? { "project.open": openPicker } : { ...shell };
   if (!showPicker) {
@@ -515,6 +521,8 @@ export default function App() {
             onSelect={setActiveTab}
             onClose={(root) => void closeTab(root)}
             onOpen={openPicker}
+            awake={awake}
+            onToggleAwake={toggleAwake}
           />
         )}
         {tabs.map((root) => (

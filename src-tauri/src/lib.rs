@@ -1,5 +1,6 @@
 mod accounts;
 mod agents;
+mod awake;
 mod fs;
 mod git;
 mod git_log;
@@ -28,6 +29,7 @@ pub fn run() {
         .manage(agents::AgentState::default())
         .manage(search::SearchState::default())
         .manage(status::StatusState::default())
+        .manage(awake::AwakeState::default())
         .setup(|app| {
             app.manage(mcp::start(app.handle().clone())?);
             status::start(app.handle());
@@ -109,6 +111,8 @@ pub fn run() {
             mcp::mcp_tasks,
             mcp::mcp_answer,
             status::set_attention_count,
+            awake::awake_get,
+            awake::awake_set,
         ])
         // Agents run in their own process groups, so closing the window does not
         // hang them up -- without this they survive the app that spawned them.

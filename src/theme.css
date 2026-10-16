@@ -211,6 +211,29 @@ body,
   background: var(--bg-hover);
 }
 
+/* Keep awake: at the far end of the strip, lit in the accent while on. */
+.project-tab-awake {
+  appearance: none;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: var(--fg-dim);
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.project-tab-awake:hover {
+  color: var(--fg);
+  background: var(--bg-hover);
+}
+
+.project-tab-awake[aria-pressed="true"] {
+  color: var(--accent);
+}
+
 /* ---- top bar ---- */
 
 .topbar {
