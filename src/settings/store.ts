@@ -254,7 +254,9 @@ export function normalize(raw: unknown): { value: Settings; changed: boolean } {
           ? layout.insightWidth
           : DEFAULTS.layout.insightWidth,
       insightTab:
-        layout.insightTab === "info" || layout.insightTab === "tasks"
+        layout.insightTab === "info" ||
+        layout.insightTab === "tasks" ||
+        layout.insightTab === "subagents"
           ? layout.insightTab
           : DEFAULTS.layout.insightTab,
       diffLayout:

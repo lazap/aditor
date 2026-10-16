@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AgentInfo } from "../pty/api";
 import { AccountSwitcher } from "./AccountSwitcher";
 import { Section } from "./Section";
@@ -15,11 +15,52 @@ import {
   type AgentSessions as Data,
   type SessionSummary,
   type Totals,
+  type UsageLimits,
 } from "../agents/api";
+
+/**
+ * The agent's sessions in this workspace, refetched on every `refreshToken`.
+ * Lives above the panel's tabs, which all read from it, so the Subagents
+ * badge stays current while another tab is showing.
+ */
+export function useAgentSessions(
+  agentId: string | null,
+  workspace: string,
+  refreshToken: number,
+) {
+  const [data, setData] = useState<Data | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!agentId) return;
+    let stale = false;
+    agentSessions(workspace, agentId)
+      .then((d) => {
+        if (stale) return;
+        setData(d);
+        setError(null);
+      })
+      .catch((e) => !stale && setError(String(e)));
+    return () => {
+      stale = true;
+    };
+  }, [agentId, workspace, refreshToken]);
+
+  // The backend keeps what it fetched, so later `agentSessions` calls return it
+  // too; patching it in here just avoids waiting for the next one.
+  const patchLimits = useCallback(
+    (limits: UsageLimits) => setData((d) => d && { ...d, limits }),
+    [],
+  );
+
+  return { data, error, patchLimits };
+}
 
 interface Props {
   agent: AgentInfo | null;
-  workspace: string;
+  data: Data | null;
+  error: string | null;
+  onLimits(limits: UsageLimits): void;
   /** Bumped by the workspace watcher and by `agents://changed`. */
   refreshToken: number;
   /** An account switch invalidates everything below it: the sessions and
@@ -184,43 +225,25 @@ function Row({
  */
 export function AgentSessions({
   agent,
-  workspace,
+  data,
+  error,
+  onLimits,
   refreshToken,
   onAccountChanged,
   onResume,
 }: Props) {
-  const [data, setData] = useState<Data | null>(null);
-  const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [refreshing, setRefreshing] = useState(false);
   const [limitsError, setLimitsError] = useState<string | null>(null);
 
   const agentId = agent?.id ?? null;
 
-  useEffect(() => {
-    if (!agentId) return;
-    let stale = false;
-    agentSessions(workspace, agentId)
-      .then((d) => {
-        if (stale) return;
-        setData(d);
-        setError(null);
-      })
-      .catch((e) => !stale && setError(String(e)));
-    return () => {
-      stale = true;
-    };
-  }, [agentId, workspace, refreshToken]);
-
-  // The backend keeps what it fetched, so later `agentSessions` calls return it
-  // too; patching it in here just avoids waiting for the next one.
   const refreshLimits = async () => {
     if (!agentId) return;
     setRefreshing(true);
     setLimitsError(null);
     try {
-      const limits = await agentRefreshLimits(agentId);
-      setData((d) => d && { ...d, limits });
+      onLimits(await agentRefreshLimits(agentId));
     } catch (e) {
       setLimitsError(String(e));
     } finally {

@@ -108,6 +108,48 @@ pub struct SessionSummary {
     live: Option<Live>,
     models: Vec<ModelUsage>,
     totals: Totals,
+    /// Filled only for a live session: a finished session's subagents are
+    /// history, and already counted in `totals`.
+    subagents: Vec<SubagentSummary>,
+}
+
+/// One subagent a session spawned, read off its own transcript and the
+/// `.meta.json` the agent writes beside it.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SubagentSummary {
+    id: String,
+    agent_type: Option<String>,
+    /// The one-line description the parent gave it.
+    description: Option<String>,
+    background: bool,
+    depth: u32,
+    prompt: Option<String>,
+    /// What it did last: a tool and its target, or the start of its reply.
+    activity: Option<String>,
+    status: SubagentStatus,
+    started_at: i64,
+    /// File mtime: tool results land in the transcript too, and they are
+    /// activity as much as the model's turns are.
+    last_at: i64,
+    turns: u32,
+    models: Vec<ModelUsage>,
+    totals: Totals,
+}
+
+/// Inferred, since nothing on disk says "finished": see `fold_assistant` and
+/// `fold_user` for which records move it.
+#[derive(Serialize, Default, Clone, Copy, PartialEq, Debug)]
+#[serde(rename_all = "camelCase")]
+pub enum SubagentStatus {
+    #[default]
+    Running,
+    Done,
+    Interrupted,
+    /// Running by its transcript, but silent for longer than `STALL_AFTER`.
+    /// An agent stopped from outside leaves no record of it, so this is the
+    /// only way such a row ever stops reading as running.
+    Stalled,
 }
 
 /// Account-wide rate-limit headroom. The agent caches it only at startup and on
@@ -250,6 +292,12 @@ struct Accum {
     slug: Option<String>,
     branch: Option<String>,
     cost_state: Option<CostState>,
+    /// Folded for every transcript but read only for subagents', where the
+    /// first prompt is the task and the last record says whether it is done.
+    prompt: Option<String>,
+    prompt_ts: Option<i64>,
+    activity: Option<String>,
+    status: SubagentStatus,
 }
 
 impl Accum {
@@ -304,9 +352,13 @@ fn fold_line(line: &str, acc: &mut Accum) {
     // Cheap reject before serde. Tool-result lines carrying whole file bodies
     // are the bulk of the bytes on disk and can never contribute, so keep them
     // away from the JSON parser entirely.
+    // A prompt is a user message whose content is a plain string; tool results
+    // carry an array, so this keeps them out too.
     if !(line.contains("\"usage\"")
         || line.contains("\"cost-state\"")
-        || line.contains("\"ai-title\""))
+        || line.contains("\"ai-title\"")
+        || line.contains(r#""message":{"role":"user","content":""#)
+        || line.contains(INTERRUPTED))
     {
         return;
     }
@@ -316,6 +368,7 @@ fn fold_line(line: &str, acc: &mut Accum) {
     };
     match v.get("type").and_then(Value::as_str) {
         Some("assistant") => fold_assistant(&v, acc),
+        Some("user") => fold_user(&v, acc),
         Some("cost-state") => fold_cost_state(&v, acc),
         Some("ai-title") => {
             if let Some(t) = v.get("aiTitle").and_then(Value::as_str) {
@@ -331,6 +384,23 @@ fn fold_assistant(v: &Value, acc: &mut Accum) {
         Some(m) => m,
         None => return,
     };
+    // Before either early return below: a synthetic entry (a limit hit, say)
+    // still ends the run, and a retried request still says what it was doing.
+    // A turn is written one content block per line, with `stop_reason` only on
+    // the last, so a missing one means the turn is still going.
+    acc.status = match msg.get("stop_reason").and_then(Value::as_str) {
+        None | Some("tool_use") => SubagentStatus::Running,
+        Some(_) => SubagentStatus::Done,
+    };
+    if let Some(a) = msg
+        .get("content")
+        .and_then(Value::as_array)
+        .and_then(|c| c.last())
+        .and_then(describe_block)
+    {
+        acc.activity = Some(a);
+    }
+
     let model = msg.get("model").and_then(Value::as_str).unwrap_or("");
     // Synthetic entries stand in for things like an interrupted turn; they
     // carry a usage block of zeroes and no real model.
@@ -384,6 +454,73 @@ fn fold_assistant(v: &Value, acc: &mut Accum) {
         if let Some(s) = v.get("slug").and_then(Value::as_str).filter(|s| !s.is_empty()) {
             acc.slug = Some(s.to_string());
         }
+    }
+}
+
+/// What the agent writes in place of a turn the user stopped.
+const INTERRUPTED: &str = "[Request interrupted by user";
+
+/// A user record: the first one is a subagent's task, a later one a follow-up
+/// that sets it running again, and an interrupt marker ends it.
+fn fold_user(v: &Value, acc: &mut Accum) {
+    let Some(content) = v.get("message").and_then(|m| m.get("content")) else { return };
+    if let Some(text) = content.as_str() {
+        if acc.prompt.is_none() {
+            acc.prompt = Some(clip(text, PROMPT_CHARS));
+            acc.prompt_ts = v.get("timestamp").and_then(Value::as_str).and_then(iso_to_ms);
+        }
+        acc.status = SubagentStatus::Running;
+        return;
+    }
+    let interrupted = content.as_array().is_some_and(|blocks| {
+        blocks.iter().any(|b| {
+            b.get("text").and_then(Value::as_str).is_some_and(|t| t.starts_with(INTERRUPTED))
+        })
+    });
+    if interrupted {
+        acc.status = SubagentStatus::Interrupted;
+    }
+}
+
+/// How much of a subagent's prompt is kept. It is shown, not searched, and a
+/// prompt can carry a whole pasted file.
+const PROMPT_CHARS: usize = 4000;
+const ACTIVITY_CHARS: usize = 120;
+
+/// At most `max` characters of `s`, marked when cut.
+fn clip(s: &str, max: usize) -> String {
+    let s = s.trim();
+    match s.char_indices().nth(max) {
+        Some((at, _)) => format!("{}…", s[..at].trim_end()),
+        None => s.to_string(),
+    }
+}
+
+/// One line for a content block: `Read · agents.rs`, or the start of a reply.
+fn describe_block(block: &Value) -> Option<String> {
+    let line = |s: &str| clip(s.lines().find(|l| !l.trim().is_empty()).unwrap_or(""), ACTIVITY_CHARS);
+    match block.get("type").and_then(Value::as_str)? {
+        "tool_use" => {
+            let name = block.get("name").and_then(Value::as_str)?;
+            let input = block.get("input");
+            // The first of these an input has is the most telling part of it.
+            let hint = ["description", "file_path", "pattern", "command", "path", "url", "query"]
+                .iter()
+                .find_map(|k| input?.get(*k)?.as_str().filter(|s| !s.is_empty()).map(|s| (*k, s)))
+                .map(|(k, s)| match k {
+                    "file_path" | "path" => s.rsplit('/').next().unwrap_or(s).to_string(),
+                    _ => line(s),
+                });
+            Some(match hint {
+                Some(h) => format!("{name} · {h}"),
+                None => name.to_string(),
+            })
+        }
+        // Replies often open on a markdown heading; the marks are noise here.
+        "text" => Some(line(block.get("text")?.as_str()?).trim_start_matches(['#', ' ']).to_string())
+            .filter(|s| !s.is_empty()),
+        "thinking" => Some("Thinking…".to_string()),
+        _ => None,
     }
 }
 
@@ -761,7 +898,8 @@ fn total(c: &Counters) -> u64 {
     c.input + c.output + c.cache_read + c.cache_write
 }
 
-fn summarize(id: String, acc: &Accum, live: Option<Live>, fallback_ts: i64) -> SessionSummary {
+/// What a transcript spent, per model and in total.
+fn spend(acc: &Accum) -> (Vec<ModelUsage>, Totals) {
     // A session that recorded its own cost is authoritative: that is the number
     // the agent itself reports, and it accounts for everything the session
     // spent. The price table is only the fallback, and it is *always* a floor
@@ -799,7 +937,11 @@ fn summarize(id: String, acc: &Accum, live: Option<Live>, fallback_ts: i64) -> S
     for c in source.values() {
         tokens.add(c);
     }
+    (models, Totals { tokens, cost_usd, exact })
+}
 
+fn summarize(id: String, acc: &Accum, live: Option<Live>, fallback_ts: i64) -> SessionSummary {
+    let (models, totals) = spend(acc);
     SessionSummary {
         title: acc.title.clone().or_else(|| acc.slug.clone()),
         branch: acc.branch.clone(),
@@ -808,9 +950,60 @@ fn summarize(id: String, acc: &Accum, live: Option<Live>, fallback_ts: i64) -> S
         turns: acc.turns,
         live,
         models,
-        totals: Totals { tokens, cost_usd, exact },
+        totals,
+        subagents: Vec::new(),
         id,
     }
+}
+
+/// How long a running subagent may go without writing before it reads as
+/// stalled. Generous: one long build or test run is a quiet stretch too.
+const STALL_AFTER_MS: i64 = 15 * 60 * 1000;
+
+/// The `.meta.json` beside a subagent transcript.
+#[derive(Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+struct SubagentMeta {
+    agent_type: Option<String>,
+    description: Option<String>,
+    request_shape: Option<String>,
+    spawn_depth: Option<u32>,
+}
+
+fn summarize_subagent(path: &Path, acc: &Accum, now_ms: i64) -> SubagentSummary {
+    let meta: SubagentMeta = std::fs::read_to_string(path.with_extension("meta.json"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or_default();
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let last_at = mtime_ms(path);
+    let status = match acc.status {
+        SubagentStatus::Running if now_ms - last_at > STALL_AFTER_MS => SubagentStatus::Stalled,
+        s => s,
+    };
+    let (models, totals) = spend(acc);
+    SubagentSummary {
+        id: stem.strip_prefix("agent-").unwrap_or(stem).to_string(),
+        agent_type: meta.agent_type,
+        description: meta.description,
+        background: meta.request_shape.as_deref() == Some("background"),
+        depth: meta.spawn_depth.unwrap_or(1),
+        prompt: acc.prompt.clone(),
+        activity: acc.activity.clone(),
+        status,
+        started_at: acc.prompt_ts.or(acc.first_ts).unwrap_or(last_at),
+        last_at,
+        turns: acc.turns,
+        models,
+        totals,
+    }
+}
+
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as i64)
+        .unwrap_or(0)
 }
 
 fn claude_sessions(root: &Path, state: &AgentState, ptys: &PtyRegistry) -> AgentSessions {
@@ -830,6 +1023,7 @@ fn claude_sessions(root: &Path, state: &AgentState, ptys: &PtyRegistry) -> Agent
 
     let mut files = state.files.lock().unwrap();
     let mut sessions = Vec::new();
+    let now = now_ms();
 
     for entry in entries.flatten() {
         let path = entry.path();
@@ -858,11 +1052,15 @@ fn claude_sessions(root: &Path, state: &AgentState, ptys: &PtyRegistry) -> Agent
                 models: c.models.clone(),
             }),
             seen_requests: HashSet::new(),
+            ..Accum::default()
         };
 
         // Subagent transcripts sit beside the session they belong to. Their
         // tokens are part of what the session spent, so fold them in -- and
         // only their tokens, since their titles and branches are their own.
+        // A live session's are also listed one by one, for the Subagents tab.
+        let is_live = live.contains_key(&id);
+        let mut subagents = Vec::new();
         let sub_dir = dir.join(&id).join("subagents");
         if let Ok(subs) = std::fs::read_dir(&sub_dir) {
             for sub in subs.flatten() {
@@ -873,14 +1071,20 @@ fn claude_sessions(root: &Path, state: &AgentState, ptys: &PtyRegistry) -> Agent
                 let sub_cached = files.entry(sub_path.clone()).or_default();
                 fold_file(&sub_path, sub_cached);
                 acc.merge_usage(&sub_cached.accum);
+                if is_live {
+                    subagents.push(summarize_subagent(&sub_path, &sub_cached.accum, now));
+                }
             }
         }
+        subagents.sort_by_key(|s| s.started_at);
 
-        if acc.is_empty() {
+        // Kept while its only content is a subagent yet to finish a turn.
+        if acc.is_empty() && subagents.is_empty() {
             continue;
         }
         let live_entry = live.remove(&id);
-        let summary = summarize(id, &acc, live_entry, mtime_ms(&path));
+        let mut summary = summarize(id, &acc, live_entry, mtime_ms(&path));
+        summary.subagents = subagents;
         // A session that recorded a cost but never took a turn -- an immediate
         // quit, say -- is a row that says nothing. A live one still belongs:
         // it simply has not had its first turn yet.
@@ -1175,6 +1379,62 @@ mod tests {
             summarize("s".into(), &acc, None, 0).title.as_deref(),
             Some("Buffering fix")
         );
+    }
+
+    const PROMPT: &str = r#"{"type":"user","timestamp":"2026-09-23T10:00:00.000Z","message":{"role":"user","content":"Map the PTY code"}}"#;
+
+    fn turn(stop: &str, block: &str) -> String {
+        format!(
+            r#"{{"type":"assistant","message":{{"model":"claude-opus-5","stop_reason":{stop},"content":[{block}],"usage":{{"input_tokens":1,"output_tokens":1}}}}}}"#
+        )
+    }
+
+    #[test]
+    fn a_subagent_runs_until_its_turn_ends() {
+        let tool = r#"{"type":"tool_use","name":"Read","input":{"file_path":"/src/pty.rs"}}"#;
+        let acc = fold(&format!("{PROMPT}\n{}", turn("\"tool_use\"", tool)));
+        assert_eq!(acc.status, SubagentStatus::Running);
+        assert_eq!(acc.activity.as_deref(), Some("Read · pty.rs"));
+        assert_eq!(acc.prompt.as_deref(), Some("Map the PTY code"));
+        assert_eq!(acc.prompt_ts, iso_to_ms("2026-09-23T10:00:00.000Z"));
+
+        let reply = r#"{"type":"text","text":"\nPTYs live in pty.rs.\nMore."}"#;
+        let acc = fold(&format!("{PROMPT}\n{}\n{}", turn("null", tool), turn("\"end_turn\"", reply)));
+        assert_eq!(acc.status, SubagentStatus::Done);
+        assert_eq!(acc.activity.as_deref(), Some("PTYs live in pty.rs."));
+    }
+
+    #[test]
+    fn a_follow_up_prompt_sets_a_finished_subagent_running_again() {
+        let reply = r#"{"type":"text","text":"Done."}"#;
+        let follow = PROMPT.replace("Map the PTY code", "Now the watcher");
+        let acc = fold(&format!("{PROMPT}\n{}\n{follow}", turn("\"end_turn\"", reply)));
+        assert_eq!(acc.status, SubagentStatus::Running);
+        // The task stays the first prompt.
+        assert_eq!(acc.prompt.as_deref(), Some("Map the PTY code"));
+    }
+
+    #[test]
+    fn an_interrupt_marker_ends_a_subagent() {
+        let tool = r#"{"type":"tool_use","name":"Bash","input":{"command":"cargo build"}}"#;
+        let stop = r#"{"type":"user","message":{"role":"user","content":[{"type":"text","text":"[Request interrupted by user]"}]}}"#;
+        let acc = fold(&format!("{PROMPT}\n{}\n{stop}", turn("\"tool_use\"", tool)));
+        assert_eq!(acc.status, SubagentStatus::Interrupted);
+        assert_eq!(acc.activity.as_deref(), Some("Bash · cargo build"));
+    }
+
+    #[test]
+    fn a_synthetic_stop_still_ends_a_subagent() {
+        let limit = r#"{"type":"assistant","message":{"model":"<synthetic>","stop_reason":"stop_sequence","content":[{"type":"text","text":"You've hit your limit"}],"usage":{"input_tokens":0,"output_tokens":0}}}"#;
+        let acc = fold(&format!("{PROMPT}\n{limit}"));
+        assert_eq!(acc.status, SubagentStatus::Done);
+        assert_eq!(acc.turns, 0);
+    }
+
+    #[test]
+    fn clips_on_characters_not_bytes() {
+        assert_eq!(clip("  héllo  ", 10), "héllo");
+        assert_eq!(clip("héllo world", 5), "héllo…");
     }
 
     #[test]

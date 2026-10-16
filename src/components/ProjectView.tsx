@@ -1394,6 +1394,8 @@ export function ProjectView({
     // The chord opens the panel too, so it never lands on a hidden tab.
     "focus.agentInfo": () => patchLayout({ insightOpen: true, insightTab: "info" }),
     "focus.agentTasks": () => patchLayout({ insightOpen: true, insightTab: "tasks" }),
+    "focus.agentSubagents": () =>
+      patchLayout({ insightOpen: true, insightTab: "subagents" }),
     "session.new": newSession,
     "session.close": () => {
       if (activeKey !== null) void closeSession(activeKey);

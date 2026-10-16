@@ -54,7 +54,7 @@ export type Appearance = "system" | "fixed";
 export type RailTab = "files" | "git";
 
 /** Which tab the right-hand agent panel shows. */
-export type InsightTab = "info" | "tasks";
+export type InsightTab = "info" | "tasks" | "subagents";
 
 /** Window furniture: sizes and which panels are open. */
 export interface Layout {

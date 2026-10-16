@@ -3,7 +3,8 @@ import type { SessionSummary } from "../agents/api";
 import type { InsightTab } from "../settings/schema";
 import { patchLayout, useSetting } from "../settings/store";
 import { chordHint } from "../shortcuts/store";
-import { AgentSessions } from "./AgentSessions";
+import { AgentSessions, useAgentSessions } from "./AgentSessions";
+import { AgentSubagents, runningSubagents } from "./AgentSubagents";
 import { AgentTasks, useAgentTasks } from "./AgentTasks";
 
 interface Props {
@@ -37,6 +38,23 @@ const TasksIcon = () => (
   </svg>
 );
 
+/** Two linked nodes: a parent and the agent it spawned. */
+const SubagentsIcon = () => (
+  <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
+    strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" focusable="false"
+    aria-hidden="true">
+    <rect x="1.75" y="1.75" width="5" height="4.5" rx="1" />
+    <rect x="9.25" y="9.75" width="5" height="4.5" rx="1" />
+    <path d="M4.25 6.25v3.75a2 2 0 0 0 2 2h3" />
+  </svg>
+);
+
+const HEADINGS: Record<InsightTab, string> = {
+  info: "",
+  tasks: " · Tasks",
+  subagents: " · Subagents",
+};
+
 /**
  * The right-hand agent panel: whichever tab is selected, with the tab strip on
  * the window's outer edge -- the rail's strip, mirrored.
@@ -44,6 +62,13 @@ const TasksIcon = () => (
 export function InsightPanel({ agent, onClose, ...info }: Props) {
   const tab = useSetting((s) => s.layout.insightTab);
   const tasks = useAgentTasks();
+  const { data, error, patchLimits } = useAgentSessions(
+    agent?.id ?? null,
+    info.workspace,
+    info.refreshToken,
+  );
+  const sessions = data?.sessions ?? [];
+  const running = runningSubagents(sessions);
   const done = tasks.filter((t) => t.status === "completed").length;
   const select = (t: InsightTab) => patchLayout({ insightTab: t });
 
@@ -53,20 +78,31 @@ export function InsightPanel({ agent, onClose, ...info }: Props) {
         <div className="insight-bar">
           <span className="insight-heading">
             {agent?.label ?? "Agent"}
-            {tab === "tasks" && " · Tasks"}
+            {HEADINGS[tab]}
           </span>
           <button className="insight-close" onClick={onClose} title="Hide panel">
             ✕
           </button>
         </div>
 
-        {/* Both stay mounted, as in the rail: remounting Info would refetch
-            the sessions and fold every expanded row. */}
+        {/* All stay mounted, as in the rail: remounting one would fold every
+            expanded row. */}
         <div className="insight-body" hidden={tab !== "info"}>
-          <AgentSessions agent={agent} {...info} />
+          <AgentSessions
+            agent={agent}
+            data={data}
+            error={error}
+            onLimits={patchLimits}
+            refreshToken={info.refreshToken}
+            onAccountChanged={info.onAccountChanged}
+            onResume={info.onResume}
+          />
         </div>
         <div className="insight-body" hidden={tab !== "tasks"}>
           <AgentTasks agent={agent} tasks={tasks} />
+        </div>
+        <div className="insight-body" hidden={tab !== "subagents"}>
+          <AgentSubagents agent={agent} sessions={sessions} onShow={info.onResume} />
         </div>
       </div>
 
@@ -95,6 +131,17 @@ export function InsightPanel({ agent, onClose, ...info }: Props) {
               {done}/{tasks.length}
             </span>
           )}
+        </button>
+        <button
+          className="rail-tab"
+          role="tab"
+          aria-selected={tab === "subagents"}
+          aria-label="Subagents"
+          title={chordHint("Subagents", "focus.agentSubagents")}
+          onClick={() => select("subagents")}
+        >
+          <SubagentsIcon />
+          {running > 0 && <span className="rail-tab-badge">{running}</span>}
         </button>
       </nav>
     </>

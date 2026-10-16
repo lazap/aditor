@@ -3309,6 +3309,115 @@ button.cwd:hover {
   text-decoration-color: var(--border);
 }
 
+/* ---- agent subagents ---- */
+
+.isubs {
+  padding: 4px 0 8px;
+}
+
+.isub-group + .isub-group {
+  margin-top: 6px;
+  border-top: 1px solid var(--border);
+  padding-top: 4px;
+}
+
+.isub-group-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 2px 12px;
+  color: var(--fg-dim);
+  font-size: 11px;
+}
+
+.isub-group-title {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.isub-show {
+  margin: 0 0 0 auto;
+}
+
+.isub-group-head:hover .isub-show {
+  visibility: visible;
+}
+
+/* The tab strip's busy spinner, at row size. */
+.isub-spinner {
+  flex: 0 0 auto;
+  width: 8px;
+  height: 8px;
+  margin: 0 1px;
+  border-radius: 50%;
+  border: 1.5px solid var(--accent);
+  border-top-color: transparent;
+  animation: session-busy 0.9s linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .isub-spinner {
+    animation: none;
+  }
+}
+
+.isub-mark {
+  flex: 0 0 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--fg-dim);
+}
+
+.isub-mark[data-status="done"] {
+  color: var(--st-added);
+}
+
+.isub-mark[data-status="interrupted"],
+.isub-mark[data-status="stalled"] {
+  color: var(--st-modified);
+}
+
+.isub[data-status="done"] .isession-title,
+.isub[data-status="interrupted"] .isession-title {
+  color: var(--fg-dim);
+}
+
+.isub .isession-sub .viewer-badge {
+  padding: 0 4px;
+}
+
+.isub-activity {
+  padding: 2px 12px 0 28px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.isub[data-status="running"] .isub-activity {
+  color: var(--fg);
+}
+
+.isub-prompt {
+  margin: 0 0 8px;
+  max-height: 160px;
+  overflow: auto;
+  padding: 6px 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* ---- git: dialogs, menus, log, blame ---- */
 
 /* Commit graph lanes are --graph-0..7, eight theme tokens, cycled. */

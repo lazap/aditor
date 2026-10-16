@@ -42,6 +42,29 @@ export interface SessionSummary {
   live: Live | null;
   models: ModelUsage[];
   totals: Totals;
+  /** Only ever filled for a live session. */
+  subagents: SubagentSummary[];
+}
+
+/** Inferred from the transcript: nothing on disk says "finished". `stalled` is
+ *  running by the transcript but silent for a long while. */
+export type SubagentStatus = "running" | "done" | "interrupted" | "stalled";
+
+export interface SubagentSummary {
+  id: string;
+  agentType: string | null;
+  description: string | null;
+  background: boolean;
+  depth: number;
+  prompt: string | null;
+  /** What it did last: a tool and its target, or the start of its reply. */
+  activity: string | null;
+  status: SubagentStatus;
+  startedAt: number;
+  lastAt: number;
+  turns: number;
+  models: ModelUsage[];
+  totals: Totals;
 }
 
 export interface UsageLimits {

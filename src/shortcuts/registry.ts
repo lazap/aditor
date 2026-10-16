@@ -13,6 +13,7 @@ export type CommandId =
   | "focus.git"
   | "focus.agentInfo"
   | "focus.agentTasks"
+  | "focus.agentSubagents"
   | "account.next"
   | "prompt.templates"
   | "project.open"
@@ -69,6 +70,12 @@ export const COMMANDS: readonly ShortcutCommand[] = [
     label: "Show agent info",
   },
   { id: "focus.agentTasks", group: "Focus", chord: "mod+4", label: "Show tasks" },
+  {
+    id: "focus.agentSubagents",
+    group: "Focus",
+    chord: "mod+5",
+    label: "Show subagents",
+  },
   // Sessions take IntelliJ's next/previous-tab chords, being the tabs used most;
   // projects sit one modifier over. ⌘W stays the window's own.
   { id: "session.new", group: "Tabs", chord: "mod+shift+t", label: "New agent session" },
