@@ -234,6 +234,43 @@ body,
   color: var(--accent);
 }
 
+/* A newer release: just before the cup, which then gives up the auto margin. */
+.project-tab-update {
+  appearance: none;
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: auto;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 11px;
+  padding: 1px 8px;
+  cursor: pointer;
+}
+
+.project-tab-update:hover:not(:disabled) {
+  background: var(--bg-hover);
+}
+
+.project-tab-update:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
+.project-tab-update + .project-tab-awake {
+  margin-left: 0;
+}
+
+.update-notes {
+  max-height: 200px;
+  overflow: auto;
+  margin: 0 0 10px;
+  white-space: pre-wrap;
+  font-size: 12px;
+}
+
 /* ---- top bar ---- */
 
 .topbar {

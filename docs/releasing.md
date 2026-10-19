@@ -62,7 +62,10 @@ missing downloads. Artifacts land in `dist-release/` and are attached to it:
 - `Aditor_<version>_aarch64.zip` -- the `.app`, packed with `ditto` rather than
   `zip`, which would lose symlinks and resource forks
 - `Aditor_<version>_aarch64.dmg` -- when DMG packaging succeeds (see below)
+- `Aditor_<version>_aarch64.app.tar.gz` and its `.sig` -- the self-updater's
+  download (see [Self-update](#self-update))
 - `SHA256SUMS.txt`
+- `latest.json` -- the feed installed copies poll
 
 Builds are ad-hoc signed, not notarized, so macOS blocks them on first launch
 on any machine but the one that built them. The generated release notes carry
@@ -76,6 +79,40 @@ rather than unverified -- a state no Gatekeeper prompt gets past. The script
 runs `codesign --verify --deep --strict` on the bundle and refuses to ship one
 that fails.
 
+### Self-update
+
+Installed copies check
+`https://github.com/lazap/aditor/releases/latest/download/latest.json` at
+launch and every six hours, and offer the update in the project-tabs strip
+(*Update to x.y.z*, then *Restart to update*). *Check for updates…* in the app
+menu checks on demand. GitHub serves `latest/` from the newest release that is
+neither a draft nor a prerelease, so prereleases are never offered.
+
+That URL needs no auth, so it only works while `lazap/aditor` is public. While
+the repo is private it answers 404: automatic checks stay quiet, and a manual
+check reports the failure.
+
+The updater installs only a tarball signed by the key whose public half is
+`plugins.updater.pubkey` in `src-tauri/tauri.conf.json`. That key is separate
+from Apple code signing and has no password:
+
+- locally, `release.sh` reads it from `~/.tauri/aditor.key`, or from
+  `TAURI_SIGNING_PRIVATE_KEY` when that is set
+- in CI it is the `TAURI_SIGNING_PRIVATE_KEY` repository secret:
+
+  ```bash
+  gh secret set TAURI_SIGNING_PRIVATE_KEY -R lazap/aditor < ~/.tauri/aditor.key
+  ```
+
+Back the key up. If it is lost, a release signed with a new key cannot reach
+installed copies through the updater. They have to install that release once
+by hand or through brew.
+
+The update replaces the `.app` wherever it runs from, and is downloaded by the
+app rather than a browser, so it is never quarantined. Because builds are only
+ad-hoc signed, macOS may ask again for permissions it already granted
+(folders, notifications) after an update.
+
 ### Homebrew
 
 A cask in a separate tap repo installs from these releases, so treat the zip as
@@ -85,6 +122,12 @@ a contract and change none of it without updating the cask:
   `v<version>`
 - it unpacks to `Aditor.app` at its root (`ditto --keepParent`)
 - its hash is the matching line in `SHA256SUMS.txt`
+
+The cask declares `auto_updates true`, since the app updates itself:
+`brew upgrade` and `brew outdated` skip it unless given `--greedy`. Brew still
+records the version it installed, so after a self-update `brew list --versions`
+is behind the app; nothing acts on that. Bump the cask's `version` and `sha256`
+for each release all the same, since new installs come from it.
 
 The cask points at the zip, not the DMG, because the DMG is optional -- a failed
 `SetFile` ships the zip alone. Since builds are not notarized, the cask clears

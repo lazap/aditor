@@ -29,6 +29,7 @@ export type CommandId =
   | "session.prev"
   | "app.settings"
   | "app.keepAwake"
+  | "app.checkUpdates"
   | "git.commit"
   | "git.pull"
   | "git.pullRebase"
@@ -137,6 +138,7 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   { id: "file.new", group: "App", chord: "mod+n", label: "New file…" },
   { id: "app.settings", group: "App", chord: "mod+,", label: "Settings…" },
   { id: "app.keepAwake", group: "App", chord: null, label: "Keep Mac awake (toggle)" },
+  { id: "app.checkUpdates", group: "App", chord: null, label: "Check for updates…" },
 ];
 
 export const GROUPS: ReadonlyArray<ShortcutCommand["group"]> = [

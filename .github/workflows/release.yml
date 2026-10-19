@@ -45,9 +45,11 @@ jobs:
           workspaces: src-tauri
 
       # gh and jq ship on the macOS runner image; GH_TOKEN authenticates gh.
+      # The updater key signs Aditor.app.tar.gz; it has no password.
       - name: Build and publish
         env:
           GH_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           args=()
           [ "${{ inputs.draft }}" = true ] && args+=(--draft)

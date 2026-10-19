@@ -111,6 +111,10 @@ Privacy & Security > **Open Anyway**, or clear the quarantine flag:
 xattr -dr com.apple.quarantine /Applications/Aditor.app
 ```
 
+After that, Aditor updates itself. It checks for a new release at launch and
+every few hours, and offers it in the tab strip. *Check for updates…* in the
+app menu checks on demand.
+
 You also need the [`claude` CLI](https://claude.com/claude-code) on your `PATH`.
 It is a genuine runtime dependency, not just a nice-to-have: the main pane has
 nothing to run without it, and the sessions panel reads `~/.claude.json` and

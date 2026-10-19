@@ -1,6 +1,6 @@
 [package]
 name = "aditor"
-version = "0.2.0"
+version = "0.3.0"
 description = "A lightweight editor whose main pane is an agent CLI"
 authors = ["Lazar Petrov"]
 edition = "2021"
@@ -46,6 +46,9 @@ tiny_http = "0.12"
 tauri-plugin-notification = "2"
 # Cargo.toml and pyproject.toml, for the run configurations `run.rs` suggests.
 toml = "0.8"
+# Self-update from the GitHub release's latest.json, and the relaunch after it.
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

@@ -5,6 +5,7 @@ import { ProjectPicker } from "./components/ProjectPicker";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { setAttentionCount } from "./notify/api";
 import { useAwake } from "./awake/api";
+import { useUpdate } from "./update/api";
 import { ProjectView, type Dragging, type ViewApi } from "./components/ProjectView";
 import { useDialogs } from "./components/Modal";
 import { Toast, type ToastMessage } from "./components/Toast";
@@ -52,6 +53,7 @@ const SHELL_COMMANDS: readonly CommandId[] = [
   "project.prev",
   "app.settings",
   "app.keepAwake",
+  "app.checkUpdates",
 ];
 
 /**
@@ -439,6 +441,34 @@ export default function App() {
   const showError = useCallback((text: string) => showToast(text, "error"), [showToast]);
   const [awake, toggleAwake] = useAwake(showError);
 
+  const confirmInstall = useCallback(
+    async (version: string, notes: string) =>
+      !!(await ask({
+        title: `Aditor ${version} is available`,
+        body: (
+          <>
+            {notes && <pre className="update-notes">{notes}</pre>}
+            The app is replaced where it is installed; restart it afterwards to switch over.
+          </>
+        ),
+        confirm: "Update",
+      })),
+    [ask],
+  );
+  const confirmRestart = useCallback(
+    async () =>
+      running.size === 0 ||
+      !!(await ask({
+        title: "Restart Aditor",
+        body: <>Agents are still running. Restarting stops them, in every window.</>,
+        confirm: "Restart",
+        danger: true,
+      })),
+    [ask, running],
+  );
+  const update = useUpdate({ onInfo: showToast, onError: showError, confirmInstall, confirmRestart });
+  const checkUpdates = () => void update.checkNow();
+
   const openPicker = useCallback(() => {
     setPending(null);
     setPicking(true);
@@ -457,8 +487,11 @@ export default function App() {
     "project.prev": () => cycleTab(-1),
     "app.settings": openSettings,
     "app.keepAwake": toggleAwake,
+    "app.checkUpdates": checkUpdates,
   };
-  const commands: Handlers = showPicker ? { "project.open": openPicker } : { ...shell };
+  const commands: Handlers = showPicker
+    ? { "project.open": openPicker, "app.checkUpdates": checkUpdates }
+    : { ...shell };
   if (!showPicker) {
     for (const { id } of COMMANDS) {
       if (SHELL_COMMANDS.includes(id)) continue;
@@ -523,6 +556,9 @@ export default function App() {
             onOpen={openPicker}
             awake={awake}
             onToggleAwake={toggleAwake}
+            update={update.state}
+            onInstallUpdate={() => void update.install()}
+            onRestartToUpdate={() => void update.restart()}
           />
         )}
         {tabs.map((root) => (

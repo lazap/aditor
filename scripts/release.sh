@@ -115,6 +115,23 @@ else
     || die "gh is not installed and GITHUB_TOKEN is unset. Either 'brew install gh && gh auth login', or export a token with 'repo' scope."
 fi
 
+# --- Preflight: updater signing key ------------------------------------
+# `createUpdaterArtifacts` makes the build sign Aditor.app.tar.gz, and the app
+# refuses an update whose signature does not match the pubkey in
+# tauri.conf.json -- so a missing key fails the build only after minutes of
+# compiling. CI passes the key in the environment; locally it is read from the
+# file `tauri signer generate` wrote. Losing that key means shipping a release
+# with a new pubkey, which installed copies cannot update to by themselves.
+UPDATER_KEY="$HOME/.tauri/aditor.key"
+if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+  [ -f "$UPDATER_KEY" ] \
+    || die "no updater signing key: set TAURI_SIGNING_PRIVATE_KEY or put the key at $UPDATER_KEY. See docs/releasing.md."
+  TAURI_SIGNING_PRIVATE_KEY=$(cat "$UPDATER_KEY")
+fi
+# The key has no password; unset, the build would stop to ask for one.
+TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD-}"
+export TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+
 say "releasing $TAG ($SLUG) from $(git rev-parse --short HEAD) via $BACKEND"
 
 # --- SetFile ------------------------------------------------------------
@@ -186,6 +203,18 @@ ditto -c -k --sequesterRsrc --keepParent "$APP" "$ZIP"
 
 ASSETS=("$ZIP")
 
+# The self-updater's download: the same .app as a tarball, and its signature.
+# Renamed to carry the version, like every other asset.
+UPDATER_TAR="$BUNDLE/macos/Aditor.app.tar.gz"
+[ -f "$UPDATER_TAR" ] && [ -f "$UPDATER_TAR.sig" ] \
+  || die "no updater artifact at $UPDATER_TAR(.sig) -- check bundle.createUpdaterArtifacts in src-tauri/tauri.conf.json."
+[ ! "$UPDATER_TAR" -ot "$APP/Contents/Info.plist" ] \
+  || die "$UPDATER_TAR is older than $APP -- it is left over from an earlier build. Re-run without --skip-build."
+TAR="$OUT/Aditor_${VERSION}_${ARCH}.app.tar.gz"
+cp "$UPDATER_TAR" "$TAR"
+cp "$UPDATER_TAR.sig" "$TAR.sig"
+ASSETS+=("$TAR" "$TAR.sig")
+
 # Match the version in the filename: an older image still sitting in the
 # bundle directory must not be mistaken for this build's.
 DMG=$(ls -1 "$BUNDLE"/dmg/Aditor_"${VERSION}"_*.dmg 2>/dev/null | head -1 || true)
@@ -209,19 +238,23 @@ for asset in "${ASSETS[@]}"; do sum_names+=("$(basename "$asset")"); done
 ASSETS+=("$SUMS")
 
 # --- Release notes ------------------------------------------------------
+PREV=$(git describe --tags --abbrev=0 2>/dev/null || true)
+if [ -n "$PREV" ]; then
+  CHANGES=$(git log "$PREV..HEAD" --pretty='- %s')
+else
+  CHANGES=$(git log --pretty='- %s')
+fi
+
 if [ -z "$NOTES_FILE" ]; then
   NOTES_FILE=$(mktemp -t aditor-release-notes)
   trap 'rm -f "$NOTES_FILE"' EXIT
+  # The release body adds install steps, which mean nothing in-app.
+  FEED_NOTES="$CHANGES"
 
-  PREV=$(git describe --tags --abbrev=0 2>/dev/null || true)
   {
     echo "## Changes"
     echo
-    if [ -n "$PREV" ]; then
-      git log "$PREV..HEAD" --pretty='- %s'
-    else
-      git log --pretty='- %s'
-    fi
+    echo "$CHANGES"
     cat <<'NOTES'
 
 ## Installation
@@ -243,6 +276,24 @@ the main pane has nothing to run without it.
 NOTES
   } > "$NOTES_FILE"
 fi
+
+# --- Updater feed -------------------------------------------------------
+# The app polls releases/latest/download/latest.json, which GitHub resolves to
+# the newest release that is neither a draft nor a prerelease -- so a
+# prerelease is never offered to installed copies. The app shows `notes`
+# before installing: --notes FILE as given, otherwise just the change list.
+FEED_NOTES="${FEED_NOTES-$(cat "$NOTES_FILE")}"
+FEED="$OUT/latest.json"
+jq -n \
+  --arg version "$VERSION" \
+  --arg notes "$FEED_NOTES" \
+  --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --arg platform "darwin-$ARCH" \
+  --rawfile sig "$TAR.sig" \
+  --arg url "https://github.com/$SLUG/releases/download/$TAG/$(basename "$TAR")" \
+  '{version: $version, notes: $notes, pub_date: $date,
+    platforms: {($platform): {signature: $sig, url: $url}}}' > "$FEED"
+ASSETS+=("$FEED")
 
 # --- Publish ------------------------------------------------------------
 # Always created as a draft and flipped live at the end, so a failed upload

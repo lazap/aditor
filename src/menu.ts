@@ -15,7 +15,12 @@ import { commandById, type CommandId } from "./shortcuts/registry";
 import { chordFor, subscribe } from "./shortcuts/store";
 
 /** The commands that earn a place in the application submenu. */
-const IN_MENU: readonly CommandId[] = ["app.settings", "prompt.templates", "app.keepAwake"];
+const IN_MENU: readonly CommandId[] = [
+  "app.checkUpdates",
+  "app.settings",
+  "prompt.templates",
+  "app.keepAwake",
+];
 
 /** The Find submenu, in order. */
 const FIND_MENU: readonly CommandId[] = ["find.files", "find.content"];

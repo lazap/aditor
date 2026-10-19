@@ -1,5 +1,6 @@
 import { basename } from "../window";
 import { chordHint } from "../shortcuts/store";
+import type { UpdateState } from "../update/api";
 
 interface Props {
   tabs: string[];
@@ -16,6 +17,10 @@ interface Props {
   /** Whether the Mac is being kept awake, and the switch for it. */
   awake: boolean;
   onToggleAwake(): void;
+  /** A newer release, once one is found, and the two steps to it. */
+  update: UpdateState;
+  onInstallUpdate(): void;
+  onRestartToUpdate(): void;
 }
 
 /**
@@ -34,6 +39,9 @@ export function ProjectTabs({
   onOpen,
   awake,
   onToggleAwake,
+  update,
+  onInstallUpdate,
+  onRestartToUpdate,
 }: Props) {
   const label = (root: string) => labels.get(root) ?? basename(root);
   return (
@@ -85,6 +93,7 @@ export function ProjectTabs({
       >
         +
       </button>
+      <UpdateButton state={update} onInstall={onInstallUpdate} onRestart={onRestartToUpdate} />
       <button
         className="project-tab-awake"
         aria-pressed={awake}
@@ -96,6 +105,48 @@ export function ProjectTabs({
       </button>
     </div>
   );
+}
+
+/** Nothing until a newer release turns up; then install, progress, restart. */
+function UpdateButton({
+  state,
+  onInstall,
+  onRestart,
+}: {
+  state: UpdateState;
+  onInstall(): void;
+  onRestart(): void;
+}) {
+  switch (state.phase) {
+    case "idle":
+      return null;
+    case "available":
+      return (
+        <button
+          className="project-tab-update"
+          onClick={onInstall}
+          title={state.notes || `Install Aditor ${state.version}`}
+        >
+          Update to {state.version}
+        </button>
+      );
+    case "installing":
+      return (
+        <button className="project-tab-update" disabled aria-busy="true">
+          Updating{state.percent === null ? "…" : ` ${state.percent}%`}
+        </button>
+      );
+    case "ready":
+      return (
+        <button
+          className="project-tab-update"
+          onClick={onRestart}
+          title={`Aditor ${state.version} is installed — restart to switch to it`}
+        >
+          Restart to update
+        </button>
+      );
+  }
 }
 
 /** A coffee cup, for the keep-awake switch -- `caffeinate` behind it. Steams while on. */
