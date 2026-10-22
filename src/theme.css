@@ -369,7 +369,8 @@ body,
 }
 
 .agent-option:hover:not(:disabled),
-.agent-option:focus-visible {
+.agent-option:focus-visible,
+.agent-option[data-highlighted="true"] {
   background: var(--bg-hover);
   color: var(--fg);
   outline: none;

@@ -329,7 +329,7 @@ export function ProjectView({
   );
   /** What + offers: installed agents first, then the terminal. */
   const choices = useMemo(() => runnable.filter((a) => a.available), [runnable]);
-  /** Bumped by ⌘⌥T: the session strip opens its + menu. */
+  /** Bumped by ⌘T: the session strip opens its + menu. */
   const [newRequest, setNewRequest] = useState(0);
   /** The preference against what is actually installed. */
   const resolveAgent = useCallback(
@@ -580,7 +580,7 @@ export function ProjectView({
     onOpenWorktree(info);
   }, [ask, repo?.branch, root, showToast, onOpenWorktree]);
 
-  // ⌘⌥T asks the same question as +. With no session strip on screen there is
+  // ⌘T asks the same question as +. With no session strip on screen there is
   // nothing to ask from, so it starts the project's agent straight away.
   const newSession = useCallback(() => {
     if (sessions.length > 0) {

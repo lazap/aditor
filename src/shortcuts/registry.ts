@@ -89,7 +89,7 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   },
   // Sessions take IntelliJ's next/previous-tab chords, being the tabs used most;
   // projects sit one modifier over. ⌘W stays the window's own.
-  { id: "session.new", group: "Tabs", chord: "mod+alt+t", label: "New agent session" },
+  { id: "session.new", group: "Tabs", chord: "mod+t", label: "New agent session" },
   { id: "session.close", group: "Tabs", chord: "mod+shift+w", label: "Close agent session" },
   { id: "session.next", group: "Tabs", chord: "mod+shift+]", label: "Next agent session" },
   { id: "session.prev", group: "Tabs", chord: "mod+shift+[", label: "Previous agent session" },
@@ -121,14 +121,14 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   // IntelliJ's Go to File and Find in Files. ⌘O stays Open project….
   { id: "find.files", group: "Search", chord: "mod+shift+o", label: "Find file…" },
   { id: "find.content", group: "Search", chord: "mod+shift+f", label: "Find in files…" },
-  // Git chords follow IntelliJ's default keymap: ⌘K commit, ⌘⇧K push, ⌘T
-  // update, ⌘⌥Z rollback, ⌘D diff. What IntelliJ ships unbound ships
+  // Git chords follow IntelliJ's default keymap: ⌘K commit, ⌘⇧K push,
+  // ⌘⌥Z rollback, ⌘D diff. Its ⌘T update went to new sessions; ⌘⌥T instead. What IntelliJ ships unbound ships
   // unbound here too. Its branch and VCS popups sit on Ctrl chords, which on
   // macOS belong to the agent, so Branches… waits for the user to pick one.
   // Its ⌘9 log went to the session tabs; ⌘⇧H, for history, instead.
   { id: "git.commit", group: "Git", chord: "mod+k", label: "Commit" },
   { id: "git.push", group: "Git", chord: "mod+shift+k", label: "Push…" },
-  { id: "git.pull", group: "Git", chord: "mod+t", label: "Update project (pull)" },
+  { id: "git.pull", group: "Git", chord: "mod+alt+t", label: "Update project (pull)" },
   {
     id: "git.pullRebase",
     group: "Git",
