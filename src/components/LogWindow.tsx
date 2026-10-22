@@ -67,7 +67,7 @@ const ROOT = initialTarget().root;
 const errorText = (e: unknown) => String(e).replace(/^Error:\s*/, "");
 
 /**
- * IntelliJ's Git Log (⌘9): every commit with its graph and refs, the selected
+ * IntelliJ's Git Log (⌘⇧H here): every commit with its graph and refs, the selected
  * commit's files, and one file's diff in that commit below. Right-click a
  * commit for checkout, branch, tag, cherry-pick, revert and reset.
  */

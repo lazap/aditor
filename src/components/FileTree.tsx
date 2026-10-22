@@ -276,7 +276,7 @@ function Tree({
     else setCursor(next.entry.path);
   }, [items, cursor, root, focusRow]);
 
-  // Taking focus on request -- ⌘1. Compared against the last value rather
+  // Taking focus on request -- ⌘⇧E. Compared against the last value rather
   // than fired on every run, because `Tree` remounts when the project changes
   // and a bare effect would rip the caret out of the terminal on every switch.
   const lastFocusToken = useRef(focusToken);

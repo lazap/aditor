@@ -640,6 +640,15 @@ export function ProjectView({
     [sessions, activeKey],
   );
 
+  /** ⌘1-⌘8 pick a tab by position; ⌘9 always the last. */
+  const gotoSession = useCallback(
+    (n: number) => {
+      const target = sessions[n === 9 ? sessions.length - 1 : n - 1];
+      if (target) setActiveKey(target.key);
+    },
+    [sessions],
+  );
+
   const setPtyId = useCallback((key: number, ptyId: string) => {
     setSessions((prev) => prev.map((s) => (s.key === key ? { ...s, ptyId } : s)));
   }, []);
@@ -1375,6 +1384,15 @@ export function ProjectView({
     },
     "session.next": () => cycleSession(1),
     "session.prev": () => cycleSession(-1),
+    "session.goto1": () => gotoSession(1),
+    "session.goto2": () => gotoSession(2),
+    "session.goto3": () => gotoSession(3),
+    "session.goto4": () => gotoSession(4),
+    "session.goto5": () => gotoSession(5),
+    "session.goto6": () => gotoSession(6),
+    "session.goto7": () => gotoSession(7),
+    "session.goto8": () => gotoSession(8),
+    "session.goto9": () => gotoSession(9),
     "account.next": () => {
       // The backend would happily swap the Claude login underneath opencode;
       // it just would not mean anything.

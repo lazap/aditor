@@ -38,7 +38,7 @@ export function ShortcutsTab({ onNote, onRecording }: Props) {
   /** Turn the press into a binding, or explain why it cannot be one. */
   const capture = (id: CommandId, e: KeyboardEvent<HTMLButtonElement>) => {
     // Nothing recorded here may reach the global dispatcher, or binding
-    // ⌘1 would also focus the file tree on the way past.
+    // ⌘1 would also switch session tab on the way past.
     e.preventDefault();
     e.stopPropagation();
 

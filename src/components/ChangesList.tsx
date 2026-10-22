@@ -70,7 +70,7 @@ interface Props {
    * the box already has the caret and there is something to commit.
    */
   commitRequest: number;
-  /** Bumped by ⌘2: puts the keyboard cursor on the list. */
+  /** Bumped by ⌘⇧C: puts the keyboard cursor on the list. */
   focusToken: number;
   onStage(file: FileStatus): void;
   onUnstage(file: FileStatus): void;
@@ -195,7 +195,7 @@ export function ChangesList({
     else setCursor(next.key);
   });
 
-  // ⌘2. Compared against the last value, as FileTree does, so a remount never
+  // ⌘⇧C. Compared against the last value, as FileTree does, so a remount never
   // takes the caret on its own.
   const lastFocusToken = useRef(focusToken);
   useEffect(() => {

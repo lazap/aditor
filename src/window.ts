@@ -224,7 +224,7 @@ export interface LogTarget {
 }
 
 /**
- * The git log, IntelliJ's ⌘9, in a window of its own: a graph wants the width
+ * The git log (IntelliJ's ⌘9, ⌘⇧H here), in a window of its own: a graph wants the width
  * the rail cannot give it. One only; asking again retargets it.
  */
 export async function openLogWindow(target: LogTarget): Promise<void> {

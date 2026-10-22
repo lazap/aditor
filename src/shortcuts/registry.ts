@@ -27,6 +27,15 @@ export type CommandId =
   | "session.close"
   | "session.next"
   | "session.prev"
+  | "session.goto1"
+  | "session.goto2"
+  | "session.goto3"
+  | "session.goto4"
+  | "session.goto5"
+  | "session.goto6"
+  | "session.goto7"
+  | "session.goto8"
+  | "session.goto9"
   | "app.settings"
   | "app.keepAwake"
   | "app.checkUpdates"
@@ -61,20 +70,21 @@ export interface ShortcutCommand {
 }
 
 export const COMMANDS: readonly ShortcutCommand[] = [
-  { id: "focus.files", group: "Focus", chord: "mod+1", label: "Focus file tree" },
-  { id: "focus.git", group: "Focus", chord: "mod+2", label: "Focus git changes" },
+  // ⌘ + a digit picks a session tab, so the panels go by their initials.
+  { id: "focus.files", group: "Focus", chord: "mod+shift+e", label: "Focus file tree" },
+  { id: "focus.git", group: "Focus", chord: "mod+shift+c", label: "Focus git changes" },
   { id: "focus.agent", group: "Focus", chord: "mod+e", label: "Focus agent" },
   {
     id: "focus.agentInfo",
     group: "Focus",
-    chord: "mod+3",
+    chord: "mod+shift+i",
     label: "Show agent info",
   },
-  { id: "focus.agentTasks", group: "Focus", chord: "mod+4", label: "Show tasks" },
+  { id: "focus.agentTasks", group: "Focus", chord: "mod+shift+t", label: "Show tasks" },
   {
     id: "focus.agentSubagents",
     group: "Focus",
-    chord: "mod+5",
+    chord: "mod+shift+s",
     label: "Show subagents",
   },
   // Sessions take IntelliJ's next/previous-tab chords, being the tabs used most;
@@ -83,6 +93,16 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   { id: "session.close", group: "Tabs", chord: "mod+shift+w", label: "Close agent session" },
   { id: "session.next", group: "Tabs", chord: "mod+shift+]", label: "Next agent session" },
   { id: "session.prev", group: "Tabs", chord: "mod+shift+[", label: "Previous agent session" },
+  // As in a browser: ⌘1-⌘8 by position, ⌘9 the last one however many there are.
+  { id: "session.goto1", group: "Tabs", chord: "mod+1", label: "Go to agent session 1" },
+  { id: "session.goto2", group: "Tabs", chord: "mod+2", label: "Go to agent session 2" },
+  { id: "session.goto3", group: "Tabs", chord: "mod+3", label: "Go to agent session 3" },
+  { id: "session.goto4", group: "Tabs", chord: "mod+4", label: "Go to agent session 4" },
+  { id: "session.goto5", group: "Tabs", chord: "mod+5", label: "Go to agent session 5" },
+  { id: "session.goto6", group: "Tabs", chord: "mod+6", label: "Go to agent session 6" },
+  { id: "session.goto7", group: "Tabs", chord: "mod+7", label: "Go to agent session 7" },
+  { id: "session.goto8", group: "Tabs", chord: "mod+8", label: "Go to agent session 8" },
+  { id: "session.goto9", group: "Tabs", chord: "mod+9", label: "Go to last agent session" },
   { id: "project.next", group: "Tabs", chord: "mod+alt+]", label: "Next project tab" },
   { id: "project.prev", group: "Tabs", chord: "mod+alt+[", label: "Previous project tab" },
   { id: "project.close", group: "Tabs", chord: null, label: "Close project tab" },
@@ -102,9 +122,10 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   { id: "find.files", group: "Search", chord: "mod+shift+o", label: "Find file…" },
   { id: "find.content", group: "Search", chord: "mod+shift+f", label: "Find in files…" },
   // Git chords follow IntelliJ's default keymap: ⌘K commit, ⌘⇧K push, ⌘T
-  // update, ⌘⌥Z rollback, ⌘D diff, ⌘9 log. What IntelliJ ships unbound ships
+  // update, ⌘⌥Z rollback, ⌘D diff. What IntelliJ ships unbound ships
   // unbound here too. Its branch and VCS popups sit on Ctrl chords, which on
   // macOS belong to the agent, so Branches… waits for the user to pick one.
+  // Its ⌘9 log went to the session tabs; ⌘⇧H, for history, instead.
   { id: "git.commit", group: "Git", chord: "mod+k", label: "Commit" },
   { id: "git.push", group: "Git", chord: "mod+shift+k", label: "Push…" },
   { id: "git.pull", group: "Git", chord: "mod+t", label: "Update project (pull)" },
@@ -116,7 +137,7 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   },
   { id: "git.rollback", group: "Git", chord: "mod+alt+z", label: "Rollback…" },
   { id: "git.showDiff", group: "Git", chord: "mod+d", label: "Show diff" },
-  { id: "git.log", group: "Git", chord: "mod+9", label: "Show git log" },
+  { id: "git.log", group: "Git", chord: "mod+shift+h", label: "Show git log" },
   {
     id: "git.annotate",
     group: "Git",
