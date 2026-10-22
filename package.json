@@ -30,7 +30,8 @@
     "lint": "eslint .",
     "preview": "vite preview",
     "tauri": "tauri",
-    "release": "bash scripts/release.sh"
+    "release": "bash scripts/release.sh",
+    "icon": "bash scripts/icon.sh"
   },
   "dependencies": {
     "@codemirror/commands": "^6.11.1",
