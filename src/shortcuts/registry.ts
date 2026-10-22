@@ -79,7 +79,7 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   },
   // Sessions take IntelliJ's next/previous-tab chords, being the tabs used most;
   // projects sit one modifier over. ⌘W stays the window's own.
-  { id: "session.new", group: "Tabs", chord: "mod+shift+t", label: "New agent session" },
+  { id: "session.new", group: "Tabs", chord: "mod+alt+t", label: "New agent session" },
   { id: "session.close", group: "Tabs", chord: "mod+shift+w", label: "Close agent session" },
   { id: "session.next", group: "Tabs", chord: "mod+shift+]", label: "Next agent session" },
   { id: "session.prev", group: "Tabs", chord: "mod+shift+[", label: "Previous agent session" },
