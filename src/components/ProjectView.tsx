@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { emit, listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { AgentPicker } from "./AgentPicker";
 import { BranchPicker, type BranchAction } from "./BranchPicker";
 import { InsightPanel } from "./InsightPanel";
 import { TerminalPane, type RunSpec } from "./TerminalPane";
@@ -536,32 +535,6 @@ export function ProjectView({
       setAgentPref(agent.id);
     },
     [root],
-  );
-
-  /**
-   * The topbar's agent menu, acting on the session on screen: another agent
-   * replaces it, the same one restarts it. With no session open it starts one.
-   */
-  const pickAgent = useCallback(
-    (agent: AgentInfo) => {
-      rememberAgent(agent);
-      // A run tab is the configuration's, not a slot for an agent.
-      if (activeKey === null || sessions.find((s) => s.key === activeKey)?.run) {
-        addSession(agent);
-        return;
-      }
-      setSessions((prev) =>
-        prev.map((s) => {
-          if (s.key !== activeKey) return s;
-          const n =
-            s.agentId === agent.id
-              ? s.n
-              : Math.max(0, ...prev.filter((o) => o.agentId === agent.id).map((o) => o.n)) + 1;
-          return { ...s, agentId: agent.id, n, generation: s.generation + 1, exitCode: undefined };
-        }),
-      );
-    },
-    [rememberAgent, activeKey, addSession, sessions],
   );
 
   /** + in the session strip: an agent, or a plain terminal in this folder. */
@@ -1731,11 +1704,6 @@ export function ProjectView({
             />
           )}
         </div>
-        <AgentPicker
-          agents={runnable}
-          activeId={currentAgent?.id ?? null}
-          onPick={pickAgent}
-        />
         <div className="topbar-right">
           <RunPicker
             configs={runs.configs}

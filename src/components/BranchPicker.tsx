@@ -42,7 +42,7 @@ interface Sub {
  * filter, New Branch…, every local and remote branch, and per branch a
  * submenu -- checkout, branch from, compare, merge, rebase, rename, delete.
  *
- * Same menu mechanics as AgentPicker, plus a filter field on top: a repo can
+ * A dropdown on the agent-menu styles, with a filter field on top: a repo can
  * have hundreds of branches, and scrolling for one is slower than typing it.
  * The list is read when the menu opens rather than kept in app state -- it is
  * only ever needed here, and a stale one would offer branches that are gone.
