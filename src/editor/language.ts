@@ -1,6 +1,7 @@
 import type { Extension } from "@codemirror/state";
 import { languages } from "@codemirror/language-data";
 import { LanguageDescription } from "@codemirror/language";
+import type { Parser } from "@lezer/common";
 
 /**
  * Resolve syntax support from a filename, loaded on demand so only the
@@ -30,4 +31,19 @@ export async function loadLanguage(path: string): Promise<Extension[]> {
  */
 export function languageName(filename: string): string | null {
   return LanguageDescription.matchFilename(languages, filename)?.name ?? null;
+}
+
+/**
+ * The parser for a fenced code block's info string (`ts`, `rust`, ...), loaded
+ * on demand like `loadLanguage`. Null when nothing matches or it fails to load:
+ * the block then stays plain.
+ */
+export async function loadParser(name: string): Promise<Parser | null> {
+  const desc = LanguageDescription.matchLanguageName(languages, name, true);
+  if (!desc) return null;
+  try {
+    return (await desc.load()).language.parser;
+  } catch {
+    return null;
+  }
 }

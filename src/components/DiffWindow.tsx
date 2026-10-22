@@ -3,8 +3,9 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { DiffViewer } from "./DiffViewer";
 import { FileViewer, type LineTarget } from "./FileViewer";
-import { AnnotateToggle, DiffLayoutToggle, EditToggle } from "./BottomPane";
-import { useWritable } from "../projects";
+import { MarkdownViewer } from "./MarkdownViewer";
+import { AnnotateToggle, DiffLayoutToggle, EditToggle, fileModeFor, PreviewButton } from "./BottomPane";
+import { isWritable, useWritable } from "../projects";
 import { eventChord } from "../shortcuts/keys";
 import { chordFor } from "../shortcuts/store";
 import { BADGE, gitStatus, type ChangeKind } from "../git/api";
@@ -18,8 +19,14 @@ const initialRoot = (): string =>
 const initialPath = (): string =>
   new URLSearchParams(location.search).get("path") ?? "";
 
+/** "file" asked of the window means the file's usual view: rendered, for markdown. */
+const modeFor = (root: string, path: string, asked: ViewerMode): ViewerMode =>
+  asked === "diff" ? "diff" : fileModeFor(path, isWritable(root, path));
+
 const initialMode = (): ViewerMode =>
-  new URLSearchParams(location.search).get("mode") === "file" ? "file" : "diff";
+  new URLSearchParams(location.search).get("mode") === "diff"
+    ? "diff"
+    : modeFor(initialRoot(), initialPath(), "file");
 
 const initialTarget = (): LineTarget | null => {
   const line = Number(new URLSearchParams(location.search).get("line"));
@@ -48,6 +55,11 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
   const [annotate, setAnnotate] = useState(false);
   const [annotateError, setAnnotateError] = useState<string | null>(null);
   useEffect(() => setAnnotateError(null), [annotate, path]);
+
+  // Unlocking is asking to edit, and only the source can be typed into.
+  useEffect(() => {
+    if (editable) setMode((m) => (m === "preview" ? "file" : m));
+  }, [editable]);
 
   // Somewhere for the keyboard to land, so Escape works straight away.
   useEffect(() => closeRef.current?.focus(), []);
@@ -81,7 +93,7 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
     const unlisten = listen<ViewerTarget>(DIFF_PATH, ({ payload }) => {
       setRoot(payload.root);
       setPath(payload.path);
-      setMode(payload.mode);
+      setMode(modeFor(payload.root, payload.path, payload.mode));
       setTarget(
         payload.line ? { line: payload.line, token: Date.now() } : null,
       );
@@ -148,6 +160,7 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
           >
             File
           </button>
+          <PreviewButton path={path} mode={mode} onPick={() => setMode("preview")} />
         </div>
         {mode === "diff" && status && <DiffLayoutToggle />}
         {mode === "file" && (
@@ -156,7 +169,7 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
         {annotate && annotateError && (
           <span className="viewer-message error viewer-inline">{annotateError}</span>
         )}
-        <EditToggle root={root} path={path} disabled={mode !== "file"} />
+        <EditToggle root={root} path={path} disabled={mode === "diff"} />
         <button
           className="viewer-close"
           ref={closeRef}
@@ -178,6 +191,9 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
           onAnnotateError={setAnnotateError}
           editable={editable}
         />
+      )}
+      {mode === "preview" && (
+        <MarkdownViewer root={root} path={path} refreshToken={refreshToken} />
       )}
       {mode === "diff" && status === null && (
         <div className="viewer-message">No changes to diff</div>

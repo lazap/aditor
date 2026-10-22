@@ -65,6 +65,10 @@ export function setWritable(root: string, path: string, on: boolean): void {
   saveProjectState(root, { writable: on ? [...rest, path] : rest });
 }
 
+/** Whether `path` is unlocked, read once -- for outside a component. */
+export const isWritable = (root: string, path: string): boolean =>
+  loadProjectState(root).writable.includes(path);
+
 /**
  * Whether `path` is unlocked, as state. Read from settings, so the pane and the
  * file window -- each with its own copy of the store -- always agree.

@@ -39,7 +39,8 @@ export const aditorEditorTheme = EditorView.theme({
 export const darkMode = new Compartment();
 export const darkModeFor = (theme: "light" | "dark") => EditorView.darkTheme.of(theme === "dark");
 
-const highlight = HighlightStyle.define([
+/** Also used outside an editor, for code blocks in the markdown preview. */
+export const highlight = HighlightStyle.define([
   { tag: t.keyword, color: "var(--syn-keyword)" },
   { tag: [t.name, t.deleted, t.character], color: "var(--fg)" },
   { tag: [t.propertyName], color: "var(--syn-property)" },

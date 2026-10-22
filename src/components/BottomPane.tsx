@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { FileViewer, type LineTarget } from "./FileViewer";
+import { MarkdownViewer } from "./MarkdownViewer";
 import { DiffViewer, type DiffLayout } from "./DiffViewer";
 import { BADGE, type ChangeKind } from "../git/api";
 import { patchLayout, useSetting } from "../settings/store";
 import { chordHint } from "../shortcuts/store";
-import { basename, openViewerWindow, type ViewerMode as Mode } from "../window";
+import { basename, isMarkdown, openViewerWindow, type ViewerMode as Mode } from "../window";
 import { setWritable, useWritable } from "../projects";
 
 interface Props {
@@ -57,6 +58,39 @@ export function EditToggle({
     </button>
   );
 }
+
+/**
+ * Rendered / source, for a markdown file -- the third button of the Diff/File
+ * pair. Nothing for any other file.
+ */
+export function PreviewButton({
+  path,
+  mode,
+  onPick,
+}: {
+  path: string;
+  mode: Mode;
+  onPick(): void;
+}) {
+  if (!isMarkdown(path)) return null;
+  return (
+    <button
+      className="seg-btn"
+      data-active={mode === "preview"}
+      onClick={onPick}
+      title="Show the markdown rendered"
+    >
+      Preview
+    </button>
+  );
+}
+
+/**
+ * Markdown opens rendered, unless it is unlocked for editing: then the source
+ * is what the user came for.
+ */
+export const fileModeFor = (path: string, editable: boolean): Mode =>
+  isMarkdown(path) && !editable ? "preview" : "file";
 
 /** The blame toggle in a viewer bar, shared with the diff window. */
 export function AnnotateToggle({
@@ -125,11 +159,11 @@ export function BottomPane({
 }: Props) {
   const [annotate, setAnnotate] = useState(false);
   const [annotateError, setAnnotateError] = useState<string | null>(null);
+  const editable = useWritable(root, path);
   const pick = (): Mode =>
-    openedAs === "diff" && status && !diffInWindow ? "diff" : "file";
+    openedAs === "diff" && status && !diffInWindow ? "diff" : fileModeFor(path, editable);
   const [mode, setMode] = useState<Mode>(pick);
   const layout = useSetting((s) => s.layout.diffLayout);
-  const editable = useWritable(root, path);
 
   // Re-pick the default when a different file is opened, but not on every
   // watcher refresh -- an explicit choice should survive the agent's edits.
@@ -148,6 +182,11 @@ export function BottomPane({
   }, [annotateRequest]);
 
   useEffect(() => setAnnotateError(null), [annotate, path]);
+
+  // Unlocking is asking to edit, and only the source can be typed into.
+  useEffect(() => {
+    if (editable) setMode((m) => (m === "preview" ? "file" : m));
+  }, [editable]);
 
   // A line only means something in the file: show it even if the diff was up.
   useEffect(() => {
@@ -189,6 +228,7 @@ export function BottomPane({
           >
             File
           </button>
+          <PreviewButton path={path} mode={mode} onPick={() => setMode("preview")} />
         </div>
 
         {mode === "diff" && status && <DiffLayoutToggle />}
@@ -199,7 +239,7 @@ export function BottomPane({
           <span className="viewer-message error viewer-inline">{annotateError}</span>
         )}
 
-        <EditToggle root={root} path={path} disabled={mode !== "file"} />
+        <EditToggle root={root} path={path} disabled={mode === "diff"} />
         <button className="viewer-close" onClick={onClose} title="Close file">
           ✕
         </button>
@@ -207,6 +247,8 @@ export function BottomPane({
 
       {mode === "diff" && status ? (
         <DiffViewer root={root} path={path} layout={layout} refreshToken={refreshToken} />
+      ) : mode === "preview" ? (
+        <MarkdownViewer root={root} path={path} refreshToken={refreshToken} />
       ) : (
         <FileViewer
           root={root}

@@ -152,7 +152,10 @@ export interface TemplatesTarget {
 }
 
 /** What the viewer window shows for its path. */
-export type ViewerMode = "diff" | "file";
+export type ViewerMode = "diff" | "file" | "preview";
+
+/** Markdown gets a rendered preview, and opens in it. */
+export const isMarkdown = (path: string): boolean => /\.(md|markdown)$/i.test(path);
 
 /** Editor -> viewer window payload. */
 export interface ViewerTarget {
