@@ -16,6 +16,7 @@ mod worktree;
 
 use std::sync::Arc;
 
+use tauri::menu::{Menu, MenuItem, MenuItemKind};
 use tauri::{Manager, WindowEvent};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -33,6 +34,20 @@ pub fn run() {
         .manage(status::StatusState::default())
         .manage(awake::AwakeState::default())
         .setup(|app| {
+            app.set_menu(app_menu(app.handle())?)?;
+            app.on_menu_event(|app, event| {
+                if event.id() == CLOSE_WINDOW_ID {
+                    // close(), not destroy(): the page still gets to flush
+                    // its edits on the close request.
+                    if let Some(w) = app
+                        .webview_windows()
+                        .into_values()
+                        .find(|w| w.is_focused().unwrap_or(false))
+                    {
+                        let _ = w.close();
+                    }
+                }
+            });
             app.manage(mcp::start(app.handle().clone())?);
             status::start(app.handle());
             Ok(())
@@ -161,6 +176,35 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+const CLOSE_WINDOW_ID: &str = "close-window";
+
+/// Tauri's default menu, but with Close Window on ⌘⇧W. The menu sees a chord
+/// before the page does, so the stock ⌘W item would never let ⌘W reach the
+/// app, which closes agent sessions with it -- the browser split, tab on ⌘W
+/// and window on ⌘⇧W.
+fn app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
+    let menu = Menu::default(app)?;
+    for entry in menu.items()? {
+        let MenuItemKind::Submenu(sub) = entry else { continue };
+        for (at, item) in sub.items()?.into_iter().enumerate() {
+            let MenuItemKind::Predefined(stock) = &item else { continue };
+            if stock.text()? != "Close Window" {
+                continue;
+            }
+            sub.remove(stock)?;
+            let close = MenuItem::with_id(
+                app,
+                CLOSE_WINDOW_ID,
+                "Close Window",
+                true,
+                Some("CmdOrCtrl+Shift+W"),
+            )?;
+            sub.insert(&close, at)?;
+        }
+    }
+    Ok(menu)
 }
 
 /// An editor window: the first one, or one opened with New Window.

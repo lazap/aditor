@@ -103,7 +103,8 @@ export function formatChord(chord: string): string {
  */
 export function isSystemReserved(e: KeyboardEvent): boolean {
   const mod = modDown(e);
-  if (mod && (e.key === "q" || e.key === "w" || e.key === "m")) return true; // window mgmt
+  if (mod && (e.key === "q" || e.key === "m")) return true; // window mgmt
+  if (mod && e.shiftKey && e.key.toLowerCase() === "w") return true; // close window (menu)
   if (mod && e.shiftKey && e.key.toLowerCase() === "r") return true; // reload (dev)
   if (mod && (e.key === "+" || e.key === "-" || e.key === "0")) return true; // zoom
   return false;

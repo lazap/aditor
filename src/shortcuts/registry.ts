@@ -88,9 +88,10 @@ export const COMMANDS: readonly ShortcutCommand[] = [
     label: "Show subagents",
   },
   // Sessions take IntelliJ's next/previous-tab chords, being the tabs used most;
-  // projects sit one modifier over. ⌘W stays the window's own.
+  // projects sit one modifier over. As in a browser, ⌘W closes the session and
+  // ⌘⇧W, on the native menu, the window.
   { id: "session.new", group: "Tabs", chord: "mod+t", label: "New agent session" },
-  { id: "session.close", group: "Tabs", chord: "mod+shift+w", label: "Close agent session" },
+  { id: "session.close", group: "Tabs", chord: "mod+w", label: "Close agent session" },
   { id: "session.next", group: "Tabs", chord: "mod+shift+]", label: "Next agent session" },
   { id: "session.prev", group: "Tabs", chord: "mod+shift+[", label: "Previous agent session" },
   // As in a browser: ⌘1-⌘8 by position, ⌘9 the last one however many there are.
