@@ -15,7 +15,7 @@ import { refNameError, useDialogs } from "./Modal";
 import { BottomPane } from "./BottomPane";
 import type { LineTarget } from "./FileViewer";
 import { SplitPane } from "./SplitPane";
-import { SessionTabs, type SessionTab } from "./SessionTabs";
+import { SessionTabs, type FileTab, type SessionTab } from "./SessionTabs";
 import { AgentPrompt } from "./AgentPrompt";
 import type { ToastMessage } from "./Toast";
 import type { Handlers } from "../shortcuts/useShortcuts";
@@ -258,7 +258,20 @@ export function ProjectView({
   const nextKey = useRef(1);
   const seeded = useRef(false);
 
-  const [openFile, setOpenFile] = useState<string | null>(saved.openFile);
+  /** Files open as tabs beside the sessions, when files open in tabs. */
+  const tabbed = settings().layout.fileDisplay === "tab";
+  /** The file in the bottom pane. */
+  const [openFile, setOpenFile] = useState<string | null>(tabbed ? null : saved.openFile);
+  /** Files open as tabs after the sessions, in the order they were opened. */
+  const [fileTabs, setFileTabs] = useState<string[]>(() =>
+    tabbed && saved.openFile ? [saved.openFile] : [],
+  );
+  /** The file tab on screen, or null while a session is. */
+  const [fileShown, setFileShown] = useState<string | null>(null);
+  /** The line to show in the shown file tab, from a terminal link. */
+  const [tabLine, setTabLine] = useState<LineTarget | null>(null);
+  /** The file being looked at in this window, wherever it is shown. */
+  const viewedFile = fileShown ?? openFile;
   /** Files opened in this window, newest first and relative: Find file's empty list. */
   const [recentFiles, setRecentFiles] = useState<string[]>(() =>
     saved.openFile?.startsWith(`${root}/`) ? [saved.openFile.slice(root.length + 1)] : [],
@@ -631,23 +644,38 @@ export function ProjectView({
     [sessions, ask, sessionLabel, settleRun],
   );
 
+  /** Next or previous tab, sessions and files alike, as the strip shows them. */
   const cycleSession = useCallback(
     (step: number) => {
-      if (sessions.length < 2) return;
-      const at = sessions.findIndex((s) => s.key === activeKey);
-      setActiveKey(sessions[(at + step + sessions.length) % sessions.length].key);
+      const items: (number | string)[] = [...sessions.map((s) => s.key), ...fileTabs];
+      if (items.length < 2) return;
+      const at = items.indexOf(fileShown ?? activeKey ?? -1);
+      const next = items[(at + step + items.length) % items.length];
+      if (typeof next === "string") {
+        setTabLine(null);
+        setFileShown(next);
+      } else {
+        setFileShown(null);
+        setActiveKey(next);
+      }
     },
-    [sessions, activeKey],
+    [sessions, activeKey, fileTabs, fileShown],
   );
 
   /** ⌘1-⌘8 pick a tab by position; ⌘9 always the last. */
   const gotoSession = useCallback(
     (n: number) => {
       const target = sessions[n === 9 ? sessions.length - 1 : n - 1];
-      if (target) setActiveKey(target.key);
+      if (!target) return;
+      setFileShown(null);
+      setActiveKey(target.key);
     },
     [sessions],
   );
+
+  // A session coming to the front -- picked, started, or a run launched --
+  // takes the screen back from a file tab.
+  useEffect(() => setFileShown(null), [activeKey]);
 
   const setPtyId = useCallback((key: number, ptyId: string) => {
     setSessions((prev) => prev.map((s) => (s.key === key ? { ...s, ptyId } : s)));
@@ -872,6 +900,8 @@ export function ProjectView({
   activeKeyRef.current = activeKey;
   const activeRef = useRef(active);
   activeRef.current = active;
+  const fileShownRef = useRef(fileShown);
+  fileShownRef.current = fileShown;
   const sessionLabelRef = useRef(sessionLabel);
   sessionLabelRef.current = sessionLabel;
 
@@ -884,7 +914,14 @@ export function ProjectView({
     (key: number, kind: Attention, detail?: string | null) => {
       const s = sessionsRef.current.find((o) => o.key === key);
       if (!s) return;
-      if (activeRef.current && activeKeyRef.current === key && document.hasFocus()) return;
+      if (
+        activeRef.current &&
+        fileShownRef.current === null &&
+        activeKeyRef.current === key &&
+        document.hasFocus()
+      ) {
+        return;
+      }
       setSessions((prev) => prev.map((o) => (o.key === key ? { ...o, attention: kind } : o)));
       const prefs = settings().notifications;
       if (!(kind === "done" ? prefs.onDone : prefs.onWaiting)) return;
@@ -930,7 +967,7 @@ export function ProjectView({
   // coming back to the window.
   useEffect(() => {
     const settle = () => {
-      if (!activeRef.current || !document.hasFocus()) return;
+      if (!activeRef.current || fileShownRef.current !== null || !document.hasFocus()) return;
       const key = activeKeyRef.current;
       setSessions((prev) =>
         prev.some((o) => o.key === key && o.attention)
@@ -941,7 +978,7 @@ export function ProjectView({
     settle();
     window.addEventListener("focus", settle);
     return () => window.removeEventListener("focus", settle);
-  }, [active, activeKey]);
+  }, [active, activeKey, fileShown]);
 
   // ----------------------------------------------------- agent requests ---
 
@@ -1356,7 +1393,7 @@ export function ProjectView({
         return;
       }
       void openTemplatesWindow(
-        contextFrom(root, openFile, repo?.branch ?? null),
+        contextFrom(root, viewedFile, repo?.branch ?? null),
       ).catch(() => showToast("Could not open prompt templates.", "error"));
     },
     "focus.files": () => {
@@ -1380,7 +1417,8 @@ export function ProjectView({
       patchLayout({ insightOpen: true, insightTab: "subagents" }),
     "session.new": newSession,
     "session.close": () => {
-      if (activeKey !== null) void closeSession(activeKey);
+      if (fileShown !== null) closeFileTab(fileShown);
+      else if (activeKey !== null) void closeSession(activeKey);
     },
     "session.next": () => cycleSession(1),
     "session.prev": () => cycleSession(-1),
@@ -1446,7 +1484,7 @@ export function ProjectView({
     },
     "git.annotate": () => {
       if (!gitReady()) return;
-      if (!openFile) {
+      if (!viewedFile) {
         showToast("Open a file to annotate it.", "error");
         return;
       }
@@ -1533,12 +1571,20 @@ export function ProjectView({
         setRecentFiles((prev) => [rel, ...prev.filter((p) => p !== rel)].slice(0, RECENT_FILES));
       }
       const { diffDisplay, fileDisplay } = settings().layout;
-      if ((as === "diff" ? diffDisplay : fileDisplay) === "window") {
+      const display = as === "diff" ? diffDisplay : fileDisplay;
+      if (display === "window") {
         void openViewerWindow(root, path, as, line);
         setDiffFile(path);
         return;
       }
       setDiffFile(null);
+      if (display === "tab") {
+        setFileTabs((prev) => (prev.includes(path) ? prev : [...prev, path]));
+        setFileShown(path);
+        setTabLine(line === undefined ? null : { line, token: Date.now() });
+        saveProjectState(root, { openFile: path });
+        return;
+      }
       setOpenFile(path);
       setOpenedAs(as);
       // A fresh token even for the same line: the user may have scrolled away.
@@ -1563,7 +1609,7 @@ export function ProjectView({
   const listRequestUnhandled = useCallback(
     (kind: ListRequest["kind"]) => {
       const files = repo?.files ?? [];
-      const file = files.find((f) => f.path === (diffFile ?? openFile));
+      const file = files.find((f) => f.path === (diffFile ?? viewedFile));
       if (kind === "diff") {
         if (file) openPath(file.path, "diff");
         else showToast("No changed file selected to diff.", "error");
@@ -1571,7 +1617,7 @@ export function ProjectView({
       else if (files.length > 0) void rollback(files);
       else showToast("No changes to roll back.");
     },
-    [repo, diffFile, openFile, openPath, showToast, rollback],
+    [repo, diffFile, viewedFile, openPath, showToast, rollback],
   );
 
   /**
@@ -1580,7 +1626,7 @@ export function ProjectView({
    * looked at, the way IntelliJ's New File starts from the selection.
    */
   const newFile = useCallback(async () => {
-    const near = diffFile ?? openFile;
+    const near = diffFile ?? viewedFile;
     const dir = near?.startsWith(root + "/")
       ? near.slice(root.length + 1, near.lastIndexOf("/") + 1)
       : "";
@@ -1616,12 +1662,36 @@ export function ProjectView({
     setTreeChanges(null);
     setRefreshToken((t) => t + 1);
     openPath(file, "file");
-  }, [root, diffFile, openFile, ask, showToast, openPath]);
+  }, [root, diffFile, viewedFile, ask, showToast, openPath]);
 
   const closeFile = useCallback(() => {
     setOpenFile(null);
     saveProjectState(root, { openFile: null });
   }, [root]);
+
+  /** Close a file tab; if it was on screen, its neighbour takes its place. */
+  const closeFileTab = useCallback(
+    (path: string) => {
+      const at = fileTabs.indexOf(path);
+      const rest = fileTabs.filter((p) => p !== path);
+      setFileTabs(rest);
+      if (fileShown !== path) return;
+      const next = rest[Math.min(at, rest.length - 1)] ?? null;
+      setTabLine(null);
+      setFileShown(next);
+      saveProjectState(root, { openFile: next });
+    },
+    [fileTabs, fileShown, root],
+  );
+
+  const showFileTab = useCallback(
+    (path: string) => {
+      setTabLine(null);
+      setFileShown(path);
+      saveProjectState(root, { openFile: path });
+    },
+    [root],
+  );
 
   const commitSplit = useCallback((f: number) => {
     splitFraction.current = f;
@@ -1645,15 +1715,28 @@ export function ProjectView({
     attention: s.attention ?? null,
   }));
 
+  // Two tabs on the same name say which folder each is from.
+  const fileTabItems: FileTab[] = fileTabs.map((path) => {
+    const name = path.slice(path.lastIndexOf("/") + 1);
+    const rel = path.startsWith(`${root}/`) ? path.slice(root.length + 1) : path;
+    const twin = fileTabs.some((o) => o !== path && o.endsWith(`/${name}`));
+    const dir = rel.includes("/") ? rel.slice(0, rel.lastIndexOf("/")) : "";
+    return { path, label: twin && dir ? `${name} — ${dir}` : name, title: rel };
+  });
+
   // One stable slot for the whole terminal area: SplitPane must never see its
   // `top` change shape, and every session pane is keyed inside the stack, so
   // opening, closing or switching sessions never remounts another one.
   const terminal = (
     <div className="terminal-slot">
-      {sessions.length > 0 && (
+      {(sessions.length > 0 || fileTabs.length > 0) && (
         <SessionTabs
           tabs={tabs}
           activeKey={activeKey}
+          files={fileTabItems}
+          activeFile={fileShown}
+          onSelectFile={showFileTab}
+          onCloseFile={closeFileTab}
           choices={choices}
           newRequest={newRequest}
           onSelect={setActiveKey}
@@ -1670,8 +1753,8 @@ export function ProjectView({
             agent={agentById(s.agentId)}
             label={sessionLabel(s)}
             cwd={root}
-            shown={s.key === activeKey}
-            visible={active && s.key === activeKey}
+            shown={fileShown === null && s.key === activeKey}
+            visible={active && fileShown === null && s.key === activeKey}
             focusToken={agentFocus}
             onExit={setExit}
             onRestart={restartSession}
@@ -1685,8 +1768,24 @@ export function ProjectView({
             onSendToAgent={sendRunToAgent}
           />
         ))}
-        {sessions.length === 0 && (
+        {sessions.length === 0 && fileShown === null && (
           <EmptyTerminal agents={agents} seeded={seeded.current} onStart={startSession} />
+        )}
+        {fileShown !== null && (
+          <div className="session-pane file-pane">
+            <BottomPane
+              root={root}
+              path={fileShown}
+              status={statuses.get(fileShown) ?? null}
+              refreshToken={refreshToken}
+              diffInWindow={diffInWindow}
+              openedAs="file"
+              target={tabLine}
+              annotateRequest={annotateRequest}
+              isRepo={!!repo?.isRepo}
+              onClose={() => closeFileTab(fileShown)}
+            />
+          </div>
         )}
       </div>
     </div>
@@ -1794,7 +1893,7 @@ export function ProjectView({
             <div hidden={railTab !== "files"}>
               <FileTree
                 root={root}
-                selected={diffFile ?? openFile}
+                selected={diffFile ?? viewedFile}
                 onSelect={openFromTree}
                 refreshToken={refreshToken}
                 changed={treeChanges}
@@ -1816,7 +1915,7 @@ export function ProjectView({
                 upstream={repo?.upstream ?? null}
                 ahead={repo?.ahead ?? 0}
                 behind={repo?.behind ?? 0}
-                selected={diffFile ?? openFile}
+                selected={diffFile ?? viewedFile}
                 recent={recent}
                 onSelect={openFromGit}
                 message={commitMessage}

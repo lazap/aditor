@@ -71,11 +71,19 @@ export function GeneralTab() {
         <span className="setting-label">
           Open files in
           <span className="setting-sub">
-            Where a file picked in the tree opens. One picked in the git list
-            opens as a diff, as above.
+            Where a file picked in the tree opens: a tab beside the sessions,
+            under the terminal, or a window of its own. One picked in the git
+            list opens as a diff, as above.
           </span>
         </span>
         <div className="seg">
+          <button
+            className="seg-btn"
+            data-active={layout.fileDisplay === "tab"}
+            onClick={() => patchLayout({ fileDisplay: "tab" })}
+          >
+            Tab
+          </button>
           <button
             className="seg-btn"
             data-active={layout.fileDisplay === "pane"}

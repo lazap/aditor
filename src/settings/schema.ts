@@ -40,6 +40,9 @@ export interface ProjectState {
 /** Where a diff or a file opens: under the terminal, or in a window of its own. */
 export type DiffDisplay = "pane" | "window";
 
+/** Where a file opens: as a diff would, or in a tab beside the sessions. */
+export type FileDisplay = DiffDisplay | "tab";
+
 /** How the read-only viewers take the keyboard: as-is, or with vim motions. */
 export type KeyboardMode = "standard" | "vim";
 
@@ -68,7 +71,7 @@ export interface Layout {
   diffLayout: DiffLayout;
   diffDisplay: DiffDisplay;
   /** Where a file picked in the tree opens; the git list goes by `diffDisplay`. */
-  fileDisplay: DiffDisplay;
+  fileDisplay: FileDisplay;
   /**
    * Collapsible bands in the agent panel: section id -> open.
    *
@@ -156,7 +159,7 @@ export const DEFAULTS: Settings = {
     insightTab: "info",
     diffLayout: "unified",
     diffDisplay: "window",
-    fileDisplay: "window",
+    fileDisplay: "tab",
     sections: {},
   },
   keyboardMode: "standard",

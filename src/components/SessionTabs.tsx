@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentInfo } from "../pty/api";
 import type { Attention } from "../notify/api";
 import { chordHint } from "../shortcuts/store";
+import { FileIcon } from "./fileIcons";
 
 export interface SessionTab {
   key: number;
@@ -14,9 +15,23 @@ export interface SessionTab {
   attention: Attention | null;
 }
 
+/** A file open as a tab, after the sessions -- IntelliJ's editor tabs. */
+export interface FileTab {
+  /** Absolute; also the tab's identity. */
+  path: string;
+  label: string;
+  /** Relative to the project, for the tooltip. */
+  title: string;
+}
+
 interface Props {
   tabs: SessionTab[];
   activeKey: number | null;
+  files: FileTab[];
+  /** The file tab on screen; while set, no session tab is selected. */
+  activeFile: string | null;
+  onSelectFile(path: string): void;
+  onCloseFile(path: string): void;
   /** What a new session can be: the installed agents, then a plain terminal. */
   choices: AgentInfo[];
   /** Bumped by the new-session shortcut: the menu opens as if + was clicked. */
@@ -30,12 +45,17 @@ interface Props {
 
 /**
  * The sessions of one project, above its terminal -- IntelliJ's terminal tool
- * window tabs. Every session keeps running while another is shown; this strip
- * only chooses which one is on screen, and + asks what the next one runs.
+ * window tabs -- then the files opened beside them. Every session keeps
+ * running while another tab is shown; this strip only chooses which one is on
+ * screen, and + asks what the next session runs.
  */
 export function SessionTabs({
   tabs,
   activeKey,
+  files,
+  activeFile,
+  onSelectFile,
+  onCloseFile,
   choices,
   newRequest,
   onSelect,
@@ -131,7 +151,7 @@ export function SessionTabs({
             key={t.key}
             className="session-tab"
             role="tab"
-            aria-selected={t.key === activeKey}
+            aria-selected={activeFile === null && t.key === activeKey}
             data-exited={t.exited}
             title={
               t.exited
@@ -163,6 +183,35 @@ export function SessionTabs({
               onClick={(e) => {
                 e.stopPropagation();
                 onClose(t.key);
+              }}
+            >
+              ✕
+            </button>
+          </div>
+        ))}
+        {files.map((f) => (
+          <div
+            key={f.path}
+            className="session-tab file-tab"
+            role="tab"
+            aria-selected={f.path === activeFile}
+            title={f.title}
+            onClick={() => onSelectFile(f.path)}
+            onAuxClick={(e) => {
+              if (e.button !== 1) return;
+              e.preventDefault();
+              onCloseFile(f.path);
+            }}
+          >
+            <FileIcon name={f.path.slice(f.path.lastIndexOf("/") + 1)} isDir={false} open={false} />
+            <span className="session-tab-label">{f.label}</span>
+            <button
+              className="session-tab-close"
+              aria-label={`Close ${f.label}`}
+              title={chordHint("Close file", "session.close")}
+              onClick={(e) => {
+                e.stopPropagation();
+                onCloseFile(f.path);
               }}
             >
               ✕

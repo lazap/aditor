@@ -4,8 +4,8 @@
  * mostly empty window. So the window starts sized to the picker and grows to
  * the editor layout the first time a project is opened.
  */
-import { LogicalSize } from "@tauri-apps/api/dpi";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { LogicalPosition, LogicalSize } from "@tauri-apps/api/dpi";
+import { currentMonitor, getCurrentWindow, type Monitor } from "@tauri-apps/api/window";
 import { WebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { emitTo } from "@tauri-apps/api/event";
 import type { Context } from "./templates/placeholders";
@@ -86,6 +86,44 @@ export const isEditorWindow = (label = selfLabel()): boolean =>
 const titled = (what: string, root: string): string => `${what} — ${basename(root)}`;
 
 /**
+ * Where a `width`x`height` side window goes: centred over the window opening
+ * it, and kept inside that window's screen. `center` would put it on the main
+ * display, which with several screens is often not the one being looked at.
+ * Null when the opener cannot say where it is; the caller then centres.
+ */
+async function overOpener(width: number, height: number): Promise<LogicalPosition | null> {
+  try {
+    const me = getCurrentWindow();
+    const [pos, size, scale, monitor] = await Promise.all([
+      me.outerPosition(),
+      me.outerSize(),
+      me.scaleFactor(),
+      currentMonitor(),
+    ]);
+    const at = pos.toLogical(scale);
+    const box = size.toLogical(scale);
+    let x = at.x + (box.width - width) / 2;
+    let y = at.y + (box.height - height) / 2;
+    if (monitor) {
+      const area = workArea(monitor);
+      x = Math.min(Math.max(x, area.x), area.x + Math.max(0, area.width - width));
+      y = Math.min(Math.max(y, area.y), area.y + Math.max(0, area.height - height));
+    }
+    return new LogicalPosition(Math.round(x), Math.round(y));
+  } catch {
+    return null;
+  }
+}
+
+/** A screen's usable area -- less the menu bar and Dock -- in logical pixels. */
+function workArea(monitor: Monitor) {
+  const { position, size } = monitor.workArea;
+  const origin = position.toLogical(monitor.scaleFactor);
+  const extent = size.toLogical(monitor.scaleFactor);
+  return { x: origin.x, y: origin.y, width: extent.width, height: extent.height };
+}
+
+/**
  * Bring an existing side window forward, or build it.
  *
  * One of each, ever: a second Settings window would be two editors of the same
@@ -99,13 +137,14 @@ async function showWindow(
 ): Promise<WebviewWindow | null> {
   const existing = await WebviewWindow.getByLabel(label);
   if (existing) {
-    await existing.setFocus();
+    await bringForward(existing);
     return null;
   }
+  const at = await overOpener(options.width, options.height);
   return new WebviewWindow(label, {
     url,
     ...options,
-    center: true,
+    ...(at ? { x: at.x, y: at.y } : { center: true }),
     // Opened from another side window (the log from a diff), it has no editor
     // to sit above, so it floats free rather than naming one that may be gone.
     ...(isEditorWindow() ? { parent: selfLabel() } : {}),
@@ -113,6 +152,37 @@ async function showWindow(
     // before its stylesheet lands.
     backgroundColor: windowBackground(),
   });
+}
+
+/**
+ * Show a side window that is already open: out of the Dock if minimized, and
+ * onto the opener's screen if it was left on another -- focusing it where it
+ * is would raise it on a screen nobody is looking at.
+ */
+async function bringForward(win: WebviewWindow): Promise<void> {
+  try {
+    if (await win.isMinimized()) await win.unminimize();
+    const [mine, pos, size, scale] = await Promise.all([
+      currentMonitor(),
+      win.outerPosition(),
+      win.outerSize(),
+      win.scaleFactor(),
+    ]);
+    const at = pos.toLogical(scale);
+    const box = size.toLogical(scale);
+    const [cx, cy] = [at.x + box.width / 2, at.y + box.height / 2];
+    const area = mine && workArea(mine);
+    const elsewhere =
+      area &&
+      (cx < area.x || cx >= area.x + area.width || cy < area.y || cy >= area.y + area.height);
+    if (elsewhere) {
+      const to = await overOpener(box.width, box.height);
+      if (to) await win.setPosition(to);
+    }
+  } catch {
+    // Placement is a nicety; focusing it below still matters.
+  }
+  await win.setFocus();
 }
 
 export async function openSettingsWindow(): Promise<void> {
