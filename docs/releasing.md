@@ -1,7 +1,8 @@
 # Releasing
 
 Maintainer notes. Building Aditor for yourself needs none of this -- see
-[Build from source](../README.md#build-from-source) in the README. This file
+[Build from source](../README.md#build-from-source) in the README and
+[CONTRIBUTING.md](../CONTRIBUTING.md#dev-loop). This file
 covers cutting a tagged GitHub release with attached macOS artifacts.
 
 ## Cutting a release

@@ -20,9 +20,57 @@ npm start
 ```
 
 `npm start`, not `npm run dev` -- `dev` is Vite alone, with no Tauri backend
-behind it, so every command fails and the terminal pane never spawns. See
-[Build from source](README.md#build-from-source) for the toolchain details and
-what to do when the build cannot find `clang`.
+behind it, so every command fails and the terminal pane never spawns. `npm start`
+goes through `scripts/dev.sh`, which sources `scripts/toolchain.sh` because
+neither toolchain is reliably on `PATH` in a plain shell: it runs
+`fnm use --install-if-missing` to honor `.node-version`, and finds `cargo` under
+Homebrew's keg-only rustup prefix, which is not linked into `/opt/homebrew/bin`.
+Both failures otherwise surface far from their cause. `npm run release` sources
+the same file.
+
+If you do not use fnm, just make sure `node -v` is 22 or newer and `cargo` is on
+your `PATH` before running `npm start`; the script checks both and tells you
+which one is missing.
+
+To build a bundle without cutting a release, `npm run tauri build` works on its
+own; output lands in `src-tauri/target/release/bundle/`.
+
+### Requirements
+
+| | |
+|---|---|
+| **Node ≥ 22** | `.node-version` pins 24.18.0. Vite 8's rolldown imports `styleText` from `node:util`, which landed in Node 22. |
+| **Rust** | A stable toolchain, via [rustup](https://rustup.rs). |
+| **Xcode Command Line Tools** | macOS, for linking: `xcode-select --install`. |
+| **The `claude` CLI** | [Claude Code](https://claude.com/claude-code), on your `PATH`. |
+
+### If the build dies with "Failed to locate 'clang'"
+
+An Xcode older than the running macOS cannot load its own libraries, so any
+build script that shells out to `cc` fails. The standalone Command Line Tools
+are healthy in this situation, so point the toolchain at those. Create
+`src-tauri/.cargo/config.toml` -- it is gitignored, because the right value is
+per-machine:
+
+```toml
+[env]
+DEVELOPER_DIR = "/Library/Developer/CommandLineTools"
+```
+
+If linking then fails on an SDK instead -- `unknown architecture
+arm64e.x1-macos`, `tapi error: malformed file` -- the toolchain has picked an
+SDK newer than the clang reading it (an `SDKs/` directory can hold several).
+Pin a known-good one alongside the first key:
+
+```toml
+[env]
+DEVELOPER_DIR = "/Library/Developer/CommandLineTools"
+SDKROOT = "/Library/Developer/CommandLineTools/SDKs/MacOSX26.sdk"
+```
+
+Updating Xcode to match your macOS fixes it properly. See also
+[docs/releasing.md](docs/releasing.md#if-the-dmg-step-fails), where the same
+Xcode mismatch breaks DMG packaging in a different way.
 
 Tests cover the Rust modules (`cargo test` from `src-tauri/`) and the pure
 frontend modules (`npm test`, vitest). The UI itself has none, so changes there
@@ -51,6 +99,41 @@ rustfmt-clean -- `cargo fmt` rewrites 5 of the 7 files in `src-tauri/src`, which
 would bury your actual change in hundreds of lines of reflow. Match the style of
 the code around you instead. (Adopting rustfmt wholesale is a reasonable idea,
 but it is its own PR, and one that should touch nothing else.)
+
+## How it works
+
+```
+scripts/              dev.sh, release.sh, and the toolchain.sh both source
+src/                  React frontend
+  components/         panes and pickers
+  pty/ fs/ git/       typed wrappers over the Tauri commands
+  agents/ accounts/ mcp/
+  editor/             CodeMirror setup: languages, vim motions, line jumps
+  shortcuts/          keybinding system
+  settings/           the ~/.aditor/settings.json document, hydrated once
+  templates/          prompt templates and their placeholders
+src-tauri/src/
+  pty.rs              agent processes, in their own process groups
+  fs.rs               gitignore-aware listing, guarded reads, fs watcher
+  git.rs              status and diffs via git2; writes via the git CLI
+  agents.rs           session history, token counters and limits
+  accounts.rs         account switching: login Keychain + ~/.claude.json
+  mcp.rs              loopback MCP server behind the Tasks tab
+  settings.rs         ~/.aditor/settings.json, as an opaque document
+```
+
+The Rust side spawns no subprocesses to gather agent state -- everything in
+`agents.rs` is read from the agent's own on-disk files, so the panel can
+refresh as often as the frontend likes. Its one network call is the Limits
+refresh, made only when you click it. The MCP server listens on `127.0.0.1`
+only, behind a per-launch bearer token that only agents Aditor spawned are
+given.
+
+Everything Aditor remembers is written to `~/.aditor/settings.json`, next to the
+saved logins in `~/.aditor/accounts/`. Nothing lives in the webview's storage.
+The file is treated as a suggestion: every field is checked on load and falls
+back to its default, and a file that will not parse at all is moved to
+`settings.json.bad` rather than stopping the app from opening.
 
 ## Conventions worth knowing
 

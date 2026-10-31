@@ -151,7 +151,7 @@ if ! SetFile -h >/dev/null 2>&1; then
     say "/usr/bin/SetFile is broken; using $CLT_BIN/SetFile so DMG packaging works."
   else
     say "warning: SetFile is broken and no working copy sits under the Command Line"
-    say "         Tools -- expect DMG packaging to fail. See README.md."
+    say "         Tools -- expect DMG packaging to fail. See docs/releasing.md."
   fi
 fi
 
@@ -224,7 +224,7 @@ if [ -n "$DMG" ]; then
   say "including $(basename "$DMG")"
 else
   say "warning: no .dmg was produced -- shipping the zip only."
-  say "         See 'If the DMG step fails' in README.md (SetFile / Command Line Tools)."
+  say "         See 'If the DMG step fails' in docs/releasing.md (SetFile / Command Line Tools)."
   STRAY=$(ls -d /Volumes/dmg.* 2>/dev/null | head -1 || true)
   [ -z "$STRAY" ] || say "         A stray image is still mounted: hdiutil detach '$STRAY' -force"
 fi

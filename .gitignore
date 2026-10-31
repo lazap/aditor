@@ -28,7 +28,7 @@ dist-release
 
 # Local toolchain overrides. Per-machine by nature -- a DEVELOPER_DIR or linker
 # tweak that fixes one machine's Xcode breaks a clone that does not share it.
-# See the troubleshooting section of the README.
+# See CONTRIBUTING.md ("If the build dies with ...").
 src-tauri/.cargo/config.toml
 
 .aditor
