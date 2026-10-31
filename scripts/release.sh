@@ -358,6 +358,71 @@ fi
 
 git fetch --quiet --tags origin || true
 
+# --- Homebrew cask ------------------------------------------------------
+# The cask in the tap repo pins one version and the zip's hash, and new brew
+# installs come from it, so it is bumped for every live release. A draft or a
+# prerelease is not what `brew install` should get, so those leave it alone.
+# Written through the contents API rather than a checkout, so it runs the same
+# in CI. The release is already public by now: a failure here only warns.
+#
+# The default token (gh's login, or GITHUB_TOKEN) has to be able to push to the
+# tap. CI's github.token cannot reach another repo, so CI passes a separate
+# HOMEBREW_TAP_TOKEN.
+TAP="${SLUG%%/*}/homebrew-aditor"
+CASK_PATH=Casks/aditor.rb
+ZIP_SHA=$(shasum -a 256 "$ZIP" | cut -d' ' -f1)
+
+# tap_api METHOD PATH [BODY]
+tap_api() {
+  if [ "$BACKEND" = gh ]; then
+    local token="${HOMEBREW_TAP_TOKEN:-${GH_TOKEN:-}}"
+    if [ -n "${3:-}" ]; then
+      printf '%s' "$3" | GH_TOKEN="$token" gh api -X "$1" "$2" --input -
+    else
+      GH_TOKEN="$token" gh api -X "$1" "$2"
+    fi
+  else
+    local data=()
+    [ -z "${3:-}" ] || data=(--data-binary "$3")
+    GITHUB_TOKEN="${HOMEBREW_TAP_TOKEN:-$GITHUB_TOKEN}" \
+      gh_api -X "$1" ${data[@]+"${data[@]}"} "https://api.github.com/$2"
+  fi
+}
+
+# Every step returns on failure by hand: called as an `if` condition, the
+# function runs with `set -e` suspended.
+bump_cask() {
+  local current blob old new body
+  current=$(tap_api GET "repos/$TAP/contents/$CASK_PATH") || return 1
+  blob=$(printf '%s' "$current" | jq -r '.sha')
+  old=$(printf '%s' "$current" | jq -r '.content' | tr -d '\n' | base64 --decode) || return 1
+  new=$(printf '%s\n' "$old" | sed -E \
+    -e "s/^(  version )\"[^\"]*\"/\\1\"$VERSION\"/" \
+    -e "s/^(  sha256 )\"[^\"]*\"/\\1\"$ZIP_SHA\"/")
+  # Both lines must have been there to rewrite; a cask reshaped by hand would
+  # otherwise get a half-applied bump.
+  printf '%s\n' "$new" | grep -q "^  version \"$VERSION\"$" || return 1
+  printf '%s\n' "$new" | grep -q "^  sha256 \"$ZIP_SHA\"$" || return 1
+  if [ "$new" = "$old" ]; then
+    say "the cask in $TAP is already at $VERSION"
+    return 0
+  fi
+  body=$(jq -n \
+    --arg message "Update aditor to $VERSION" \
+    --arg content "$(printf '%s\n' "$new" | base64 | tr -d '\n')" \
+    --arg sha "$blob" \
+    '{message: $message, content: $content, sha: $sha}')
+  tap_api PUT "repos/$TAP/contents/$CASK_PATH" "$body" >/dev/null || return 1
+  say "bumped the cask in $TAP to $VERSION"
+}
+
+if [ "$DRAFT" -eq 1 ] || [ "$PRERELEASE" -eq 1 ]; then
+  say "not a live release, so the cask in $TAP stays as it is"
+elif ! bump_cask; then
+  say "warning: could not bump the cask in $TAP. Set version \"$VERSION\" and"
+  say "         sha256 \"$ZIP_SHA\" in $CASK_PATH by hand. See docs/releasing.md."
+fi
+
 if [ "$DRAFT" -eq 1 ]; then
   say "draft release ready -- publish it from the GitHub UI:"
 else

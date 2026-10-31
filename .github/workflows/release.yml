@@ -46,10 +46,13 @@ jobs:
 
       # gh and jq ship on the macOS runner image; GH_TOKEN authenticates gh.
       # The updater key signs Aditor.app.tar.gz; it has no password.
+      # github.token cannot push to the tap repo, so bumping the cask takes its
+      # own token; without it the release still ships and the step only warns.
       - name: Build and publish
         env:
           GH_TOKEN: ${{ github.token }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           args=()
           [ "${{ inputs.draft }}" = true ] && args+=(--draft)

@@ -126,8 +126,25 @@ a contract and change none of it without updating the cask:
 The cask declares `auto_updates true`, since the app updates itself:
 `brew upgrade` and `brew outdated` skip it unless given `--greedy`. Brew still
 records the version it installed, so after a self-update `brew list --versions`
-is behind the app; nothing acts on that. Bump the cask's `version` and `sha256`
-for each release all the same, since new installs come from it.
+is behind the app; nothing acts on that. The cask's `version` and `sha256` are
+still bumped for each release, since new installs come from it.
+
+`release.sh` does that bump itself once the release is live, committing
+`Update aditor to <version>` to `Casks/aditor.rb` in `<owner>/homebrew-aditor`
+through the GitHub API. Drafts and prereleases leave the cask alone. The token
+needs push access to the tap:
+
+- locally, your `gh` login (or `GITHUB_TOKEN`) usually has it already
+- in CI, `github.token` is scoped to this repo only, so the step uses the
+  `HOMEBREW_TAP_TOKEN` repository secret: a fine-grained token with
+  *Contents: read and write* on `homebrew-aditor`
+
+  ```bash
+  gh secret set HOMEBREW_TAP_TOKEN -R lazap/aditor
+  ```
+
+If the bump fails, the release still stands. The script prints the `version`
+and `sha256` to set by hand.
 
 The cask points at the zip, not the DMG, because the DMG is optional -- a failed
 `SetFile` ships the zip alone. Since builds are not notarized, the cask clears
