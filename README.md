@@ -99,13 +99,22 @@ another agent is a new arm there plus a reader module.
 
 ## Install
 
-Grab the latest `.dmg` or `.zip` from
+With [Homebrew](https://brew.sh):
+
+```bash
+brew install --cask lazap/aditor/aditor
+```
+
+The cask clears the quarantine flag after installing, so the app opens without
+a Gatekeeper prompt.
+
+Or grab the latest `.dmg` or `.zip` from
 [Releases](https://github.com/lazap/aditor/releases), and drag `Aditor.app` into
 `/Applications`.
 
-Builds are ad-hoc signed and not notarized, so macOS blocks them on first
-launch. Try to open the app once, then approve it under System Settings >
-Privacy & Security > **Open Anyway**, or clear the quarantine flag:
+Builds are ad-hoc signed and not notarized, so macOS blocks a downloaded copy
+on first launch. Try to open the app once, then approve it under System
+Settings > Privacy & Security > **Open Anyway**, or clear the quarantine flag:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Aditor.app
