@@ -5,7 +5,7 @@
 
 <p align="center">
   A lightweight editor whose main pane is an agent CLI.<br>
-  <sub>macOS · Apple Silicon · <a href="LICENSE">MIT</a></sub>
+  <sub>macOS · Apple Silicon · <a href="LICENSE">GPL-3.0</a></sub>
 </p>
 
 <!-- Drop a window shot at docs/screenshot.png (⌘⇧4 then Space, over the
@@ -299,4 +299,4 @@ Found a security issue? Please report it privately -- see
 
 ## License
 
-[MIT](LICENSE) © Lazar Petrov
+[GPL-3.0](LICENSE) © Lazar Petrov
