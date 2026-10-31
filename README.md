@@ -102,11 +102,13 @@ another agent is a new arm there plus a reader module.
 With [Homebrew](https://brew.sh):
 
 ```bash
-brew install --cask lazap/aditor/aditor
+brew tap lazap/aditor
+brew install --cask aditor
 ```
 
-The cask clears the quarantine flag after installing, so the app opens without
-a Gatekeeper prompt.
+Homebrew asks you to trust a third-party tap before it installs from it, hence
+the separate `brew tap`. The cask clears the quarantine flag after installing,
+so the app opens without a Gatekeeper prompt.
 
 Or grab the latest `.dmg` or `.zip` from
 [Releases](https://github.com/lazap/aditor/releases), and drag `Aditor.app` into
