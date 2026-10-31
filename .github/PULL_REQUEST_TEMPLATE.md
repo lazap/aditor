@@ -19,3 +19,4 @@ project.
 - [ ] I ran the app and exercised the part I changed
 - [ ] A new shortcut, if any, is a single row in `src/shortcuts/registry.ts`
 - [ ] A new Tauri command, if any, has its permission in `src-tauri/capabilities/default.json`
+- [ ] I have read and agree to the [Contributor License Agreement](https://github.com/lazap/aditor/blob/master/CONTRIBUTING.md#contributor-license-agreement)

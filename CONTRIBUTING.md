@@ -97,6 +97,47 @@ Keep commits focused and their messages in the imperative mood ("Add shortcuts
 system"), matching the existing history. One logical change per PR, and please
 describe how you verified it.
 
+## Contributor License Agreement
+
+Aditor is licensed under [GPL-3.0](LICENSE). Before a PR can be merged, you
+need to agree to the Contributor License Agreement below, by ticking the CLA box
+in the PR template. You agree once, and it covers every contribution you make
+from then on.
+
+In short: you keep the copyright to your work, and you give the maintainer the
+right to use it under GPL-3.0 and under other licenses, including commercial
+ones. That keeps Aditor's licensing in one place instead of split across every
+contributor -- the same model Zed and most company-backed projects use.
+
+### The agreement
+
+1. **Definitions.** "You" means the person or legal entity submitting a
+   Contribution. "Contribution" means any code, documentation or other material
+   you submit to the Aditor project, through a pull request or otherwise.
+   "Maintainer" means Lazar Petrov, the copyright holder of Aditor, and anyone
+   the project is transferred to.
+2. **You keep your copyright.** You remain the owner of your Contributions, and
+   nothing here stops you from using them in any other way you like.
+3. **Copyright license.** You grant the Maintainer a perpetual, worldwide,
+   non-exclusive, royalty-free, irrevocable license to use, reproduce, modify,
+   prepare derivative works of, publicly display, distribute and sublicense
+   your Contributions, and to license them under any terms, including GPL-3.0,
+   other open-source licenses and proprietary licenses.
+4. **Patent license.** You grant the Maintainer, and everyone who receives
+   Aditor, a perpetual, worldwide, non-exclusive, royalty-free, irrevocable
+   license under any patents you can license that your Contribution would
+   otherwise infringe, to make, use, sell and distribute the Contribution as
+   part of Aditor or of work derived from it.
+5. **You have the right to grant this.** Each Contribution is your original
+   work, or you have the right to submit it under this agreement. If your
+   employer or anyone else has rights to what you create, you have their
+   permission to make the Contribution, or they have waived those rights. If a
+   Contribution includes third-party material, you say so in the PR and name
+   its license.
+6. **No obligations.** The Maintainer is not required to use or merge any
+   Contribution. You provide your Contributions "as is", with no warranty or
+   obligation to support them.
+
 ## Code of Conduct
 
 This project ships the [Contributor Covenant](CODE_OF_CONDUCT.md). By taking
