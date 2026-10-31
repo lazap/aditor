@@ -259,13 +259,22 @@ if [ -z "$NOTES_FILE" ]; then
 
 ## Installation
 
-Apple Silicon (`aarch64`) only. Unzip and move `Aditor.app` into
-`/Applications`.
+Apple Silicon (`aarch64`) only. With [Homebrew](https://brew.sh):
 
-Builds are ad-hoc signed and not notarized, so macOS blocks them on first
-launch on any machine but the one that built them. Try to open the app once,
-then approve it under System Settings > Privacy & Security > **Open Anyway**,
-or clear the quarantine flag:
+```bash
+brew tap lazap/aditor
+brew install --cask aditor
+```
+
+The cask clears the quarantine flag after installing, so the app opens without
+a Gatekeeper prompt.
+
+Or unzip the download below and move `Aditor.app` into `/Applications`.
+
+Builds are ad-hoc signed and not notarized, so macOS blocks a downloaded copy
+on first launch on any machine but the one that built them. Try to open the
+app once, then approve it under System Settings > Privacy & Security >
+**Open Anyway**, or clear the quarantine flag:
 
 ```bash
 xattr -dr com.apple.quarantine /Applications/Aditor.app
