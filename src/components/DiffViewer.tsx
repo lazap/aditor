@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { EditorState, type Extension } from "@codemirror/state";
-import { EditorView, lineNumbers } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers } from "@codemirror/view";
+import { selectAll } from "@codemirror/commands";
 import { MergeView, unifiedMergeView } from "@codemirror/merge";
 import { gitCommitFileDiff, gitDiff, type FileDiff } from "../git/api";
 import { aditorEditorTheme, aditorHighlighting, darkMode, darkModeFor } from "../editor/theme";
@@ -117,6 +118,9 @@ export function DiffViewer({
         EditorState.readOnly.of(true),
         vimMode.of(vimMotions(vimRef.current)),
         darkMode.of(darkModeFor(themeRef.current)),
+        // As in the file view: the browser's select all stops at the drawn
+        // lines. In split, each side selects its own text.
+        keymap.of([{ key: "Mod-a", run: selectAll }]),
         ...lang,
       ];
 

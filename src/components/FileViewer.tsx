@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Annotation, Compartment, EditorState, type Extension } from "@codemirror/state";
-import { EditorView, lineNumbers } from "@codemirror/view";
+import { EditorView, keymap, lineNumbers } from "@codemirror/view";
+import { selectAll } from "@codemirror/commands";
 import { CHANGED_ON_DISK, readFile, writeFile, type FileContents } from "../fs/api";
 import { AUTOSAVE_MS, trackEdits } from "../editor/autosave";
 import { aditorEditorTheme, aditorHighlighting, darkMode, darkModeFor } from "../editor/theme";
@@ -267,6 +268,9 @@ export function FileViewer({
         vimMode.of(vimMotions(vimRef.current)),
         darkMode.of(darkModeFor(themeRef.current)),
         jumpLine,
+        // The browser's own select all reaches only the lines drawn around the
+        // viewport; this takes the whole document.
+        keymap.of([{ key: "Mod-a", run: selectAll }]),
         blame.of(gutterFor(hunksRef.current, root, path)),
         ...lang,
       ];
