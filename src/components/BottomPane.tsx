@@ -23,6 +23,8 @@ interface Props {
   target: LineTarget | null;
   /** Bumped by the annotate command: toggles the blame gutter. */
   annotateRequest: number;
+  /** Bumped when the file is picked: the keyboard goes to its text. */
+  focusToken?: number;
   isRepo: boolean;
   onClose(): void;
 }
@@ -154,6 +156,7 @@ export function BottomPane({
   openedAs,
   target,
   annotateRequest,
+  focusToken,
   isRepo,
   onClose,
 }: Props) {
@@ -255,6 +258,7 @@ export function BottomPane({
           path={path}
           refreshToken={refreshToken}
           target={target}
+          focusToken={focusToken}
           annotate={annotate && isRepo}
           onAnnotateError={setAnnotateError}
           editable={editable}

@@ -32,6 +32,8 @@ interface Props {
   autoFocus?: boolean;
   /** Scroll to and mark this line once the file is up. */
   target?: LineTarget | null;
+  /** Bumped to put the keyboard in the file, once this path's view is up. */
+  focusToken?: number;
   /** Show the blame gutter. */
   annotate?: boolean;
   /** Blame could not be read (not committed, not a repo): the owner says so. */
@@ -68,6 +70,7 @@ export function FileViewer({
   refreshToken,
   autoFocus,
   target,
+  focusToken,
   annotate,
   onAnnotateError,
   editable = false,
@@ -181,6 +184,17 @@ export function FileViewer({
     jumpedRef.current = t.token;
     jumpToLine(view, t.line);
   };
+  const focusTokenRef = useRef(focusToken);
+  focusTokenRef.current = focusToken;
+  const focusedRef = useRef<number | undefined>(undefined);
+  const takeFocus = () => {
+    const view = viewRef.current;
+    const t = focusTokenRef.current;
+    if (!view || !t || t === focusedRef.current) return;
+    if (viewPathRef.current !== pathRef.current) return;
+    focusedRef.current = t;
+    view.focus();
+  };
 
   useEffect(() => {
     let stale = false;
@@ -265,6 +279,7 @@ export function FileViewer({
       baseRef.current = text;
       viewPathRef.current = path;
       if (autoFocusRef.current) viewRef.current.focus();
+      takeFocus();
       jump();
     })();
 
@@ -276,6 +291,7 @@ export function FileViewer({
   // The file may already be up (another line in the open file), or not yet, in
   // which case the build above takes the jump when it lands.
   useEffect(() => jump(), [target?.token]);
+  useEffect(() => takeFocus(), [focusToken]);
 
   useEffect(() => {
     viewRef.current?.dispatch({ effects: vimMode.reconfigure(vimMotions(vim)) });

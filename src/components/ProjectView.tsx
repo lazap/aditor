@@ -270,6 +270,9 @@ export function ProjectView({
   const [fileShown, setFileShown] = useState<string | null>(null);
   /** The line to show in the shown file tab, from a terminal link. */
   const [tabLine, setTabLine] = useState<LineTarget | null>(null);
+  // Picking a file tab puts the keyboard in the file, as picking a session
+  // does in its terminal -- else ⌘A selects the whole window.
+  const [tabFocus, setTabFocus] = useState(0);
   /** The file being looked at in this window, wherever it is shown. */
   const viewedFile = fileShown ?? openFile;
   /** Files opened in this window, newest first and relative: Find file's empty list. */
@@ -654,6 +657,7 @@ export function ProjectView({
       if (typeof next === "string") {
         setTabLine(null);
         setFileShown(next);
+        setTabFocus((t) => t + 1);
       } else {
         setFileShown(null);
         setActiveKey(next);
@@ -671,6 +675,7 @@ export function ProjectView({
       if (typeof target === "string") {
         setTabLine(null);
         setFileShown(target);
+        setTabFocus((t) => t + 1);
         saveProjectState(root, { openFile: target });
       } else {
         setFileShown(null);
@@ -1695,6 +1700,7 @@ export function ProjectView({
     (path: string) => {
       setTabLine(null);
       setFileShown(path);
+      setTabFocus((t) => t + 1);
       saveProjectState(root, { openFile: path });
     },
     [root],
@@ -1788,6 +1794,7 @@ export function ProjectView({
               diffInWindow={diffInWindow}
               openedAs="file"
               target={tabLine}
+              focusToken={tabFocus}
               annotateRequest={annotateRequest}
               isRepo={!!repo?.isRepo}
               onClose={() => closeFileTab(fileShown)}
