@@ -404,6 +404,7 @@ fn agent_args(command: Option<&str>, resume: Option<&str>, mcp_config: &str) -> 
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn pty_spawn(
     window: WebviewWindow,
     registry: State<'_, Arc<PtyRegistry>>,

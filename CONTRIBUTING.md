@@ -84,15 +84,14 @@ npm run build                        # tsc, then a production vite build
 npm run lint                         # React hooks rules; warnings, not errors
 npm test                             # frontend unit tests
 cd src-tauri && cargo test           # backend unit tests
-cd src-tauri && cargo clippy         # no *new* warnings, please
+cd src-tauri && cargo clippy --all-targets -- -D warnings
 ```
 
 `npm run build` is the typecheck -- `tsc` runs with the repo's strict settings
 and a type error fails the build.
 
-`cargo clippy` currently reports two pre-existing warnings in the lib; leaving
-those alone is fine, and fixing them in a PR of their own is welcome. Just do
-not add more.
+CI runs all of these on every push and pull request, and clippy warnings fail
+it.
 
 **Please do not run `cargo fmt`.** The Rust here is hand-formatted and is not
 rustfmt-clean -- `cargo fmt` rewrites 5 of the 7 files in `src-tauri/src`, which

@@ -208,7 +208,7 @@ fn touch(dir: &Path) -> bool {
 fn jitter_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map(|d| (d.subsec_nanos() / 1_000_000) as u64 % 250)
+        .map(|d| d.subsec_millis() as u64 % 250)
         .unwrap_or(0)
 }
 

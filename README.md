@@ -10,6 +10,11 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/lazap/aditor/actions/workflows/ci.yml"><img src="https://github.com/lazap/aditor/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/lazap/aditor/releases/latest"><img src="https://img.shields.io/github/v/release/lazap/aditor" alt="Latest release"></a>
+</p>
+
+<p align="center">
   <img src="docs/screenshot.png" alt="The Aditor window: file tree on the left, a Claude Code session in the middle, the Tasks panel on the right.">
 </p>
 

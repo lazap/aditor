@@ -14,7 +14,7 @@ project.
 
 - [ ] `npm run build` passes (this is the typecheck)
 - [ ] `npm test` and `cargo test` (from `src-tauri/`) pass
-- [ ] `cargo clippy` adds no new warnings, from `src-tauri/` (two already exist)
+- [ ] `cargo clippy --all-targets -- -D warnings` passes, from `src-tauri/`
 - [ ] I did not run `cargo fmt` — the Rust here is hand-formatted
 - [ ] I ran the app and exercised the part I changed
 - [ ] A new shortcut, if any, is a single row in `src/shortcuts/registry.ts`

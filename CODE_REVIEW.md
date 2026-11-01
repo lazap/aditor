@@ -440,6 +440,8 @@ fn touch(dir: &Path) -> bool {
 **Suggested fix.** Require a `Z` (or apply the offset). Change the comment, or switch to `from_utf8_lossy`.
 
 #### L10. The two known clippy warnings
+
+**Status:** Fixed. CI now runs clippy with `-D warnings`.
 `src-tauri/src/accounts.rs:207` (`subsec_millis()`), `src-tauri/src/pty.rs:251` (too many arguments)
 
 **What's wrong.** Both are trivial, and fixing them would let CI use `-D warnings`.
