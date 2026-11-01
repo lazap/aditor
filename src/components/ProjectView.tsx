@@ -662,15 +662,22 @@ export function ProjectView({
     [sessions, activeKey, fileTabs, fileShown],
   );
 
-  /** ⌘1-⌘8 pick a tab by position; ⌘9 always the last. */
+  /** ⌘1-⌘8 pick a tab by position, files included; ⌘9 always the last. */
   const gotoSession = useCallback(
     (n: number) => {
-      const target = sessions[n === 9 ? sessions.length - 1 : n - 1];
-      if (!target) return;
-      setFileShown(null);
-      setActiveKey(target.key);
+      const items: (number | string)[] = [...sessions.map((s) => s.key), ...fileTabs];
+      const target = items[n === 9 ? items.length - 1 : n - 1];
+      if (target === undefined) return;
+      if (typeof target === "string") {
+        setTabLine(null);
+        setFileShown(target);
+        saveProjectState(root, { openFile: target });
+      } else {
+        setFileShown(null);
+        setActiveKey(target);
+      }
     },
-    [sessions],
+    [sessions, fileTabs, root],
   );
 
   // A session coming to the front -- picked, started, or a run launched --
