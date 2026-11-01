@@ -15,6 +15,8 @@ interface Props {
   path: string;
   /** Bumped by the watcher; re-renders when the agent rewrites the file. */
   refreshToken: number;
+  /** Bumped to put the keyboard in the page, once it is rendered. */
+  focusToken?: number;
 }
 
 // The highlight style's classes only exist once something mounts its rules;
@@ -75,16 +77,24 @@ function highlightBlocks(host: HTMLElement, isStale: () => boolean) {
 }
 
 /** A markdown file, rendered. Read-only: editing happens in the File view. */
-export function MarkdownViewer({ root, path, refreshToken }: Props) {
+export function MarkdownViewer({ root, path, refreshToken, focusToken }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [contents, setContents] = useState<FileContents | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const pathRef = useRef(path);
+  pathRef.current = path;
+  /** Which path `contents` was read for; it lags `path` while a read is out. */
+  const loadedPathRef = useRef<string | null>(null);
 
   useEffect(() => {
     let stale = false;
     setError(null);
     readFile(root, path)
-      .then((c) => !stale && setContents(c))
+      .then((c) => {
+        if (stale) return;
+        loadedPathRef.current = path;
+        setContents(c);
+      })
       .catch((e) => !stale && setError(String(e)));
     return () => {
       stale = true;
@@ -100,10 +110,26 @@ export function MarkdownViewer({ root, path, refreshToken }: Props) {
     host.innerHTML = render(contents.text);
     addHeadingIds(host);
     highlightBlocks(host, () => stale);
+    takeFocus();
     return () => {
       stale = true;
     };
   }, [contents]);
+
+  // Same once-per-token arrangement as the file view; the page has no caret,
+  // so focus is what keeps ⌘A to it.
+  const focusTokenRef = useRef(focusToken);
+  focusTokenRef.current = focusToken;
+  const focusedRef = useRef<number | undefined>(undefined);
+  const takeFocus = () => {
+    const host = hostRef.current;
+    const t = focusTokenRef.current;
+    if (!host || host.hidden || !t || t === focusedRef.current) return;
+    if (loadedPathRef.current !== pathRef.current) return;
+    focusedRef.current = t;
+    host.focus({ preventScroll: true });
+  };
+  useEffect(() => takeFocus(), [focusToken]);
 
   // A new file starts at its top.
   useEffect(() => {
@@ -124,6 +150,15 @@ export function MarkdownViewer({ root, path, refreshToken }: Props) {
     }
   };
 
+  /** Select all is the page's text, not the whole window's. */
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    if (!(e.metaKey || e.ctrlKey) || e.altKey || e.shiftKey || e.key.toLowerCase() !== "a") return;
+    const host = hostRef.current;
+    if (!host) return;
+    e.preventDefault();
+    window.getSelection()?.selectAllChildren(host);
+  };
+
   return (
     <>
       {error && <div className="viewer-message error">{error}</div>}
@@ -136,7 +171,9 @@ export function MarkdownViewer({ root, path, refreshToken }: Props) {
       <div
         className="viewer-host markdown-body"
         ref={hostRef}
+        tabIndex={-1}
         onClick={onClick}
+        onKeyDown={onKeyDown}
         hidden={contents?.kind !== "text"}
       />
     </>

@@ -1422,6 +1422,9 @@ button.cwd:hover {
   -webkit-user-select: text;
 }
 
+/* Focused only so the keyboard lands in the page; no ring around it. */
+.markdown-body:focus { outline: none; }
+
 .markdown-body > :first-child { margin-top: 0; }
 
 .markdown-body h1,

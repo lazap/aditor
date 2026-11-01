@@ -249,9 +249,20 @@ export function BottomPane({
       </div>
 
       {mode === "diff" && status ? (
-        <DiffViewer root={root} path={path} layout={layout} refreshToken={refreshToken} />
+        <DiffViewer
+          root={root}
+          path={path}
+          layout={layout}
+          refreshToken={refreshToken}
+          focusToken={focusToken}
+        />
       ) : mode === "preview" ? (
-        <MarkdownViewer root={root} path={path} refreshToken={refreshToken} />
+        <MarkdownViewer
+          root={root}
+          path={path}
+          refreshToken={refreshToken}
+          focusToken={focusToken}
+        />
       ) : (
         <FileViewer
           root={root}

@@ -20,6 +20,8 @@ interface Props {
   refreshToken: number;
   /** Take focus once built, so vim motions work without a click first. */
   autoFocus?: boolean;
+  /** Bumped to put the keyboard in the diff, once it is built. */
+  focusToken?: number;
   /**
    * Show what this commit did to the file (its first parent against it)
    * instead of HEAD against the working tree.
@@ -39,7 +41,15 @@ function editorsOf(instance: EditorView | MergeView | null): EditorView[] {
   return instance instanceof MergeView ? [instance.b, instance.a] : [instance];
 }
 
-export function DiffViewer({ root, path, layout, refreshToken, autoFocus, commit }: Props) {
+export function DiffViewer({
+  root,
+  path,
+  layout,
+  refreshToken,
+  autoFocus,
+  focusToken,
+  commit,
+}: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const instanceRef = useRef<EditorView | MergeView | null>(null);
   const [diff, setDiff] = useState<FileDiff | null>(null);
@@ -55,6 +65,22 @@ export function DiffViewer({ root, path, layout, refreshToken, autoFocus, commit
   themeRef.current = theme;
   const autoFocusRef = useRef(autoFocus);
   autoFocusRef.current = autoFocus;
+  // Each token is applied once, to the diff of the path it arrived with: a
+  // watcher refresh rebuilds the view, and should not take focus back.
+  const pathRef = useRef(path);
+  pathRef.current = path;
+  const builtPathRef = useRef<string | null>(null);
+  const focusTokenRef = useRef(focusToken);
+  focusTokenRef.current = focusToken;
+  const focusedRef = useRef<number | undefined>(undefined);
+  const takeFocus = () => {
+    const view = editorsOf(instanceRef.current)[0];
+    const t = focusTokenRef.current;
+    if (!view || !t || t === focusedRef.current) return;
+    if (builtPathRef.current !== pathRef.current) return;
+    focusedRef.current = t;
+    view.focus();
+  };
 
   // By value, so a new `commit` object with the same fields does not refetch.
   const commitId = commit?.id;
@@ -121,13 +147,17 @@ export function DiffViewer({ root, path, layout, refreshToken, autoFocus, commit
         });
       }
 
+      builtPathRef.current = path;
       if (autoFocusRef.current) editorsOf(instanceRef.current)[0]?.focus();
+      takeFocus();
     })();
 
     return () => {
       disposed = true;
     };
   }, [diff, layout, path]);
+
+  useEffect(() => takeFocus(), [focusToken]);
 
   useEffect(() => {
     const effects = vimMode.reconfigure(vimMotions(vim));
