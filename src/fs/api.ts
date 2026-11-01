@@ -66,7 +66,11 @@ export const writeFile = (root: string, path: string, text: string, expected?: s
 export const createFile = (root: string, rel: string) =>
   invoke<string>("create_file", { root, rel });
 
-export const fsDebounceMs = () => invoke<number>("fs_debounce_ms");
+/** Move `from` into the folder `into`, keeping its name; resolves to its new path. */
+export const movePath = (root: string, from: string, into: string) =>
+  invoke<string>("move_path", { root, from, into });
+
+export const fsDebounceMs =() => invoke<number>("fs_debounce_ms");
 
 /**
  * Which of `paths` are still directories, in order. Used by the project picker

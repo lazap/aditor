@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type PointerEvent,
 } from "react";
 import { listDir, type DirEntry } from "../fs/api";
 import { BADGE, type ChangeKind } from "../git/api";
@@ -31,6 +32,10 @@ interface Props {
   recent: Set<string>;
   /** Bumping this moves the caret to the tree. Zero never does. */
   focusToken: number;
+  /** Move `from` into the folder `into`; resolves to its new path, or null. */
+  onMove(from: string, into: string): Promise<string | null>;
+  /** F6: ask where to move `from`, then move it; resolves as `onMove` does. */
+  onAskMove(from: string): Promise<string | null>;
 }
 
 export function FileTree(props: Props) {
@@ -55,6 +60,9 @@ type Row =
       size: number;
     }
   | { kind: "error"; dir: string; depth: number; message: string };
+
+/** How far the pointer travels before a press becomes a drag, in px. */
+const DRAG_SLOP = 4;
 
 /**
  * Visible rows in view order, plus the directories still to fetch -- one walk
@@ -118,6 +126,8 @@ function Tree({
   statuses,
   recent,
   focusToken,
+  onMove,
+  onAskMove,
 }: Props) {
   const [cache, setCache] = useState<Map<string, DirEntry[]>>(new Map());
   const [errors, setErrors] = useState<Map<string, string>>(new Map());
@@ -250,6 +260,18 @@ function Tree({
       ?.focus();
   }, []);
 
+  /**
+   * A row just moved, whose new place the refetch has yet to list. The cursor
+   * waits for it instead of settling on an ancestor, and takes focus there if
+   * `focus` -- the tree had it when the move began.
+   */
+  const follow = useRef<{ path: string; focus: boolean } | null>(null);
+  const followMoved = useCallback((to: string | null, focus: boolean) => {
+    if (!to) return;
+    follow.current = { path: to, focus };
+    setCursor(to);
+  }, []);
+
   // A vanished row must not strand the cursor. Focus only moves if the tree
   // already had it -- otherwise a file the agent deleted in the background
   // would rip focus out of the terminal mid-turn.
@@ -257,6 +279,14 @@ function Tree({
   useEffect(() => {
     const prev = lastItems.current;
     lastItems.current = items;
+    const want = follow.current;
+    if (want) {
+      if (!items.some((r) => r.entry.path === want.path)) return;
+      follow.current = null;
+      if (want.focus) focusRow(want.path);
+      else setCursor(want.path);
+      return;
+    }
     if (!cursor || items.some((r) => r.entry.path === cursor)) return;
 
     // Prefer the nearest surviving ancestor, else whatever now sits at the
@@ -347,6 +377,11 @@ function Tree({
           if (row.entry.isDir) onToggle(row.entry.path);
           else onSelect(row.entry.path);
           break;
+        case "F6":
+          // IntelliJ's Move. Not ⌘X/⌘V: the Edit menu owns those.
+          if (!row) return;
+          void onAskMove(row.entry.path).then((to) => followMoved(to, true));
+          break;
         default: {
           // Typeahead. A lone printable character only, so it never swallows a
           // shortcut, and Space is already spoken for above.
@@ -370,8 +405,90 @@ function Tree({
       }
       e.preventDefault();
     },
-    [items, tabTarget, root, expanded, focusRow, onToggle, onSelect],
+    [items, tabTarget, root, expanded, focusRow, onToggle, onSelect, onAskMove, followMoved],
   );
+
+  // ------------------------------------------------------- drag and drop ---
+  //
+  // Pointer events rather than HTML5 drag and drop, whose drop events the
+  // Tauri webview's own file-drop handling does not reliably let through.
+
+  /** A press on a row, which becomes a drag once it travels DRAG_SLOP. */
+  const press = useRef<{ path: string; x: number; y: number } | null>(null);
+  /** The row being dragged, and the folder it would land in (null: nowhere). */
+  const [drag, setDrag] = useState<{ from: string; into: string | null } | null>(null);
+  /** Set by a drop, so the click that ends it does not also open the row. */
+  const dropped = useRef(false);
+
+  const entries = useMemo(() => new Map(items.map((r) => [r.entry.path, r.entry])), [items]);
+
+  /**
+   * The folder a drop at (x, y) lands in: a folder row itself, a file row's
+   * folder, or the root below the last row. Null outside the tree, and where
+   * the move would be a no-op or put a folder inside itself.
+   */
+  const dropTarget = (from: string, x: number, y: number): string | null => {
+    const el = document.elementFromPoint(x, y);
+    if (!el || !boxRef.current?.contains(el)) return null;
+    const path = el.closest<HTMLElement>("[data-path]")?.dataset.path;
+    const entry = path === undefined ? undefined : entries.get(path);
+    // An error row has no data-path; it is no place to drop.
+    if (path === undefined && el.closest(".tree-error")) return null;
+    const into = entry ? (entry.isDir ? entry.path : parentOf(entry.path)) : root;
+    if (into === parentOf(from) || into === from || into.startsWith(`${from}/`)) return null;
+    return into;
+  };
+
+  const endDrag = () => {
+    press.current = null;
+    setDrag(null);
+  };
+
+  // Escape abandons a drag wherever the keyboard is.
+  const dragging = drag !== null;
+  useEffect(() => {
+    if (!dragging) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      e.preventDefault();
+      e.stopPropagation();
+      press.current = null;
+      setDrag(null);
+    };
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, [dragging]);
+
+  const onPointerDown = (e: PointerEvent<HTMLDivElement>) => {
+    dropped.current = false;
+    if (e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+    const path = (e.target as Element).closest<HTMLElement>("[data-path]")?.dataset.path;
+    if (path === undefined) return;
+    follow.current = null;
+    press.current = { path, x: e.clientX, y: e.clientY };
+  };
+
+  const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
+    const p = press.current;
+    if (!p) return;
+    if (!drag) {
+      if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < DRAG_SLOP) return;
+      // Captured, so the drag keeps tracking when the pointer leaves the tree.
+      e.currentTarget.setPointerCapture(e.pointerId);
+    }
+    const into = dropTarget(p.path, e.clientX, e.clientY);
+    if (!drag || drag.into !== into) setDrag({ from: p.path, into });
+  };
+
+  const onPointerUp = () => {
+    const d = drag;
+    endDrag();
+    if (!d) return;
+    dropped.current = true;
+    if (d.into === null) return;
+    const focus = boxRef.current?.contains(document.activeElement) ?? false;
+    void onMove(d.from, d.into).then((to) => followMoved(to, focus));
+  };
 
   const rootError = errors.get(root);
   if (rootError) return <div className="tree tree-error">{rootError}</div>;
@@ -388,6 +505,12 @@ function Tree({
       tabIndex={-1}
       ref={boxRef}
       onKeyDown={onKeyDown}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      onPointerCancel={endDrag}
+      data-dragging={dragging}
+      data-drop={drag?.into === root}
     >
       {rows.map((row) => {
         if (row.kind === "error") {
@@ -408,6 +531,10 @@ function Tree({
         const { entry, depth, pos, size } = row;
         const open = entry.isDir && expanded.has(entry.path);
         const status = statuses.get(entry.path);
+        // The whole folder a drop would land in lights up, not just its row.
+        const into = drag?.into;
+        const zone =
+          !!into && into !== root && (entry.path === into || entry.path.startsWith(`${into}/`));
         return (
           <Fragment key={entry.path}>
             <div
@@ -429,9 +556,15 @@ function Tree({
               data-recent={recent.has(entry.path)}
               data-status={status}
               data-ignored={entry.ignored}
+              data-drop={zone}
+              data-dragged={drag?.from === entry.path}
               style={{ paddingLeft: 8 + depth * 12 }}
               title={entry.path}
               onClick={(e) => {
+                if (dropped.current) {
+                  dropped.current = false;
+                  return;
+                }
                 // Focusing explicitly: WKWebView does not reliably focus a
                 // div[tabindex="-1"] on mousedown, and without this the
                 // keyboard cursor would not follow the mouse.

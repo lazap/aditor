@@ -67,6 +67,7 @@ pub fn run() {
             fs::read_file,
             fs::write_file,
             fs::create_file,
+            fs::move_path,
             fs::fs_debounce_ms,
             fs::dirs_exist,
             fs::resolve_file_links,

@@ -477,6 +477,64 @@ fn create_in(root: &Path, rel: &str) -> Result<PathBuf, String> {
     Ok(file)
 }
 
+/// Move the file or directory `from` into the directory `into`, keeping its
+/// name. Returns its new absolute path; moving it to where it already is
+/// returns the path unchanged.
+///
+/// Never overwrites: a clash in the target is refused, and the user renames
+/// or moves the other one first. Synchronous, like `write_file` -- a rename is
+/// one syscall, and two drops in quick succession must land in order.
+#[tauri::command]
+pub fn move_path(
+    ws: State<'_, Workspace>,
+    root: String,
+    from: String,
+    into: String,
+) -> Result<String, String> {
+    let root = workspace_root(&ws, &root)?;
+    move_in(&root, &from, &into).map(|p| p.to_string_lossy().to_string())
+}
+
+fn move_in(root: &Path, from: &str, into: &str) -> Result<PathBuf, String> {
+    // Only the parent is canonicalized: canonicalizing `from` itself would
+    // follow a symlink and move what it points at, not the link the user
+    // dragged.
+    let from_path = Path::new(from);
+    let (Some(parent), Some(name)) = (from_path.parent(), from_path.file_name()) else {
+        return Err(format!("{from} cannot be moved."));
+    };
+    let parent = resolve_in(root, &parent.to_string_lossy())?;
+    let src = parent.join(name);
+    std::fs::symlink_metadata(&src).map_err(|e| format!("{from}: {e}"))?;
+
+    let dir = resolve_in(root, into)?;
+    if !dir.is_dir() {
+        return Err(format!("{into} is not a folder."));
+    }
+    if dir == parent {
+        return Ok(src);
+    }
+    let shown = |p: &Path| match p.strip_prefix(root) {
+        Ok(rel) if !rel.as_os_str().is_empty() => rel.display().to_string(),
+        _ => root.file_name().unwrap_or_default().to_string_lossy().to_string(),
+    };
+    if dir.starts_with(&src) {
+        return Err(format!("{} cannot be moved into itself.", shown(&src)));
+    }
+    let dest = dir.join(name);
+    // symlink_metadata, so a dangling link still counts as taken -- and on a
+    // case-insensitive volume, so does `Foo` against `foo`.
+    if std::fs::symlink_metadata(&dest).is_ok() {
+        return Err(format!(
+            "{} already exists in {}.",
+            name.to_string_lossy(),
+            shown(&dir)
+        ));
+    }
+    std::fs::rename(&src, &dest).map_err(|e| format!("{}: {e}", shown(&src)))?;
+    Ok(dest)
+}
+
 /// Debounce window the frontend should use when coalescing `fs://changed`.
 /// Exposed so the two sides cannot drift apart.
 #[tauri::command]
@@ -646,6 +704,51 @@ mod tests {
         let file = create_in(&root, "config/local/.env").unwrap();
         assert_eq!(file, root.join("config/local/.env"));
         assert!(file.is_file());
+    }
+
+    #[test]
+    fn moves_files_and_folders_into_another_folder() {
+        let root = scratch("move");
+        std::fs::create_dir_all(root.join("src/lib")).unwrap();
+        std::fs::create_dir_all(root.join("dest")).unwrap();
+        std::fs::write(root.join("src/a.ts"), "a").unwrap();
+        std::fs::write(root.join("src/lib/b.ts"), "b").unwrap();
+        let at = |p: &str| root.join(p).to_string_lossy().to_string();
+
+        let moved = move_in(&root, &at("src/a.ts"), &at("dest")).unwrap();
+        assert_eq!(moved, root.join("dest/a.ts"));
+        assert_eq!(std::fs::read_to_string(&moved).unwrap(), "a");
+
+        let moved = move_in(&root, &at("src/lib"), &at("dest")).unwrap();
+        assert_eq!(moved, root.join("dest/lib"));
+        assert!(root.join("dest/lib/b.ts").is_file());
+        assert!(!root.join("src/lib").exists());
+
+        // Up to the root, and onto where it already is.
+        let moved = move_in(&root, &at("dest/a.ts"), &at("")).unwrap();
+        assert_eq!(moved, root.join("a.ts"));
+        assert_eq!(move_in(&root, &at("a.ts"), &at("")).unwrap(), root.join("a.ts"));
+    }
+
+    #[test]
+    fn moving_refuses_clashes_cycles_and_escapes() {
+        let root = scratch("move-refuse");
+        std::fs::create_dir_all(root.join("a/inner")).unwrap();
+        std::fs::create_dir_all(root.join("b")).unwrap();
+        std::fs::write(root.join("x.txt"), "mine").unwrap();
+        std::fs::write(root.join("b/x.txt"), "theirs").unwrap();
+        let at = |p: &str| root.join(p).to_string_lossy().to_string();
+
+        let clash = move_in(&root, &at("x.txt"), &at("b")).unwrap_err();
+        assert_eq!(clash, "x.txt already exists in b.");
+        assert_eq!(std::fs::read_to_string(root.join("b/x.txt")).unwrap(), "theirs");
+
+        assert!(move_in(&root, &at("a"), &at("a")).is_err());
+        assert!(move_in(&root, &at("a"), &at("a/inner")).is_err());
+        assert!(move_in(&root, &at("x.txt"), "/tmp").is_err());
+        assert!(move_in(&root, &at("x.txt"), &at("x.txt")).is_err());
+        assert!(move_in(&root, &root.to_string_lossy(), &at("b")).is_err());
+        assert!(root.join("x.txt").is_file());
     }
 
     #[test]

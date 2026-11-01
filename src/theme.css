@@ -1565,6 +1565,27 @@ button.cwd:hover {
   transition: background 600ms ease-out;
 }
 
+/* Dragging a row: the folder it would land in, whole, and the root when the
+   drop is below the last row. After the hover and recent rules, which a drop
+   target must beat. */
+.tree[data-dragging="true"],
+.tree[data-dragging="true"] .tree-row {
+  cursor: grabbing;
+}
+
+.tree[data-dragging="true"] .tree-row:hover:not([data-drop="true"]) {
+  background: none;
+}
+
+.tree-row[data-drop="true"],
+.tree[data-drop="true"] {
+  background: var(--bg-selected);
+}
+
+.tree-row[data-dragged="true"] {
+  opacity: 0.5;
+}
+
 /* ---- changes list ---- */
 
 /* The whole Git tab: header, the list (the one scroller), and the commit

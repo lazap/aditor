@@ -26,7 +26,7 @@ import { useRunConfigs } from "../run/useRunConfigs";
 import { RUN_FILE, runOutput } from "../run/api";
 import { toScript } from "../run/command";
 import { launchChain, type RunConfig } from "../run/schema";
-import { createFile, FS_GIT, fsDebounceMs, type FsChanged, type FsGit } from "../fs/api";
+import { createFile, FS_GIT, fsDebounceMs, movePath, type FsChanged, type FsGit } from "../fs/api";
 import {
   gitBranchCreate,
   gitBranchDelete,
@@ -184,6 +184,18 @@ function newFileError(text: string): string | null {
   if (t.endsWith("/")) return "Give the file a name after the folder.";
   return null;
 }
+
+/** What a move's target folder may not be. `.` is the project root. */
+function moveTargetError(text: string): string | null {
+  const t = text.trim();
+  if (t.startsWith("/")) return "Give a folder inside the project, not an absolute path.";
+  if (t.split("/").includes("..")) return "Stay inside the project: no `..`.";
+  return null;
+}
+
+/** `p` once `from` has moved to `to`: itself, anything beneath it, or unchanged. */
+const remapMoved = (p: string, from: string, to: string): string =>
+  p === from ? to : p.startsWith(`${from}/`) ? to + p.slice(from.length) : p;
 
 const GitIcon = () => (
   <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor"
@@ -1676,6 +1688,78 @@ export function ProjectView({
     openPath(file, "file");
   }, [root, diffFile, viewedFile, ask, showToast, openPath]);
 
+  /**
+   * Move a file or folder into `into`, from a drop in the tree or F6. Whatever
+   * pointed at it -- tabs, the pane, the unlocked list, expanded folders --
+   * follows it, and the tree unfolds to where it landed. Resolves to the new
+   * path, or null when nothing moved.
+   */
+  const moveEntry = useCallback(
+    async (from: string, into: string): Promise<string | null> => {
+      let to: string;
+      try {
+        to = await movePath(root, from, into);
+      } catch (e) {
+        showToast(String(e).replace(/^Error:\s*/, ""), "error");
+        return null;
+      }
+      if (to === from) return null;
+      const re = (p: string) => remapMoved(p, from, to);
+      const reOrNull = (p: string | null) => p && re(p);
+      setFileTabs((prev) => prev.map(re));
+      setFileShown(reOrNull);
+      setOpenFile(reOrNull);
+      setDiffFile(reOrNull);
+      const rel = (p: string) => p.slice(root.length + 1);
+      setRecentFiles((prev) => prev.map((p) => remapMoved(p, rel(from), rel(to))));
+      const state = loadProjectState(root);
+      saveProjectState(root, {
+        writable: state.writable.map(re),
+        openFile: reOrNull(state.openFile),
+      });
+      setExpanded((prev) => {
+        const next = new Set([...prev].map(re));
+        for (let at = to.lastIndexOf("/"); at > root.length; at = to.lastIndexOf("/", at - 1)) {
+          next.add(to.slice(0, at));
+        }
+        saveProjectState(root, { expandedDirs: [...next] });
+        return next;
+      });
+      // The watcher will report it too, but the tree should not lag the drop.
+      setTreeChanges(new Set([from, to]));
+      setRefreshToken((t) => t + 1);
+      return to;
+    },
+    [root, showToast],
+  );
+
+  /** F6 in the tree: move the row under the cursor to a folder typed in. */
+  const askMove = useCallback(
+    async (from: string): Promise<string | null> => {
+      const parent = from.slice(0, from.lastIndexOf("/"));
+      const r = await ask({
+        title: "Move",
+        body: (
+          <>
+            Move <code>{from.slice(parent.length + 1)}</code> to another folder in{" "}
+            <code>{root.split("/").pop()}</code>.
+          </>
+        ),
+        input: {
+          label: "Folder, relative to the project",
+          initial: parent === root ? "." : parent.slice(root.length + 1),
+          placeholder: ". for the project root",
+        },
+        confirm: "Move",
+        validate: moveTargetError,
+      });
+      if (!r) return null;
+      const dir = r.text.replace(/^\.\/?/, "").replace(/\/+$/, "");
+      return moveEntry(from, dir ? `${root}/${dir}` : root);
+    },
+    [root, ask, moveEntry],
+  );
+
   const closeFile = useCallback(() => {
     setOpenFile(null);
     saveProjectState(root, { openFile: null });
@@ -1916,6 +2000,8 @@ export function ProjectView({
                 statuses={statuses}
                 recent={recent}
                 focusToken={filesFocus}
+                onMove={moveEntry}
+                onAskMove={askMove}
               />
             </div>
             <div hidden={railTab !== "git"}>
