@@ -1,7 +1,7 @@
 {
   "name": "aditor",
   "private": true,
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "A lightweight editor whose main pane is an agent CLI",
   "license": "GPL-3.0-only",
   "author": "Lazar Petrov (https://github.com/lazap)",
