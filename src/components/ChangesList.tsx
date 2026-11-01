@@ -1,4 +1,12 @@
-import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import { BADGE, type ChangeKind, type FileStatus, type RepoOperation } from "../git/api";
 import { formatChord } from "../shortcuts/keys";
 import { chordFor, chordHint } from "../shortcuts/store";
@@ -155,10 +163,13 @@ export function ChangesList({
 
   // The keyboard cursor. Keyed by section as well as path: a partly staged
   // file is a row in both lists.
-  const rows = [
-    ...staged.map((f) => ({ key: `s:${f.path}`, f })),
-    ...unstaged.map((f) => ({ key: `u:${f.path}`, f })),
-  ];
+  const rows = useMemo(
+    () => [
+      ...staged.map((f) => ({ key: `s:${f.path}`, f })),
+      ...unstaged.map((f) => ({ key: `u:${f.path}`, f })),
+    ],
+    [staged, unstaged],
+  );
   const [cursor, setCursor] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
@@ -193,33 +204,39 @@ export function ChangesList({
     if (!next) setCursor(null);
     else if (hadFocus) focusRow(next.key);
     else setCursor(next.key);
-  });
+  }, [rows, cursor, focusRow]);
 
   // ⌘⇧C. Compared against the last value, as FileTree does, so a remount never
-  // takes the caret on its own.
+  // takes the caret on its own. `tabTarget` is read through an effect event:
+  // this must fire on the token alone.
+  const takeFocus = useEffectEvent(() => {
+    if (tabTarget) focusRow(tabTarget);
+    else listRef.current?.focus();
+  });
   const lastFocusToken = useRef(focusToken);
   useEffect(() => {
     if (focusToken === lastFocusToken.current) return;
     lastFocusToken.current = focusToken;
-    if (tabTarget) focusRow(tabTarget);
-    else listRef.current?.focus();
-    // `tabTarget` is read, not depended on: this must fire on the token alone.
+    takeFocus();
   }, [focusToken]);
 
   // ⌘⌥Z and ⌘D, as in IntelliJ's commit window: on the row under the cursor
-  // while the list has focus. Anywhere else App picks the target.
-  const lastRequest = useRef(request?.token ?? 0);
-  useEffect(() => {
-    if (!request || request.token === lastRequest.current) return;
-    lastRequest.current = request.token;
+  // while the list has focus. Anywhere else App picks the target. Fires on the
+  // token alone; everything else is read as it is now.
+  const handleRequest = useEffectEvent((kind: ListRequest["kind"]) => {
     const focused = !!listRef.current?.contains(document.activeElement);
     const at = focused ? rows.find((r) => r.key === tabTarget) : undefined;
-    if (request.kind === "diff") {
+    if (kind === "diff") {
       if (at) onSelect(at.f.path);
       else onRequestUnhandled("diff");
     } else if (at) onRollback([at.f]);
     else onRequestUnhandled("rollback");
-    // Fires on the token alone; everything else is read as it is now.
+  });
+  const lastRequest = useRef(request?.token ?? 0);
+  useEffect(() => {
+    if (!request || request.token === lastRequest.current) return;
+    lastRequest.current = request.token;
+    handleRequest(request.kind);
   }, [request]);
 
   const openMenu = (e: React.MouseEvent, f: FileStatus, key: string, staged: boolean) => {

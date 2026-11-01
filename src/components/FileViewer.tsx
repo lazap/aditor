@@ -271,11 +271,10 @@ export function FileViewer({
     return () => {
       disposed = true;
     };
-  }, [contents, path]);
+  }, [contents, root, path]);
 
   // The file may already be up (another line in the open file), or not yet, in
   // which case the build above takes the jump when it lands.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => jump(), [target?.token]);
 
   useEffect(() => {

@@ -81,7 +81,7 @@ say in your PR what you actually clicked through.
 
 ```bash
 npm run build                        # tsc, then a production vite build
-npm run lint                         # React hooks rules; warnings, not errors
+npm run lint                         # React hooks rules
 npm test                             # frontend unit tests
 cd src-tauri && cargo test           # backend unit tests
 cd src-tauri && cargo clippy --all-targets -- -D warnings

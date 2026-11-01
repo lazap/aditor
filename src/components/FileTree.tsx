@@ -2,6 +2,7 @@ import {
   Fragment,
   useCallback,
   useEffect,
+  useEffectEvent,
   useMemo,
   useRef,
   useState,
@@ -161,7 +162,7 @@ function Tree({
         });
       }
     });
-  }, [missing]);
+  }, [root, missing]);
 
   // What makes the watcher's changes show up: the loaded directories the
   // change touched are re-read -- each changed path's parent, the path itself
@@ -170,11 +171,9 @@ function Tree({
   // cost dozens of walks during a turn. Errored directories are retried here
   // too, so a recreated one recovers.
   //
-  // `cache`/`errors`/`changed` are read but deliberately not dependencies --
-  // this must fire on the token alone, and the closure already belongs to the
-  // render in which the token changed.
-  useEffect(() => {
-    if (refreshToken === 0) return;
+  // `cache`/`errors`/`changed` are read through an effect event rather than
+  // depended on: this must fire on the token alone.
+  const refresh = useEffectEvent(() => {
     const touched = (dir: string): boolean =>
       changed === null ||
       [...changed].some((p) => dir === p || dir === parentOf(p) || dir.startsWith(`${p}/`));
@@ -206,6 +205,10 @@ function Tree({
     return () => {
       stale = true;
     };
+  });
+  useEffect(() => {
+    if (refreshToken === 0) return;
+    return refresh();
   }, [refreshToken]);
 
   /**
@@ -279,16 +282,19 @@ function Tree({
   // Taking focus on request -- ⌘⇧E. Compared against the last value rather
   // than fired on every run, because `Tree` remounts when the project changes
   // and a bare effect would rip the caret out of the terminal on every switch.
-  const lastFocusToken = useRef(focusToken);
-  useEffect(() => {
-    if (focusToken === lastFocusToken.current) return;
-    lastFocusToken.current = focusToken;
+  // `tabTarget` is read through an effect event: this must fire on the token
+  // alone.
+  const takeFocus = useEffectEvent(() => {
     // An empty or still-loading tree has no row to land on; the container
     // takes it instead, so the chord is never silently ignored.
     if (tabTarget) focusRow(tabTarget);
     else boxRef.current?.focus();
-    // `tabTarget` is read, not depended on: this must fire on the token alone,
-    // and the closure belongs to the render in which the token changed.
+  });
+  const lastFocusToken = useRef(focusToken);
+  useEffect(() => {
+    if (focusToken === lastFocusToken.current) return;
+    lastFocusToken.current = focusToken;
+    takeFocus();
   }, [focusToken]);
 
   const typed = useRef({ buffer: "", at: 0 });

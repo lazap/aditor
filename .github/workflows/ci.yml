@@ -16,9 +16,9 @@ jobs:
     # The app is macOS-only; the backend links against AppKit through Tauri.
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm

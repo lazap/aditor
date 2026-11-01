@@ -251,7 +251,7 @@ export function AgentSessions({
     }
   };
 
-  const sessions = data?.sessions ?? [];
+  const sessions = useMemo(() => data?.sessions ?? [], [data]);
   const project = useMemo(() => sum(sessions), [sessions]);
   const today = useMemo(() => {
     const since = startOfToday();

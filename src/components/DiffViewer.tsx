@@ -56,11 +56,14 @@ export function DiffViewer({ root, path, layout, refreshToken, autoFocus, commit
   const autoFocusRef = useRef(autoFocus);
   autoFocusRef.current = autoFocus;
 
+  // By value, so a new `commit` object with the same fields does not refetch.
+  const commitId = commit?.id;
+  const oldPath = commit?.oldPath ?? null;
   useEffect(() => {
     let stale = false;
     setError(null);
-    const load = commit
-      ? gitCommitFileDiff(root, commit.id, { path, oldPath: commit.oldPath })
+    const load = commitId
+      ? gitCommitFileDiff(root, commitId, { path, oldPath })
       : gitDiff(root, path);
     load
       .then((d) => !stale && setDiff(d))
@@ -68,7 +71,7 @@ export function DiffViewer({ root, path, layout, refreshToken, autoFocus, commit
     return () => {
       stale = true;
     };
-  }, [root, path, refreshToken, commit?.id, commit?.oldPath]);
+  }, [root, path, refreshToken, commitId, oldPath]);
 
   useEffect(() => {
     const host = hostRef.current;
