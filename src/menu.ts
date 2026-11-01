@@ -147,6 +147,51 @@ export function claimAppMenu(): void {
   void installing?.then(() => built?.setAsAppMenu()).catch(() => {});
 }
 
+/**
+ * The stock Select All takes ⌘A before the page sees it and has WebKit select
+ * what is in the DOM -- for CodeMirror, only the lines drawn around the
+ * viewport. This one offers the chord to the focused element first, as a
+ * keydown its own keymap can answer, and falls back to the native command only
+ * when nothing claimed it.
+ */
+async function replaceSelectAll(menu: Menu): Promise<void> {
+  for (const entry of await menu.items()) {
+    if (!(entry instanceof Submenu)) continue;
+    const items = await entry.items();
+    for (const [at, stock] of items.entries()) {
+      if (!(stock instanceof PredefinedMenuItem) || (await stock.text()) !== "Select All") {
+        continue;
+      }
+      await entry.remove(stock);
+      await entry.insert(
+        await MenuItem.new({
+          text: "Select All",
+          accelerator: "CmdOrCtrl+A",
+          action: selectAllInPage,
+        }),
+        at,
+      );
+      return;
+    }
+  }
+}
+
+function selectAllInPage(): void {
+  const target = document.activeElement ?? document.body;
+  const mac = navigator.platform.startsWith("Mac");
+  const claimed = !target.dispatchEvent(
+    new KeyboardEvent("keydown", {
+      key: "a",
+      code: "KeyA",
+      metaKey: mac,
+      ctrlKey: !mac,
+      bubbles: true,
+      cancelable: true,
+    }),
+  );
+  if (!claimed) document.execCommand("selectAll");
+}
+
 async function build(): Promise<void> {
   const menu = await Menu.default();
 
@@ -212,6 +257,8 @@ async function build(): Promise<void> {
     if (windowAt >= 0) await menu.insert(sub, windowAt + i);
     else await menu.append(sub);
   }
+
+  await replaceSelectAll(menu);
 
   await menu.setAsAppMenu();
   built = menu;
