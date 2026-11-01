@@ -4,7 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { DiffViewer } from "./DiffViewer";
 import { FileViewer, type LineTarget } from "./FileViewer";
 import { MarkdownViewer } from "./MarkdownViewer";
-import { AnnotateToggle, DiffLayoutToggle, EditToggle, fileModeFor, PreviewButton } from "./BottomPane";
+import { AnnotateToggle, CopyFileButton, DiffLayoutToggle, EditToggle, fileModeFor, PreviewButton } from "./BottomPane";
 import { isWritable, useWritable } from "../projects";
 import { eventChord } from "../shortcuts/keys";
 import { chordFor } from "../shortcuts/store";
@@ -169,6 +169,7 @@ export function DiffWindow({ onClose }: { onClose(): void }) {
         {annotate && annotateError && (
           <span className="viewer-message error viewer-inline">{annotateError}</span>
         )}
+        <CopyFileButton root={root} path={path} />
         <EditToggle root={root} path={path} disabled={mode === "diff"} />
         <button
           className="viewer-close"

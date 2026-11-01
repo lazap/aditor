@@ -7,6 +7,7 @@ import { patchLayout, useSetting } from "../settings/store";
 import { chordHint } from "../shortcuts/store";
 import { basename, isMarkdown, openViewerWindow, type ViewerMode as Mode } from "../window";
 import { setWritable, useWritable } from "../projects";
+import { readFile } from "../fs/api";
 
 interface Props {
   /** Workspace the file belongs to; every read is checked against it. */
@@ -57,6 +58,45 @@ export function EditToggle({
       }
     >
       {on ? "editing" : "read-only"}
+    </button>
+  );
+}
+
+/**
+ * Puts the whole file on the clipboard, read fresh from disk so it is the
+ * file's text whichever view -- diff, preview, source -- is up. Shared with
+ * the file window.
+ */
+export function CopyFileButton({ root, path }: { root: string; path: string }) {
+  const [note, setNote] = useState<string | null>(null);
+  const timer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(timer.current), []);
+
+  const flash = (text: string) => {
+    setNote(text);
+    window.clearTimeout(timer.current);
+    timer.current = window.setTimeout(() => setNote(null), 1500);
+  };
+
+  const copy = async () => {
+    try {
+      const c = await readFile(root, path);
+      if (c.kind === "binary") return flash("Binary");
+      if (c.kind === "tooLarge") return flash("Too large");
+      await navigator.clipboard.writeText(c.text);
+      flash("Copied");
+    } catch {
+      flash("Failed");
+    }
+  };
+
+  return (
+    <button
+      className="seg-btn viewer-toggle viewer-copy"
+      onClick={() => void copy()}
+      title="Copy the whole file to the clipboard"
+    >
+      {note ?? "Copy"}
     </button>
   );
 }
@@ -242,6 +282,7 @@ export function BottomPane({
           <span className="viewer-message error viewer-inline">{annotateError}</span>
         )}
 
+        <CopyFileButton root={root} path={path} />
         <EditToggle root={root} path={path} disabled={mode === "diff"} />
         <button className="viewer-close" onClick={onClose} title="Close file">
           ✕

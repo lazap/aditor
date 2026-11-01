@@ -2161,6 +2161,15 @@ button.cwd:hover {
   margin-left: auto;
 }
 
+/* Copy sits just left of the lock, so it takes over pushing the pair right. */
+.viewer-bar .viewer-copy {
+  margin-left: auto;
+}
+
+.viewer-bar .viewer-copy + .viewer-badge {
+  margin-left: 0;
+}
+
 /* The badge doubles as the lock: a button that reads as the badge it was, and
    turns accent-coloured while the file is the user's to edit. */
 .viewer-lock {
