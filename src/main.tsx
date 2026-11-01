@@ -20,6 +20,7 @@ import { adopt } from "./shortcuts/store";
 import { watchTheme } from "./theme";
 import { flushThemes, loadThemes } from "./theme/store";
 import { installTitlebar } from "./titlebar";
+import { answerSelectAll } from "./menu";
 
 /**
  * Every window loads this same page; `?view=` says which one it is. Only editor
@@ -63,6 +64,8 @@ void Promise.all([hydrate(), loadThemes()]).then(() => {
   syncWithPeers(adopt);
   // After hydrate and the themes, so the first paint is already in the saved theme.
   watchTheme();
+  // Every window, not only those that build the menu: ⌘A is for the key window.
+  answerSelectAll();
   ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
     root(),
   );

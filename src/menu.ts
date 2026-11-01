@@ -10,6 +10,7 @@
  * advertises a chord the app no longer answers to is worse than one that
  * advertises none.
  */
+import { emit, listen } from "@tauri-apps/api/event";
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
 import { commandById, type CommandId } from "./shortcuts/registry";
 import { chordFor, subscribe } from "./shortcuts/store";
@@ -153,6 +154,10 @@ export function claimAppMenu(): void {
  * viewport. This one offers the chord to the focused element first, as a
  * keydown its own keymap can answer, and falls back to the native command only
  * when nothing claimed it.
+ *
+ * The menu's actions run in the page that built it, but ⌘A is meant for the
+ * key window -- a file or diff window, say, which builds no menu. So the item
+ * only announces the command, and whichever window has focus answers it.
  */
 async function replaceSelectAll(menu: Menu): Promise<void> {
   for (const entry of await menu.items()) {
@@ -167,13 +172,22 @@ async function replaceSelectAll(menu: Menu): Promise<void> {
         await MenuItem.new({
           text: "Select All",
           accelerator: "CmdOrCtrl+A",
-          action: selectAllInPage,
+          action: () => void emit(SELECT_ALL),
         }),
         at,
       );
       return;
     }
   }
+}
+
+const SELECT_ALL = "menu://select-all";
+
+/** Answer the menu's Select All in this window when it is the focused one. */
+export function answerSelectAll(): void {
+  void listen(SELECT_ALL, () => {
+    if (document.hasFocus()) selectAllInPage();
+  });
 }
 
 function selectAllInPage(): void {
