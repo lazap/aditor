@@ -616,6 +616,7 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
     #[test]
     fn inside_workspace_refuses_parent_segments_and_symlinked_dirs() {
         let root = scratch("inside");
@@ -656,6 +657,7 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "mine");
     }
 
+    #[cfg(unix)]
     #[test]
     fn saving_keeps_the_mode_and_leaves_no_temp_file() {
         use std::os::unix::fs::PermissionsExt;
@@ -760,6 +762,7 @@ mod tests {
         assert!(create_in(&root, "").is_err());
     }
 
+    #[cfg(unix)]
     #[test]
     fn refuses_a_symlinked_directory_out_of_the_root() {
         let root = scratch("symlink");

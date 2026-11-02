@@ -5,6 +5,7 @@ mod fs;
 mod git;
 mod git_log;
 mod mcp;
+mod platform;
 mod pty;
 mod run;
 mod run_log;

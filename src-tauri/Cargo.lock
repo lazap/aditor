@@ -7,6 +7,7 @@ name = "aditor"
 version = "0.5.3"
 dependencies = [
  "base64 0.23.1",
+ "dirs",
  "git2",
  "ignore",
  "libc",
@@ -24,6 +25,7 @@ dependencies = [
  "tiny_http",
  "toml 0.8.2",
  "ureq",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -25,6 +25,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use tauri::{AppHandle, Emitter, Manager};
 
+use crate::platform::home_dir;
+
 // ---------------------------------------------------------------- shapes ---
 
 /// One saved login. Deliberately carries no credential: the store holds live
@@ -111,16 +113,12 @@ struct Slot {
 
 // ----------------------------------------------------------------- paths ---
 
-pub(crate) fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
-
 /// Claude Code's config home. Mirrors its own resolution: `CLAUDE_CONFIG_DIR`
 /// when set, else `~/.claude`.
 fn config_home() -> Option<PathBuf> {
     match std::env::var_os("CLAUDE_CONFIG_DIR") {
         Some(dir) if !dir.is_empty() => Some(PathBuf::from(dir)),
-        _ => Some(home()?.join(".claude")),
+        _ => Some(home_dir()?.join(".claude")),
     }
 }
 
@@ -132,7 +130,7 @@ fn global_config() -> Option<PathBuf> {
     if legacy.exists() {
         return Some(legacy);
     }
-    Some(home()?.join(".claude.json"))
+    Some(home_dir()?.join(".claude.json"))
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -678,7 +676,7 @@ fn store_dir(app: &AppHandle) -> Result<PathBuf, String> {
 /// lives. The mode matters here and not only in the slot files: the accounts
 /// roster next door is not something to leave world-readable.
 pub(crate) fn aditor_dir() -> Result<PathBuf, String> {
-    let root = home().ok_or_else(|| "no home directory".to_string())?.join(".aditor");
+    let root = home_dir().ok_or_else(|| "no home directory".to_string())?.join(".aditor");
     fs::create_dir_all(&root).map_err(|e| format!("could not create {}: {e}", root.display()))?;
     restrict_dir(&root);
     Ok(root)

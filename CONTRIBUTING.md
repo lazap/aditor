@@ -6,11 +6,12 @@ especially for anything that adds a pane, a command, or a dependency.
 
 ## Before you start
 
-**macOS is the only platform this has ever been built and run on.** Linux and
-Windows patches are genuinely welcome, but be aware you are the first: nothing
-is verified there, and `src-tauri/src/accounts.rs` has no Windows arms at all
-(the credential half is behind `cfg(target_os = "macos")` for the login Keychain
-and `cfg(unix)` for the lock files). Expect to do some discovery.
+**macOS is the only platform Aditor ships on.** Linux and Windows are being
+brought up: CI builds the backend on all three and runs its tests on macOS and
+Linux, but nobody has used the app on either yet, so expect to do some
+discovery. Anything that needs an OS-specific API -- signals, process handles,
+file modes, power assertions -- belongs in `src-tauri/src/platform.rs`, so the
+modules that use it read the same on every platform.
 
 ## Dev loop
 

@@ -13,10 +13,35 @@ concurrency:
 
 jobs:
   check:
-    # The app is macOS-only; the backend links against AppKit through Tauri.
-    runs-on: macos-latest
+    name: check (${{ matrix.os }})
+    strategy:
+      # One platform failing says nothing about the others; see them all.
+      fail-fast: false
+      matrix:
+        include:
+          # Aditor ships on macOS. The frontend is the same everywhere, so it
+          # is linted and tested here only.
+          - os: macos-latest
+            frontend: true
+            rust-tests: run
+          - os: ubuntu-latest
+            rust-tests: run
+          # The backend compiles on Windows, but agents, runs and git still go
+          # through a Unix shell, so most tests could not pass there yet. Build
+          # them so they keep compiling; run them once Windows is ported.
+          - os: windows-latest
+            rust-tests: build
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
+
+      # WebKitGTK for the webview, libxdo for the menu's stock items, OpenSSL
+      # for libgit2's https transport.
+      - name: Install Tauri's Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev
 
       - uses: actions/setup-node@v5
         with:
@@ -27,7 +52,9 @@ jobs:
       # `tauri::generate_context!` needs to exist at compile time.
       - run: npm run build
       - run: npm run lint
+        if: matrix.frontend
       - run: npm test
+        if: matrix.frontend
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -36,6 +63,10 @@ jobs:
         with:
           workspaces: src-tauri
       - run: cargo test
+        if: matrix.rust-tests == 'run'
+        working-directory: src-tauri
+      - run: cargo test --no-run
+        if: matrix.rust-tests == 'build'
         working-directory: src-tauri
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri

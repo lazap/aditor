@@ -17,7 +17,7 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use git2::{Branch, BranchType, Repository, RepositoryState, Status, StatusOptions};
@@ -471,6 +471,7 @@ where
 
 /// Answers ssh's prompts (a key passphrase, an unknown host key) with a native
 /// dialog. Cancel exits non-zero, and ssh fails with its own message.
+#[cfg(target_os = "macos")]
 const ASKPASS_SCRIPT: &str = r#"#!/bin/sh
 case "$1" in
   *yes/no*) hidden=""; prompt="$1" ;;
@@ -493,7 +494,9 @@ exec /usr/bin/osascript \
 /// passphrase is never saved. `IgnoreUnknown` keeps a non-Apple ssh on PATH
 /// (Homebrew's lacks `UseKeychain`) working, just without the memory.
 ///
-/// None when the user picked their own ssh command; theirs wins.
+/// None when the user picked their own ssh command, since theirs wins -- and
+/// off macOS, where there is no Keychain to remember with.
+#[cfg(target_os = "macos")]
 fn ssh_command(root: &Path) -> Option<&'static str> {
     if std::env::var_os("GIT_SSH_COMMAND").is_some() || std::env::var_os("GIT_SSH").is_some() {
         return None;
@@ -509,10 +512,17 @@ fn ssh_command(root: &Path) -> Option<&'static str> {
     Some("ssh -o IgnoreUnknown=UseKeychain -o UseKeychain=yes -o AddKeysToAgent=yes")
 }
 
+#[cfg(not(target_os = "macos"))]
+fn ssh_command(_root: &Path) -> Option<&'static str> {
+    None
+}
+
 /// The askpass helper on disk, written once per run. None if it could not be,
-/// in which case ssh keeps its default behaviour.
+/// in which case ssh keeps its default behaviour -- and, for now, everywhere
+/// but macOS, whose `osascript` the helper's dialog is.
+#[cfg(target_os = "macos")]
 fn askpass() -> Option<&'static Path> {
-    static PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
+    static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     PATH.get_or_init(|| {
         use std::os::unix::fs::OpenOptionsExt;
         // $TMPDIR on macOS is per-user and private.
@@ -528,6 +538,11 @@ fn askpass() -> Option<&'static Path> {
         Some(path)
     })
     .as_deref()
+}
+
+#[cfg(not(target_os = "macos"))]
+fn askpass() -> Option<&'static Path> {
+    None
 }
 
 /// `git <args>` in `root`, through a login shell so the user's real PATH (and
@@ -546,7 +561,7 @@ fn askpass() -> Option<&'static Path> {
 /// on something that never comes, would otherwise hold `GIT_GATE` until the
 /// app restarts, and every later git action would queue behind it.
 pub(crate) fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
-    let mut cmd = Command::new(crate::pty::user_shell());
+    let mut cmd = Command::new(crate::platform::user_shell());
     cmd.args(["-l", "-c", "exec git \"$@\"", "git"])
         .args(args)
         .current_dir(root)

@@ -42,9 +42,9 @@ pub struct Removed {
 }
 
 fn worktrees_dir() -> Result<PathBuf, String> {
-    crate::accounts::home()
+    crate::platform::home_dir()
         .map(|h| h.join(".aditor").join("worktrees"))
-        .ok_or_else(|| "HOME is not set.".to_string())
+        .ok_or_else(|| "no home directory".to_string())
 }
 
 /// The main checkout of the repo `repo` belongs to: the parent of the common

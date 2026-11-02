@@ -25,6 +25,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::fs::{Workspace, workspace_root};
+use crate::platform::{home_dir, pid_alive};
 use crate::pty::PtyRegistry;
 
 // ---------------------------------------------------------------- shapes ---
@@ -606,10 +607,6 @@ fn fold_file(path: &Path, cached: &mut CachedFile) {
 
 // ---------------------------------------------------- claude code reader ---
 
-fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
-
 /// The agent names a project directory after the cwd with every separator
 /// flattened. That mapping is lossy -- a literal `-` in a path is
 /// indistinguishable from `/` -- so it is only ever used as a *guess*, checked
@@ -653,7 +650,7 @@ fn project_dir(root: &Path, state: &AgentState) -> Option<PathBuf> {
             return Some(hit.clone());
         }
     }
-    let projects = home()?.join(".claude").join("projects");
+    let projects = home_dir()?.join(".claude").join("projects");
     let want = root.to_string_lossy().to_string();
 
     let guess = projects.join(encode_project_dir(root));
@@ -708,7 +705,7 @@ pub(crate) struct LiveEntry {
 
 /// The live-session registry directory.
 pub(crate) fn registry_dir() -> Option<PathBuf> {
-    home().map(|h| h.join(".claude").join("sessions"))
+    home_dir().map(|h| h.join(".claude").join("sessions"))
 }
 
 /// Every parseable entry in the registry whose process is still running.
@@ -723,14 +720,6 @@ pub(crate) fn live_entries() -> Vec<LiveEntry> {
         .filter_map(|t| serde_json::from_str::<LiveEntry>(&t).ok())
         .filter(|e| pid_alive(e.pid))
         .collect()
-}
-
-/// Is this PID still around? Guards against a registry file left behind by a
-/// process that died without cleaning up.
-fn pid_alive(pid: u32) -> bool {
-    // Signal 0 performs the existence and permission checks without delivering
-    // anything -- the standard liveness probe.
-    unsafe { libc::kill(pid as i32, 0) == 0 }
 }
 
 /// Live sessions whose cwd is this workspace, keyed by session id.
@@ -811,7 +800,7 @@ fn config_limits() -> Option<ConfigLimits> {
         account: Option<Account>,
     }
 
-    let text = std::fs::read_to_string(home()?.join(".claude.json")).ok()?;
+    let text = std::fs::read_to_string(home_dir()?.join(".claude.json")).ok()?;
     let config = serde_json::from_str::<Config>(&text).ok()?;
     Some(ConfigLimits {
         account: config.account.and_then(|a| a.uuid),
@@ -1186,7 +1175,7 @@ pub fn agent_watch(
     if state.watchers.lock().unwrap().contains_key(&root) {
         return Ok(());
     }
-    let home = home().ok_or_else(|| "no home directory".to_string())?;
+    let home = home_dir().ok_or_else(|| "no home directory".to_string())?;
     let projects = home.join(".claude").join("projects");
     let transcripts = project_dir(&root, &state);
 

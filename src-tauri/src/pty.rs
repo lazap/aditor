@@ -30,6 +30,7 @@ use tauri::{State, WebviewWindow};
 
 use crate::fs::{workspace_root, Workspace};
 use crate::mcp::{McpServer, PROMPT_TIMEOUT};
+use crate::platform::{find_executable, home_dir, kill_tree, user_shell};
 use crate::run_log::RunLog;
 
 /// Flush pending PTY output at least this often. One event per read syscall
@@ -75,36 +76,12 @@ pub struct PtySession {
 impl PtySession {
     fn kill(mut self) {
         match (self.group, self.pid) {
-            (true, Some(pid)) => kill_group(pid),
+            (true, Some(pid)) => kill_tree(pid, KILL_GRACE),
             _ => {
                 let _ = self.killer.kill();
             }
         }
     }
-}
-
-/// SIGTERM the process group `pid` leads, and SIGKILL whatever is left of it
-/// after a grace period. portable-pty `setsid`s the child, so the shell leads
-/// its own group and everything it started is in it. The grace lets a dev
-/// server shut down cleanly; the SIGKILL is for one that ignores SIGTERM.
-fn kill_group(pid: u32) {
-    let pgid = pid as libc::pid_t;
-    // SAFETY: plain signal syscalls on a group id we spawned.
-    unsafe {
-        libc::killpg(pgid, libc::SIGTERM);
-        // A job-control shell would also get SIGHUP from the closing pty; a
-        // `-c` shell may be waiting on a child that only listens for that.
-        libc::killpg(pgid, libc::SIGHUP);
-    }
-    std::thread::spawn(move || {
-        std::thread::sleep(KILL_GRACE);
-        // SAFETY: as above. Signal 0 only checks the group still exists.
-        unsafe {
-            if libc::killpg(pgid, 0) == 0 {
-                libc::killpg(pgid, libc::SIGKILL);
-            }
-        }
-    });
 }
 
 #[derive(Default)]
@@ -194,10 +171,6 @@ pub struct AgentInfo {
     pub version: Option<String>,
 }
 
-pub(crate) fn user_shell() -> String {
-    std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
-}
-
 /// Printed just before PATH, so whatever an rc file prints on startup -- a
 /// banner, a fortune, a terminal title -- is not mistaken for it.
 const PATH_MARKER: &str = "__ADITOR_PATH__";
@@ -233,8 +206,8 @@ fn search_dirs() -> &'static [PathBuf] {
         let mut dirs: Vec<PathBuf> = user_path()
             .map(|p| std::env::split_paths(&p).collect())
             .unwrap_or_default();
-        if let Some(home) = std::env::var_os("HOME") {
-            dirs.extend(HOME_BIN_DIRS.iter().map(|d| Path::new(&home).join(d)));
+        if let Some(home) = home_dir() {
+            dirs.extend(HOME_BIN_DIRS.iter().map(|d| home.join(d)));
         }
         dirs.extend(SYSTEM_BIN_DIRS.iter().map(PathBuf::from));
         let mut seen = std::collections::HashSet::new();
@@ -257,6 +230,11 @@ fn resolved_search_dirs() -> Option<&'static [PathBuf]> {
 /// external commands, which keeps it valid in fish and nushell as well as in
 /// POSIX shells.
 fn user_path() -> Option<String> {
+    // Only a Unix GUI app starts with less PATH than the terminal has; Windows
+    // hands every program the user's whole PATH, and has no shell to ask.
+    if cfg!(windows) {
+        return std::env::var("PATH").ok();
+    }
     let script = format!("/bin/echo {PATH_MARKER}; /usr/bin/printenv PATH");
     let attempts: [&[&str]; 3] = [&["-i", "-l", "-c"], &["-l", "-c"], &["-c"]];
     attempts
@@ -267,15 +245,6 @@ fn user_path() -> Option<String> {
             line_within(cmd, Some(PATH_MARKER), SHELL_PATH_TIMEOUT)
         })
         .or_else(|| std::env::var("PATH").ok())
-}
-
-/// The first of `dirs` holding an executable `bin`.
-fn find_executable(bin: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
-    use std::os::unix::fs::PermissionsExt;
-    dirs.iter().map(|d| d.join(bin)).find(|p| {
-        p.metadata()
-            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
-    })
 }
 
 /// Run `cmd` and return the first line of its stdout -- or, given `after`, the
@@ -921,6 +890,7 @@ mod tests {
 
     /// Stopping a run must take the processes its shell line started with it,
     /// not just the shell: `npm run dev` leaves node behind otherwise.
+    #[cfg(unix)]
     #[test]
     fn stopping_a_run_kills_its_whole_process_group() {
         let dir = std::env::temp_dir();
@@ -935,7 +905,7 @@ mod tests {
         let alive = |pgid: u32| unsafe { libc::killpg(pgid as libc::pid_t, 0) == 0 };
         assert!(alive(pid), "the run's process group should exist");
 
-        kill_group(pid);
+        kill_tree(pid, KILL_GRACE);
         let _ = child.wait();
         // The children got SIGTERM along with the shell.
         let deadline = std::time::Instant::now() + Duration::from_secs(4);
@@ -971,36 +941,7 @@ mod tests {
         assert_eq!(agent_args(None, None, "{}"), "");
     }
 
-    #[test]
-    fn finds_the_first_executable_and_skips_what_cannot_run() {
-        use std::os::unix::fs::PermissionsExt;
-        let base = std::env::temp_dir().join(format!("aditor-find-{}", std::process::id()));
-        let (plain, exec, later) = (base.join("plain"), base.join("exec"), base.join("later"));
-        for d in [&plain, &exec, &later] {
-            std::fs::create_dir_all(d).unwrap();
-        }
-        // Not executable, then a directory of the same name, then the real one.
-        std::fs::write(plain.join("agent"), "").unwrap();
-        std::fs::create_dir_all(exec.join("subdir/agent")).unwrap();
-        for d in [&exec, &later] {
-            std::fs::write(d.join("agent"), "#!/bin/sh\n").unwrap();
-            std::fs::set_permissions(d.join("agent"), std::fs::Permissions::from_mode(0o755)).unwrap();
-        }
-        let dirs = [plain.clone(), exec.join("subdir"), exec.clone(), later.clone()];
-        assert_eq!(find_executable("agent", &dirs), Some(exec.join("agent")));
-        assert_eq!(find_executable("missing", &dirs), None);
-
-        std::fs::remove_file(plain.join("agent")).unwrap();
-        std::fs::remove_dir(exec.join("subdir/agent")).unwrap();
-        std::fs::remove_dir(exec.join("subdir")).unwrap();
-        for d in [&exec, &later] {
-            std::fs::remove_file(d.join("agent")).unwrap();
-        }
-        for d in [&plain, &exec, &later, &base] {
-            std::fs::remove_dir(d).unwrap();
-        }
-    }
-
+    #[cfg(unix)]
     #[test]
     fn the_path_line_follows_the_marker_past_rc_noise() {
         let mut cmd = Command::new("/bin/sh");
@@ -1012,6 +953,7 @@ mod tests {
         assert_eq!(line_within(cmd, Some(PATH_MARKER), Duration::from_secs(5)), None);
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_line_comes_back_without_waiting_for_eof_or_a_hung_shell() {
         // A background child holding stdout open must not delay the answer...
