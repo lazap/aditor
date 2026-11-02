@@ -26,7 +26,11 @@ body:
     attributes:
       label: How did you install Aditor?
       options:
-        - Downloaded a release (.dmg or .zip)
+        - Homebrew
+        - macOS download (.dmg or .zip)
+        - Windows installer
+        - Linux AppImage
+        - Linux .deb
         - Built from source
     validations:
       required: true
@@ -41,11 +45,13 @@ body:
       required: true
 
   - type: input
-    id: macos-version
+    id: os-version
     attributes:
-      label: macOS version and chip
-      description: "`sw_vers -productVersion` and `uname -m`."
-      placeholder: 26.0 / arm64
+      label: Operating system and version
+      description: >
+        macOS: `sw_vers -productVersion` and `uname -m`. Windows: `winver`.
+        Linux: the distribution and release, and Wayland or X11.
+      placeholder: macOS 26.0 / arm64 — Windows 11 24H2 — Ubuntu 24.04, Wayland
     validations:
       required: true
 
@@ -76,5 +82,3 @@ body:
       options:
         - label: I searched the existing issues.
           required: true
-        - label: I am on macOS. (Linux and Windows are unsupported — patches welcome, but bugs there are expected.)
-          required: false

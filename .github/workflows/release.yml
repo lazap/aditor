@@ -1,8 +1,9 @@
 name: Release
 
-# Manual on purpose: scripts/release.sh creates the v<version> tag itself and
+# Manual on purpose: the publish stage creates the v<version> tag itself and
 # refuses to run if it already exists, so a tag-push trigger would always fail
-# its preflight. Bump the three version fields, push, then run this.
+# its preflight. Bump the three version fields, push, then run this -- or
+# `npm run release`, which checks the same things locally and starts it.
 on:
   workflow_dispatch:
     inputs:
@@ -21,18 +22,45 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    # The app is macOS-only; macos-latest is Apple Silicon, which matches the
-    # aarch64 artifacts release.sh names.
-    runs-on: macos-latest
-    permissions:
-      contents: write
+  # Everything that can fail cheaply, before three platforms' builds start.
+  preflight:
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
         with:
-          # Full history and tags: release.sh generates notes from
-          # `git describe` and `git log <prev-tag>..HEAD`.
           fetch-depth: 0
+      - run: bash scripts/release.sh preflight
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+
+  build:
+    needs: preflight
+    strategy:
+      # A release ships every platform or none, so one failing stops the rest.
+      fail-fast: true
+      matrix:
+        include:
+          # Apple Silicon, which the aarch64 assets and the cask name.
+          - os: macos-latest
+            name: macos
+          # The oldest supported Ubuntu: an AppImage runs on glibc as new as
+          # the one it was built against, and no older.
+          - os: ubuntu-22.04
+            name: linux
+          - os: windows-latest
+            name: windows
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # WebKitGTK for the webview, libxdo for the menu, OpenSSL for libgit2's
+      # https transport, patchelf for the AppImage's library paths.
+      - name: Install Tauri's Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev patchelf
 
       - uses: actions/setup-node@v5
         with:
@@ -44,17 +72,48 @@ jobs:
         with:
           workspaces: src-tauri
 
-      # gh and jq ship on the macOS runner image; GH_TOKEN authenticates gh.
-      # The updater key signs Aditor.app.tar.gz; it has no password.
+      # Bash on every runner, Git Bash on Windows. The updater key signs what
+      # each platform's copies download; it has no password.
+      - run: bash scripts/release.sh build
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          # linuxdeploy is itself an AppImage, and the runner has no FUSE.
+          APPIMAGE_EXTRACT_AND_RUN: 1
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.name }}
+          path: dist-release/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Full history and tags: the notes come from `git describe` and
+          # `git log <prev-tag>..HEAD`.
+          fetch-depth: 0
+
+      # Every platform's dist-release/, merged into one.
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: release-*
+          path: dist-release
+          merge-multiple: true
+
       # github.token cannot push to the tap repo, so bumping the cask takes its
       # own token; without it the release still ships and the step only warns.
-      - name: Build and publish
+      - name: Publish
         env:
           GH_TOKEN: ${{ github.token }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           args=()
           [ "${{ inputs.draft }}" = true ] && args+=(--draft)
           [ "${{ inputs.prerelease }}" = true ] && args+=(--prerelease)
-          npm run release -- "${args[@]}"
+          bash scripts/release.sh publish "${args[@]}"
