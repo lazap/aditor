@@ -7,15 +7,18 @@
 //! of having no shell to fall back on when the agent quits, so the frontend has
 //! to offer a restart when the session reports its exit.
 //!
-//! The login shell matters: a GUI-launched macOS app inherits a bare PATH, so
-//! `claude` at /opt/homebrew/bin would not resolve if we exec'd it directly.
+//! PATH matters: a GUI-launched macOS app inherits a bare one, so `claude` at
+//! /opt/homebrew/bin would not resolve if we exec'd it directly. Every PTY gets
+//! the PATH the user's own terminal has (`search_dirs`), and agents are exec'd
+//! by the absolute path the probe found.
 
 use std::collections::HashMap;
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Sender, channel};
-use std::sync::{Arc, Condvar, Mutex};
+use std::sync::{Arc, Condvar, Mutex, OnceLock};
 use std::time::Duration;
 
 use base64::Engine as _;
@@ -195,6 +198,117 @@ pub(crate) fn user_shell() -> String {
     std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string())
 }
 
+/// Printed just before PATH, so whatever an rc file prints on startup -- a
+/// banner, a fortune, a terminal title -- is not mistaken for it.
+const PATH_MARKER: &str = "__ADITOR_PATH__";
+
+/// How long the user's shell gets to start and report its PATH. A profile
+/// waiting on input that never comes must not leave Aditor at "Starting…".
+const SHELL_PATH_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// How long an agent gets to answer `--version`.
+const VERSION_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Where installers put agent binaries, relative to the home directory, whether
+/// or not they managed to add them to PATH. Searched after PATH.
+const HOME_BIN_DIRS: [&str; 6] = [
+    ".local/bin",
+    ".claude/local",
+    ".opencode/bin",
+    ".bun/bin",
+    ".npm-global/bin",
+    ".volta/bin",
+];
+const SYSTEM_BIN_DIRS: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
+
+static SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
+
+/// Where to look for programs: the user's PATH, then the usual install
+/// directories. Resolved once, by `agents_available` at startup.
+///
+/// Blocks on the user's shell the first time, so never call it on the UI
+/// thread; `resolved_search_dirs` is the non-blocking read.
+fn search_dirs() -> &'static [PathBuf] {
+    SEARCH_DIRS.get_or_init(|| {
+        let mut dirs: Vec<PathBuf> = user_path()
+            .map(|p| std::env::split_paths(&p).collect())
+            .unwrap_or_default();
+        if let Some(home) = std::env::var_os("HOME") {
+            dirs.extend(HOME_BIN_DIRS.iter().map(|d| Path::new(&home).join(d)));
+        }
+        dirs.extend(SYSTEM_BIN_DIRS.iter().map(PathBuf::from));
+        let mut seen = std::collections::HashSet::new();
+        dirs.retain(|d| !d.as_os_str().is_empty() && seen.insert(d.clone()));
+        dirs
+    })
+}
+
+fn resolved_search_dirs() -> Option<&'static [PathBuf]> {
+    SEARCH_DIRS.get().map(Vec::as_slice)
+}
+
+/// PATH as the user's own terminal has it, asked of their shell.
+///
+/// A login shell alone is not enough: `zsh -l -c` reads .zprofile but not
+/// .zshrc, and `bash -l -c` reads .bash_profile but not .bashrc -- which is
+/// where installers and version managers (nvm, the Claude Code installer)
+/// usually add their bin directories. So ask an interactive login shell, as a
+/// terminal starts one, and settle for less when that fails. The line runs only
+/// external commands, which keeps it valid in fish and nushell as well as in
+/// POSIX shells.
+fn user_path() -> Option<String> {
+    let script = format!("/bin/echo {PATH_MARKER}; /usr/bin/printenv PATH");
+    let attempts: [&[&str]; 3] = [&["-i", "-l", "-c"], &["-l", "-c"], &["-c"]];
+    attempts
+        .iter()
+        .find_map(|flags| {
+            let mut cmd = Command::new(user_shell());
+            cmd.args(*flags).arg(&script);
+            line_within(cmd, Some(PATH_MARKER), SHELL_PATH_TIMEOUT)
+        })
+        .or_else(|| std::env::var("PATH").ok())
+}
+
+/// The first of `dirs` holding an executable `bin`.
+fn find_executable(bin: &str, dirs: &[PathBuf]) -> Option<PathBuf> {
+    use std::os::unix::fs::PermissionsExt;
+    dirs.iter().map(|d| d.join(bin)).find(|p| {
+        p.metadata()
+            .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+    })
+}
+
+/// Run `cmd` and return the first line of its stdout -- or, given `after`, the
+/// line following the first one that ends in it. `None` after `timeout`.
+///
+/// Reads line by line rather than to EOF: something an rc file starts in the
+/// background (an ssh-agent, a gpg-agent) can hold stdout open long after the
+/// shell itself has exited.
+fn line_within(mut cmd: Command, after: Option<&str>, timeout: Duration) -> Option<String> {
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let stdout = child.stdout.take()?;
+    let after = after.map(str::to_string);
+    let (tx, rx) = channel();
+    std::thread::spawn(move || {
+        let mut lines = BufReader::new(stdout).lines().map_while(Result::ok);
+        if let Some(marker) = &after {
+            if !lines.any(|l| l.trim_end().ends_with(marker.as_str())) {
+                return;
+            }
+        }
+        let _ = tx.send(lines.next());
+    });
+    let line = rx.recv_timeout(timeout).ok().flatten();
+    let _ = child.kill();
+    let _ = child.wait();
+    line.map(|l| l.trim().to_string()).filter(|l| !l.is_empty())
+}
+
 /// Session and IPC markers exported by a parent agent process.
 ///
 /// Aditor inherits whatever environment it was launched with, and passes it to
@@ -252,12 +366,18 @@ const FOREIGN_TERMINAL_VARS: [&str; 5] = [
 ];
 
 /// Build `$SHELL -l -c '<command>'`, or an interactive login shell when
-/// `command` is None -- a Terminal session. `-l` sources the login profile, which is what makes the user's real
-/// PATH (and therefore the agent binaries) visible.
+/// `command` is None -- a Terminal session. `-l` sources the login profile, so
+/// the agent sees the environment the user exports there.
 fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder {
     let mut cmd = CommandBuilder::new(user_shell());
     match command {
         Some(c) => {
+            // By the path the probe found, which may be an install directory
+            // the user's PATH never mentions.
+            let program = resolved_search_dirs()
+                .and_then(|dirs| find_executable(c, dirs))
+                .map(|p| sh_quote(&p.to_string_lossy()))
+                .unwrap_or_else(|| c.to_string());
             // `stty -echo` closes a window in which the PTY line discipline
             // echoes terminal replies back as text. An agent TUI asks the
             // terminal for its device attributes (ESC[c) before switching the
@@ -272,7 +392,7 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
             // agent. Commands come from the frontend's registry of bare binary
             // names; nothing here enforces that. `args` is already
             // shell-quoted by `agent_args`.
-            cmd.args(["-l", "-c", &format!("stty -echo 2>/dev/null; exec {c}{args}")]);
+            cmd.args(["-l", "-c", &format!("stty -echo 2>/dev/null; exec {program}{args}")]);
         }
         None => {
             // A Terminal session. An interactive shell needs ECHO left alone,
@@ -320,6 +440,13 @@ fn terminal_env(cmd: &mut CommandBuilder) {
     // TERM_PROGRAM_VERSION would claim a version that is not ours.
     cmd.env("TERM_PROGRAM", "Aditor");
     cmd.env("TERM_PROGRAM_VERSION", env!("CARGO_PKG_VERSION"));
+    // The PATH the user's terminal has, rc files included, so an npm-installed
+    // agent's `#!/usr/bin/env node` finds the node nvm put there. The login
+    // profile still runs on top of it. Not yet resolved means the probe has not
+    // finished, and waiting for it here would freeze the UI thread.
+    if let Some(path) = resolved_search_dirs().and_then(|d| std::env::join_paths(d).ok()) {
+        cmd.env("PATH", path);
+    }
 
     for key in INHERITED_SESSION_VARS {
         cmd.env_remove(key);
@@ -724,11 +851,11 @@ pub fn pty_kill_window(
     Ok(())
 }
 
-/// Probe the agents we know about, through a login shell so PATH matches what
-/// the user sees in their own terminal.
+/// Probe the agents we know about: look for each binary on the user's PATH and
+/// in the usual install directories, then ask it for `--version`.
 ///
-/// Each probe starts a login shell, which a heavy profile can make take
-/// seconds, so they run in parallel and off the UI thread.
+/// Resolving PATH starts the user's shell, which a heavy profile can make take
+/// seconds, so this runs off the UI thread.
 #[tauri::command]
 pub async fn agents_available() -> Result<Vec<AgentInfo>, String> {
     tauri::async_runtime::spawn_blocking(probe_agents)
@@ -741,11 +868,13 @@ fn probe_agents() -> Vec<AgentInfo> {
         ("claude", "Claude Code", Some("claude")),
         ("opencode", "opencode", Some("opencode")),
     ];
+    // Before the probes fan out, so they share one shell start.
+    let dirs = search_dirs();
 
     std::thread::scope(|scope| {
         let probes: Vec<_> = known
             .iter()
-            .map(|agent| scope.spawn(move || probe(agent)))
+            .map(|agent| scope.spawn(move || probe(agent, dirs)))
             .collect();
         probes
             .into_iter()
@@ -754,7 +883,7 @@ fn probe_agents() -> Vec<AgentInfo> {
     })
 }
 
-fn probe(&(id, label, command): &(&str, &str, Option<&str>)) -> AgentInfo {
+fn probe(&(id, label, command): &(&str, &str, Option<&str>), dirs: &[PathBuf]) -> AgentInfo {
     match command {
         // No entry above carries a `None` command; the Terminal session is
         // offered by the frontend rather than probed here.
@@ -766,16 +895,14 @@ fn probe(&(id, label, command): &(&str, &str, Option<&str>)) -> AgentInfo {
             version: Some(user_shell()),
         },
         Some(bin) => {
-            let out = std::process::Command::new(user_shell())
-                .args(["-l", "-c", &format!("command -v {bin} >/dev/null && {bin} --version")])
-                .output();
-            let version = out.ok().filter(|o| o.status.success()).map(|o| {
-                String::from_utf8_lossy(&o.stdout)
-                    .lines()
-                    .next()
-                    .unwrap_or("")
-                    .trim()
-                    .to_string()
+            let version = find_executable(bin, dirs).and_then(|path| {
+                let mut cmd = Command::new(path);
+                cmd.arg("--version");
+                // Same PATH as a session gets, for the `env node` shebang.
+                if let Ok(p) = std::env::join_paths(dirs) {
+                    cmd.env("PATH", p);
+                }
+                line_within(cmd, None, VERSION_TIMEOUT)
             });
             AgentInfo {
                 id: id.to_string(),
@@ -842,5 +969,63 @@ mod tests {
     fn other_agents_get_no_arguments() {
         assert_eq!(agent_args(Some("opencode"), None, "{}"), "");
         assert_eq!(agent_args(None, None, "{}"), "");
+    }
+
+    #[test]
+    fn finds_the_first_executable_and_skips_what_cannot_run() {
+        use std::os::unix::fs::PermissionsExt;
+        let base = std::env::temp_dir().join(format!("aditor-find-{}", std::process::id()));
+        let (plain, exec, later) = (base.join("plain"), base.join("exec"), base.join("later"));
+        for d in [&plain, &exec, &later] {
+            std::fs::create_dir_all(d).unwrap();
+        }
+        // Not executable, then a directory of the same name, then the real one.
+        std::fs::write(plain.join("agent"), "").unwrap();
+        std::fs::create_dir_all(exec.join("subdir/agent")).unwrap();
+        for d in [&exec, &later] {
+            std::fs::write(d.join("agent"), "#!/bin/sh\n").unwrap();
+            std::fs::set_permissions(d.join("agent"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let dirs = [plain.clone(), exec.join("subdir"), exec.clone(), later.clone()];
+        assert_eq!(find_executable("agent", &dirs), Some(exec.join("agent")));
+        assert_eq!(find_executable("missing", &dirs), None);
+
+        std::fs::remove_file(plain.join("agent")).unwrap();
+        std::fs::remove_dir(exec.join("subdir/agent")).unwrap();
+        std::fs::remove_dir(exec.join("subdir")).unwrap();
+        for d in [&exec, &later] {
+            std::fs::remove_file(d.join("agent")).unwrap();
+        }
+        for d in [&plain, &exec, &later, &base] {
+            std::fs::remove_dir(d).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_path_line_follows_the_marker_past_rc_noise() {
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", &format!("echo welcome; printf '\\033]0;title\\007{PATH_MARKER}\\n'; echo /a:/b")]);
+        assert_eq!(line_within(cmd, Some(PATH_MARKER), Duration::from_secs(5)).as_deref(), Some("/a:/b"));
+
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", "echo no marker here"]);
+        assert_eq!(line_within(cmd, Some(PATH_MARKER), Duration::from_secs(5)), None);
+    }
+
+    #[test]
+    fn a_line_comes_back_without_waiting_for_eof_or_a_hung_shell() {
+        // A background child holding stdout open must not delay the answer...
+        let started = std::time::Instant::now();
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", "echo 1.2.3; sleep 30 & wait"]);
+        assert_eq!(line_within(cmd, None, Duration::from_secs(5)).as_deref(), Some("1.2.3"));
+        assert!(started.elapsed() < Duration::from_secs(4));
+
+        // ...and a shell that never prints gives up at the timeout.
+        let started = std::time::Instant::now();
+        let mut cmd = Command::new("/bin/sh");
+        cmd.args(["-c", "sleep 30"]);
+        assert_eq!(line_within(cmd, None, Duration::from_millis(300)), None);
+        assert!(started.elapsed() < Duration::from_secs(4));
     }
 }
