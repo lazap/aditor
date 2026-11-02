@@ -2,6 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebglAddon } from "@xterm/addon-webgl";
+import { readText, writeText } from "@tauri-apps/plugin-clipboard-manager";
+import { isMac } from "../platform";
 import { isReservedForApp } from "../shortcuts/store";
 import { useSetting } from "../settings/store";
 import { createFileLinkProvider } from "../pty/fileLinks";
@@ -17,6 +19,21 @@ import {
   type PtyEvent,
 } from "../pty/api";
 import { ptyRun } from "../run/api";
+
+/**
+ * Each platform's monospace faces, so none falls back to whatever `monospace`
+ * resolves to: macOS's, then Windows', then the ones Linux distributions ship.
+ */
+const MONO_FONTS =
+  'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Code", "Cascadia Mono", Consolas, "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", monospace';
+
+/** Ctrl+Shift+C or Ctrl+Shift+V, the terminal's copy and paste off macOS. */
+function clipboardKey(e: KeyboardEvent): "copy" | "paste" | null {
+  if (!e.ctrlKey || !e.shiftKey || e.altKey || e.metaKey) return null;
+  if (e.code === "KeyC") return "copy";
+  if (e.code === "KeyV") return "paste";
+  return null;
+}
 
 /** A run configuration's shell line, in place of an agent command. */
 export interface RunSpec {
@@ -113,8 +130,7 @@ export function TerminalPane({
     // a live terminal, so a theme change never respawns the agent.
     const term = new Terminal({
       ...terminalOptions(currentThemeDef()),
-      fontFamily:
-        'ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, "Cascadia Code", monospace',
+      fontFamily: MONO_FONTS,
       fontSize: 13,
       lineHeight: 1.2,
       cursorBlink: true,
@@ -129,8 +145,8 @@ export function TerminalPane({
     term.open(host);
 
     // WebGL keeps long streaming output smooth, but can fail to get a context
-    // inside WKWebView -- fall back to the DOM renderer rather than show an
-    // empty pane.
+    // inside WKWebView or WebKitGTK -- fall back to the DOM renderer rather
+    // than show an empty pane.
     try {
       const webgl = new WebglAddon();
       webgl.onContextLoss(() => webgl.dispose());
@@ -145,6 +161,25 @@ export function TerminalPane({
     // reserved ones go on to reach App's window listener.
     term.attachCustomKeyEventHandler((e) => {
       if (isReservedForApp(e)) return false;
+      // Off macOS, Ctrl+C and Ctrl+V are the agent's (interrupt, and Claude
+      // Code's image paste), so copy and paste move to Ctrl+Shift as in any
+      // terminal emulator there. macOS needs none of this: Cmd+C and Cmd+V
+      // come through the Edit menu.
+      const clip = !isMac && clipboardKey(e);
+      if (clip) {
+        if (e.type === "keydown") {
+          e.preventDefault();
+          if (clip === "copy") {
+            const selected = term.getSelection();
+            if (selected) void writeText(selected).catch(() => {});
+          } else {
+            void readText()
+              .then((text) => text && term.paste(text))
+              .catch(() => {});
+          }
+        }
+        return false;
+      }
       // xterm sends a bare CR for Shift+Enter, which the agent takes as submit.
       // ESC CR is the Meta+Enter the agent reads as a newline. Every event of
       // the press is declined, so no stray CR follows it.

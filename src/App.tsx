@@ -5,6 +5,7 @@ import { ProjectPicker } from "./components/ProjectPicker";
 import { ProjectTabs } from "./components/ProjectTabs";
 import { setAttentionCount } from "./notify/api";
 import { useAwake } from "./awake/api";
+import { useAskpass } from "./askpass/api";
 import { useUpdate } from "./update/api";
 import { ProjectView, type Dragging, type ViewApi } from "./components/ProjectView";
 import { useDialogs } from "./components/Modal";
@@ -89,6 +90,7 @@ export default function App() {
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const toastSeq = useRef(0);
   const [dialogs, ask] = useDialogs();
+  useAskpass(ask);
 
   /**
    * Whether the window has the editor's size. The first window opens sized to

@@ -11,8 +11,14 @@
   --rail-w: 240px;
   /* Starting width of the agent panel; the user's drag overrides it inline. */
   --insight-w: 300px;
+  /* Each platform's faces in turn -- macOS, Windows, then what Linux
+     distributions ship -- so none is left to a bare generic fallback. */
+  --font-ui: ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Ubuntu,
+    Cantarell, "Noto Sans", "DejaVu Sans", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, "Cascadia Mono", Consolas,
+    "DejaVu Sans Mono", "Ubuntu Mono", "Liberation Mono", monospace;
 
-  font-family: ui-sans-serif, -apple-system, "Segoe UI", sans-serif;
+  font-family: var(--font-ui);
   font-size: 13px;
 }
 
@@ -297,7 +303,7 @@ body,
    still: it is a path, and a path with an ellipsis in it should look like one. */
 .cwd {
   color: var(--fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12.5px;
   font-weight: 500;
   min-width: 0;
@@ -401,7 +407,7 @@ body,
 
 .agent-option-meta {
   color: var(--fg-dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -449,7 +455,7 @@ body,
   border: 1px solid var(--border);
   border-radius: 3px;
   color: var(--fg-dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 9px;
   font-weight: 600;
   line-height: 14px;
@@ -773,7 +779,7 @@ body,
 .run-field input[data-mono],
 .run-env input[data-mono],
 .run-command-input {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -846,7 +852,7 @@ body,
   background: var(--bg);
   border: 1px solid var(--border);
   color: var(--fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -1346,7 +1352,7 @@ button.cwd:hover {
 }
 
 .viewer-path {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--fg);
 }
@@ -1415,7 +1421,7 @@ button.cwd:hover {
   padding: 18px max(24px, calc((100% - 860px) / 2));
   background: var(--editor-bg);
   color: var(--fg);
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--font-ui);
   font-size: 14px;
   line-height: 1.6;
   user-select: text;
@@ -1479,7 +1485,7 @@ button.cwd:hover {
 }
 
 .markdown-body code {
-  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 0.88em;
   padding: 0.15em 0.35em;
   border-radius: 4px;
@@ -1533,7 +1539,7 @@ button.cwd:hover {
 .tree-status {
   margin-left: auto;
   padding-left: 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
   flex: 0 0 auto;
@@ -1861,7 +1867,7 @@ button.cwd:hover {
 }
 
 .branch {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--fg-dim);
   border: 1px solid var(--border);
@@ -1926,7 +1932,7 @@ button.cwd:hover {
 }
 
 .branch-option-name {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2028,7 +2034,7 @@ button.cwd:hover {
 
 .recent-path {
   color: var(--fg-dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -2091,7 +2097,7 @@ button.cwd:hover {
 .picker-error {
   margin: 0;
   color: var(--danger);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -2167,7 +2173,7 @@ button.cwd:hover {
 }
 
 .viewer-status {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   font-weight: 600;
 }
@@ -2455,7 +2461,7 @@ button.cwd:hover {
 }
 
 .meter-pct {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--fg);
 }
 
@@ -2695,7 +2701,7 @@ button.cwd:hover {
 
 .isession-cost {
   flex: 0 0 auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--fg-dim);
 }
@@ -2743,7 +2749,7 @@ button.cwd:hover {
 }
 
 .imodel-cost {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--fg-dim);
 }
@@ -2763,7 +2769,7 @@ button.cwd:hover {
 .imodel-grid dd {
   margin: 0;
   text-align: right;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
 .isession-started {
@@ -2789,11 +2795,11 @@ button.cwd:hover {
 
 .rollup-row span:nth-child(2) {
   margin-left: auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
 }
 
 .rollup-cost {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   min-width: 56px;
   text-align: right;
 }
@@ -2964,7 +2970,7 @@ button.cwd:hover {
 }
 
 .settings-hint code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--fg);
 }
 
@@ -3212,7 +3218,7 @@ button.cwd:hover {
 
 .template-body,
 .template-preview {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -3229,7 +3235,7 @@ button.cwd:hover {
 }
 
 .template-legend code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   color: var(--fg);
 }
 
@@ -3362,7 +3368,7 @@ button.cwd:hover {
   border-radius: 4px;
   background: transparent;
   color: var(--fg-dim);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -3681,10 +3687,14 @@ button.cwd:hover {
   overflow-wrap: anywhere;
 }
 
+.modal-text-pre {
+  white-space: pre-wrap;
+}
+
 .modal-text code,
 .modal-files,
 .push-branch {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--fg);
 }
@@ -3859,7 +3869,7 @@ button.cwd:hover {
 }
 
 .push-file {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   color: var(--fg-dim);
 }
@@ -3919,7 +3929,7 @@ button.cwd:hover {
   display: inline-flex;
   gap: 3px;
   margin-left: 6px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10px;
   color: var(--accent);
 }
@@ -4015,7 +4025,7 @@ button.cwd:hover {
   padding: 1px 4px 1px 8px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
 }
 
@@ -4098,7 +4108,7 @@ button.cwd:hover {
   padding: 0 5px;
   border-radius: 3px;
   border: 1px solid var(--border);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 10.5px;
   line-height: 15px;
   vertical-align: 1px;
@@ -4179,7 +4189,7 @@ button.cwd:hover {
   border: none;
   background: transparent;
   color: var(--fg);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   text-align: left;
   cursor: pointer;
@@ -4299,7 +4309,7 @@ button.cwd:hover {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
 }
 
@@ -4374,7 +4384,7 @@ button.cwd:hover {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 4px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
@@ -4439,7 +4449,7 @@ button.cwd:hover {
 
 .prompt-key {
   flex: 0 0 auto;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 11px;
   color: var(--fg-dim);
 }
@@ -4502,7 +4512,7 @@ button.cwd:hover {
 }
 
 .prompt-file-path {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-family: var(--font-mono);
   font-size: 12px;
   overflow: hidden;
   text-overflow: ellipsis;

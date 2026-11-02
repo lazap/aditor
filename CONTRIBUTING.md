@@ -43,6 +43,7 @@ own; output lands in `src-tauri/target/release/bundle/`.
 | **Node ≥ 22** | `.node-version` pins 24.18.0. Vite 8's rolldown imports `styleText` from `node:util`, which landed in Node 22. |
 | **Rust** | A stable toolchain, via [rustup](https://rustup.rs). |
 | **Xcode Command Line Tools** | macOS, for linking: `xcode-select --install`. |
+| **WebKitGTK and friends** | Linux: on Debian or Ubuntu, `sudo apt install libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev`, plus `patchelf` to bundle an AppImage. |
 | **The `claude` CLI** | [Claude Code](https://claude.com/claude-code), on your `PATH`. |
 
 ### If the build dies with "Failed to locate 'clang'"

@@ -37,6 +37,8 @@ tauri-plugin-dialog = "2"
 git2 = "0.21"
 # The home directory, which Windows does not reliably put in HOME.
 dirs = "7"
+# The loopback server's bearer tokens, from the OS's CSPRNG on every platform.
+getrandom = "0.3"
 # The live limits refresh in `agents.rs` -- its only network call.
 ureq = { version = "3", features = ["json"] }
 # The MCP server in `mcp.rs`: a blocking loopback listener on its own thread.
@@ -48,6 +50,9 @@ toml = "0.8"
 # Self-update from the GitHub release's latest.json, and the relaunch after it.
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
+# The terminal's Ctrl+Shift+C and Ctrl+Shift+V off macOS, where the webview's
+# own clipboard API is not dependable for reading.
+tauri-plugin-clipboard-manager = "2"
 
 # `platform.rs`'s halves. Unix: kill(pid, 0) for the agent session registry's
 # liveness probe, and killpg to stop a run configuration with everything it

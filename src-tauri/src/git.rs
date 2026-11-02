@@ -518,8 +518,7 @@ fn ssh_command(_root: &Path) -> Option<&'static str> {
 }
 
 /// The askpass helper on disk, written once per run. None if it could not be,
-/// in which case ssh keeps its default behaviour -- and, for now, everywhere
-/// but macOS, whose `osascript` the helper's dialog is.
+/// in which case ssh keeps its default behaviour.
 #[cfg(target_os = "macos")]
 fn askpass() -> Option<&'static Path> {
     static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
@@ -540,9 +539,25 @@ fn askpass() -> Option<&'static Path> {
     .as_deref()
 }
 
-#[cfg(not(target_os = "macos"))]
-fn askpass() -> Option<&'static Path> {
-    None
+/// What answers ssh's and git's prompts: the `osascript` helper above on
+/// macOS, Aditor itself elsewhere (see `askpass.rs`). Empty when neither can,
+/// and ssh keeps its default behaviour.
+fn askpass_env() -> Vec<(&'static str, std::ffi::OsString)> {
+    #[cfg(target_os = "macos")]
+    {
+        askpass()
+            .map(|helper| {
+                vec![
+                    ("SSH_ASKPASS", helper.into()),
+                    ("SSH_ASKPASS_REQUIRE", "force".into()),
+                ]
+            })
+            .unwrap_or_default()
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        crate::askpass::env().unwrap_or_default()
+    }
 }
 
 /// `git <args>` in `root`, through a login shell so the user's real PATH (and
@@ -573,9 +588,7 @@ pub(crate) fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
 
-    if let Some(helper) = askpass() {
-        cmd.env("SSH_ASKPASS", helper).env("SSH_ASKPASS_REQUIRE", "force");
-    }
+    cmd.envs(askpass_env());
     if let Some(ssh) = ssh_command(root) {
         cmd.env("GIT_SSH_COMMAND", ssh);
     }

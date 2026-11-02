@@ -1,17 +1,18 @@
+import { isMac } from "../platform";
+
 /**
  * Chords, as one canonical string.
  *
  * `"mod+shift+a"`, `"mod+1"`. On macOS `mod` is Cmd only: Ctrl chords belong
  * to the agent (Ctrl-E, Ctrl-O, Ctrl-W... are Claude Code's), so a Ctrl press
  * there stringifies as `ctrl+…` and never matches a binding. Elsewhere `mod`
- * is Ctrl (or Meta), there being nothing else to bind to.
+ * is Ctrl (or Meta), there being nothing else to bind to -- which is why the
+ * defaults there keep off plain Ctrl+letter (see `other` in registry.ts).
  *
  * The key half comes from `e.code`, not `e.key`: under Shift, `e.key` for the
  * A row becomes something else entirely on several layouts, which would make
  * `mod+shift+a` unbindable for those users.
  */
-
-const isMac = navigator.userAgent.includes("Mac");
 
 /** Whether the app's modifier is down. See the header for why macOS differs. */
 const modDown = (e: KeyboardEvent): boolean =>
@@ -75,13 +76,16 @@ const GLYPHS: Record<string, string> = {
   backspace: "⌫",
   delete: "⌦",
   tab: "⇥",
+  pageup: "PgUp",
+  pagedown: "PgDn",
+  insert: "Ins",
 };
 
 /** `"mod+shift+a"` -> `⌘⇧A` on macOS, `Ctrl+Shift+A` elsewhere. */
 export function formatChord(chord: string): string {
   const parts = chord.split("+");
   const key = parts.pop() ?? "";
-  const label = GLYPHS[key] ?? (key.length === 1 ? key.toUpperCase() : key.toUpperCase());
+  const label = GLYPHS[key] ?? key.toUpperCase();
   if (isMac) {
     let out = "";
     if (parts.includes("mod")) out += "⌘";
@@ -100,8 +104,13 @@ export function formatChord(chord: string): string {
  * Ported as-is from TerminalPane's old `isReservedForApp`, `e.key` checks
  * included: `e.key === "+"` has no tidy `e.code` equivalent, and zoom working
  * is worth more than the symmetry.
+ *
+ * All of them are Cmd chords. Elsewhere the same keys are Ctrl chords the
+ * agent needs -- Ctrl+M is Enter and Ctrl+- is undo -- and the window manager
+ * takes its own (Alt+F4) before the page sees them, so nothing is held back.
  */
 export function isSystemReserved(e: KeyboardEvent): boolean {
+  if (!isMac) return false;
   const mod = modDown(e);
   if (mod && (e.key === "q" || e.key === "m")) return true; // window mgmt
   if (mod && e.shiftKey && e.key.toLowerCase() === "w") return true; // close window (menu)

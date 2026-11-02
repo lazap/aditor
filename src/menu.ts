@@ -1,17 +1,22 @@
 /**
  * The app's commands in the native menu bar.
  *
- * Built on top of `Menu.default()` rather than from scratch: that default is
- * what carries Quit, Hide and the Edit submenu whose Copy and Paste the terminal
- * and the editor rely on. Replacing it wholesale would take those away.
+ * On macOS, built on top of `Menu.default()` rather than from scratch: that
+ * default is what carries Quit, Hide and the Edit submenu whose Copy and Paste
+ * the terminal and the editor rely on. Replacing it wholesale would take those
+ * away.
  *
  * Key equivalents come from the shortcuts registry, the same source the in-app
  * dispatch reads, and are updated in place when the user rebinds -- a menu that
  * advertises a chord the app no longer answers to is worse than one that
  * advertises none.
+ *
+ * Windows and Linux get a menu of their own instead; see `buildWindowMenu`.
  */
 import { emit, listen } from "@tauri-apps/api/event";
 import { Menu, MenuItem, PredefinedMenuItem, Submenu } from "@tauri-apps/api/menu";
+import { getCurrentWindow } from "@tauri-apps/api/window";
+import { isMac } from "./platform";
 import { commandById, type CommandId } from "./shortcuts/registry";
 import { chordFor, subscribe } from "./shortcuts/store";
 
@@ -130,7 +135,7 @@ let built: Menu | null = null;
 
 export function installAppMenu(run: (id: CommandId) => void): Promise<void> {
   dispatch = run;
-  installing ??= build().catch((e) => {
+  installing ??= (isMac ? build() : buildWindowMenu()).catch((e) => {
     // A missing menu bar is a degraded window, not a broken app: every command
     // here is still reachable from its button and its chord.
     console.error("could not install the application menu", e);
@@ -145,6 +150,8 @@ export function installAppMenu(run: (id: CommandId) => void): Promise<void> {
  * run the commands of whichever window built the menu last.
  */
 export function claimAppMenu(): void {
+  // Elsewhere each editor window has a bar of its own.
+  if (!isMac) return;
   void installing?.then(() => built?.setAsAppMenu()).catch(() => {});
 }
 
@@ -192,13 +199,12 @@ export function answerSelectAll(): void {
 
 function selectAllInPage(): void {
   const target = document.activeElement ?? document.body;
-  const mac = navigator.platform.startsWith("Mac");
   const claimed = !target.dispatchEvent(
     new KeyboardEvent("keydown", {
       key: "a",
       code: "KeyA",
-      metaKey: mac,
-      ctrlKey: !mac,
+      metaKey: isMac,
+      ctrlKey: !isMac,
       bubbles: true,
       cancelable: true,
     }),
@@ -284,4 +290,55 @@ async function build(): Promise<void> {
       void item.setAccelerator(accelerator(chordFor(id)));
     }
   });
+}
+
+/**
+ * Windows and Linux: a bar on each editor window, and no key equivalents in it.
+ *
+ * There a menu's accelerators are taken by the window before the page sees
+ * the key -- GTK's accel groups, Win32's TranslateAccelerator -- so the stock
+ * Edit menu's Ctrl+C would copy instead of interrupting the agent, and every
+ * Ctrl chord in the menu would be one the terminal never gets. The chords stay
+ * the page's alone, answered by `useShortcuts` as on macOS and listed in
+ * Settings. Copy and paste need no menu: the webview's text fields answer
+ * Ctrl+C and Ctrl+V themselves, and the terminal takes Ctrl+Shift+C and
+ * Ctrl+Shift+V (see TerminalPane).
+ *
+ * The bar being the window's, its clicks always run in that window's page.
+ */
+async function buildWindowMenu(): Promise<void> {
+  const section = async (ids: readonly (CommandId | null)[]) => {
+    const out: (MenuItem | PredefinedMenuItem)[] = [];
+    for (const id of ids) {
+      out.push(
+        id === null
+          ? await PredefinedMenuItem.new({ item: "Separator" })
+          : await MenuItem.new({
+              id,
+              text: commandById(id).label,
+              action: () => dispatch?.(id),
+            }),
+      );
+    }
+    return out;
+  };
+
+  const file = [
+    ...(await section(["project.open", "file.new", null, ...IN_MENU, null])),
+    await MenuItem.new({
+      text: "Close Window",
+      // close(), not destroy(): the page still gets to flush its edits.
+      action: () => void getCurrentWindow().close(),
+    }),
+  ];
+  const menu = await Menu.new({
+    items: [
+      await Submenu.new({ text: "File", items: file }),
+      await Submenu.new({ text: "Find", items: await section(FIND_MENU) }),
+      await Submenu.new({ text: "Git", items: await section(GIT_MENU) }),
+      await Submenu.new({ text: "Run", items: await section(RUN_MENU) }),
+    ],
+  });
+  await menu.setAsWindowMenu();
+  built = menu;
 }

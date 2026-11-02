@@ -1,4 +1,5 @@
 import { basename } from "../window";
+import { machineName } from "../platform";
 import { chordHint } from "../shortcuts/store";
 import type { UpdateState } from "../update/api";
 
@@ -98,8 +99,13 @@ export function ProjectTabs({
         className="project-tab-awake"
         aria-pressed={awake}
         onClick={onToggleAwake}
-        title={chordHint(awake ? "Keeping the Mac awake — click to let it sleep" : "Keep the Mac awake", "app.keepAwake")}
-        aria-label="Keep Mac awake"
+        title={chordHint(
+          awake
+            ? `Keeping the ${machineName} awake — click to let it sleep`
+            : `Keep the ${machineName} awake`,
+          "app.keepAwake",
+        )}
+        aria-label={`Keep ${machineName} awake`}
       >
         <CupIcon steaming={awake} />
       </button>

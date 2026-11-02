@@ -108,8 +108,11 @@ export interface DialogSpec {
   title: string;
   /** Text above the fields. */
   body?: ReactNode;
-  /** A single-line field, e.g. a branch name. */
-  input?: { label: string; initial?: string; placeholder?: string };
+  /**
+   * A single-line field, e.g. a branch name. A `secret` one is typed hidden
+   * and comes back exactly as typed, spaces and all.
+   */
+  input?: { label: string; initial?: string; placeholder?: string; secret?: boolean };
   /** A multi-line field under it, e.g. a tag message. */
   message?: { label: string; placeholder?: string };
   checks?: { id: string; label: string; initial?: boolean }[];
@@ -154,13 +157,16 @@ function Dialog({
       danger={spec.danger || (choice === "hard")}
       canConfirm={!error && !missing}
       onCancel={() => onDone(null)}
-      onConfirm={() => onDone({ text: text.trim(), message, checks, choice })}
+      onConfirm={() =>
+        onDone({ text: spec.input?.secret ? text : text.trim(), message, checks, choice })
+      }
     >
       {spec.body && <div className="modal-text">{spec.body}</div>}
       {spec.input && (
         <label className="modal-field">
           <span>{spec.input.label}</span>
           <input
+            type={spec.input.secret ? "password" : "text"}
             value={text}
             placeholder={spec.input.placeholder}
             spellCheck={false}

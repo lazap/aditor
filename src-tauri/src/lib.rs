@@ -1,5 +1,6 @@
 mod accounts;
 mod agents;
+mod askpass;
 mod awake;
 mod fs;
 mod git;
@@ -17,17 +18,22 @@ mod worktree;
 
 use std::sync::Arc;
 
+#[cfg(target_os = "macos")]
 use tauri::menu::{Menu, MenuItem, MenuItemKind};
 use tauri::{Manager, WindowEvent};
 
+pub use askpass::helper as askpass_helper;
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    platform::prepare_webview();
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_clipboard_manager::init())
         .manage(Arc::new(pty::PtyRegistry::default()))
         .manage(fs::Workspace::default())
         .manage(agents::AgentState::default())
@@ -35,6 +41,9 @@ pub fn run() {
         .manage(status::StatusState::default())
         .manage(awake::AwakeState::default())
         .setup(|app| {
+            // Elsewhere a menu bar belongs to a window, and the page builds its
+            // own: see `src/menu.ts`.
+            #[cfg(target_os = "macos")]
             app.set_menu(app_menu(app.handle())?)?;
             app.on_menu_event(|app, event| {
                 if event.id() == CLOSE_WINDOW_ID {
@@ -132,6 +141,7 @@ pub fn run() {
             status::set_attention_count,
             awake::awake_get,
             awake::awake_set,
+            askpass::askpass_answer,
         ])
         // Agents run in their own process groups, so closing the window does not
         // hang them up -- without this they survive the app that spawned them.
@@ -186,6 +196,7 @@ const CLOSE_WINDOW_ID: &str = "close-window";
 /// before the page does, so the stock ⌘W item would never let ⌘W reach the
 /// app, which closes agent sessions with it -- the browser split, tab on ⌘W
 /// and window on ⌘⇧W.
+#[cfg(target_os = "macos")]
 fn app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
     let menu = Menu::default(app)?;
     for entry in menu.items()? {
@@ -210,6 +221,6 @@ fn app_menu(app: &tauri::AppHandle) -> tauri::Result<Menu<tauri::Wry>> {
 }
 
 /// An editor window: the first one, or one opened with New Window.
-fn is_editor(label: &str) -> bool {
+pub(crate) fn is_editor(label: &str) -> bool {
     label == "main" || label.starts_with("main-")
 }

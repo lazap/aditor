@@ -11,8 +11,7 @@
  * attribute is never set and nothing is inset.
  */
 import { getCurrentWindow } from "@tauri-apps/api/window";
-
-const isMac = navigator.userAgent.includes("Mac");
+import { isMac } from "./platform";
 
 /** Once per editor window, before React mounts. */
 export function installTitlebar(): void {

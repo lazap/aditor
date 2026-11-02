@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { machineName } from "../platform";
 
-/** Whether the Mac is being kept awake. */
+/** Whether the computer is being kept awake. */
 export const awakeGet = () => invoke<boolean>("awake_get");
 
 /** Turn keeping awake on or off; resolves to the state it ended in. */
@@ -26,7 +27,7 @@ export function useAwake(onError: (message: string) => void): [boolean, () => vo
   const toggle = useCallback(() => {
     void awakeSet(!on)
       .then(setOn)
-      .catch(() => onError("Could not keep the Mac awake."));
+      .catch((e) => onError(`Could not keep the ${machineName} awake: ${String(e)}`));
   }, [on, onError]);
 
   return [on, toggle];

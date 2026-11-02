@@ -144,14 +144,6 @@ impl McpServer {
     }
 }
 
-/// 32 hex chars from the kernel's CSPRNG. Unix-only, like the rest of Aditor's
-/// process handling.
-fn new_token() -> std::io::Result<String> {
-    let mut buf = [0u8; 16];
-    std::fs::File::open("/dev/urandom")?.read_exact(&mut buf)?;
-    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
-}
-
 /// Bind to a free loopback port and serve on a thread of its own.
 pub fn start(app: AppHandle) -> Result<McpServer, Box<dyn std::error::Error>> {
     let server = Server::http("127.0.0.1:0").map_err(|e| e.to_string())?;
@@ -162,11 +154,13 @@ pub fn start(app: AppHandle) -> Result<McpServer, Box<dyn std::error::Error>> {
         .ok_or("MCP server has no IP address")?;
     let inner = Arc::new(Inner {
         app,
-        token: new_token()?,
+        token: crate::platform::random_token()?,
         tasks: Mutex::default(),
         pending: Mutex::default(),
         next_request: AtomicU64::new(1),
     });
+
+    crate::askpass::init(inner.app.clone(), port)?;
 
     let shared = Arc::clone(&inner);
     std::thread::spawn(move || {
@@ -179,14 +173,14 @@ pub fn start(app: AppHandle) -> Result<McpServer, Box<dyn std::error::Error>> {
     Ok(McpServer { port, inner })
 }
 
-fn header<'a>(req: &'a Request, name: &'static str) -> Option<&'a str> {
+pub(crate) fn header<'a>(req: &'a Request, name: &'static str) -> Option<&'a str> {
     req.headers()
         .iter()
         .find(|h| h.field.equiv(name))
         .map(|h| h.value.as_str())
 }
 
-fn respond(req: Request, status: u16, body: Option<Value>) {
+pub(crate) fn respond(req: Request, status: u16, body: Option<Value>) {
     let res = match body {
         Some(v) => Response::from_string(v.to_string())
             .with_header(Header::from_bytes("Content-Type", "application/json").unwrap()),
@@ -200,6 +194,9 @@ fn handle(inner: &Inner, mut req: Request) {
     // rebinding. The agent is not a browser and sends no Origin at all.
     if header(&req, "Origin").is_some() {
         return respond(req, 403, None);
+    }
+    if req.url() == crate::askpass::PATH {
+        return crate::askpass::handle(req);
     }
     let Some(pty) = req.url().strip_prefix("/mcp/").map(str::to_string) else {
         return respond(req, 404, None);

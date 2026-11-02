@@ -19,6 +19,14 @@ pub fn home_dir() -> Option<PathBuf> {
     dirs::home_dir()
 }
 
+/// 32 hex characters from the OS's CSPRNG: a bearer token for the loopback
+/// server, good for one launch.
+pub fn random_token() -> std::io::Result<String> {
+    let mut buf = [0u8; 16];
+    getrandom::fill(&mut buf).map_err(std::io::Error::other)?;
+    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
+}
+
 /// The user's shell: `$SHELL`, or the platform's default when it is unset.
 pub fn user_shell() -> String {
     #[cfg(unix)]
@@ -37,6 +45,35 @@ pub fn user_shell() -> String {
 const DEFAULT_SHELL: &str = "/bin/zsh";
 #[cfg(all(unix, not(target_os = "macos")))]
 const DEFAULT_SHELL: &str = "/bin/sh";
+
+/// Where installers put programs whether or not they made it onto PATH,
+/// searched after it: Homebrew on macOS; on Linux the system folders a GUI
+/// session may leave out, Linuxbrew, and snap.
+#[cfg(target_os = "macos")]
+pub const SYSTEM_BIN_DIRS: &[&str] = &["/opt/homebrew/bin", "/usr/local/bin"];
+#[cfg(all(unix, not(target_os = "macos")))]
+pub const SYSTEM_BIN_DIRS: &[&str] = &[
+    "/usr/local/bin",
+    "/usr/bin",
+    "/home/linuxbrew/.linuxbrew/bin",
+    "/snap/bin",
+];
+#[cfg(windows)]
+pub const SYSTEM_BIN_DIRS: &[&str] = &[];
+
+/// Before the first window opens. WebKitGTK's DMA-BUF renderer draws blank or
+/// black windows under Nvidia's proprietary driver, so turn it off there --
+/// unless the user already chose for themselves. Nothing to do elsewhere.
+pub fn prepare_webview() {
+    #[cfg(target_os = "linux")]
+    if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none()
+        && Path::new("/proc/driver/nvidia/version").exists()
+    {
+        // Before any thread is spawned, so nothing can be reading the
+        // environment while it changes.
+        std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+    }
+}
 
 /// The first of `dirs` holding a program called `bin`.
 ///
@@ -143,11 +180,18 @@ pub fn kill_tree(pid: u32, _grace: Duration) {
 
 /// Keeps the computer from sleeping for as long as it is held.
 ///
+/// Either way it is a child process, chosen so that it lets go when Aditor
+/// exits however it exits -- a crash or a force quit included, which no
+/// cleanup of ours would see.
+///
 /// On macOS, `caffeinate` holds the power assertions rather than IOKit calls
-/// from here: it is on every Mac, and `-w` ties it to our pid, so it lets go
-/// when Aditor exits however it exits -- a crash or a force quit included,
-/// which no cleanup of ours would see.
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+/// from here: it is on every Mac, and `-w` ties it to our pid.
+///
+/// On Linux, `systemd-inhibit` takes logind's idle and sleep locks for as long
+/// as the command it runs lives, and that command is a `tail` waiting for our
+/// pid to go. It runs in a group of its own, so releasing takes the `tail`
+/// down with it rather than leaving it to wait us out.
+#[cfg_attr(windows, allow(dead_code))]
 pub struct Awake(Child);
 
 impl Awake {
@@ -166,7 +210,44 @@ impl Awake {
             .map_err(|e| format!("could not start caffeinate: {e}"))
     }
 
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    pub fn start() -> Result<Self, String> {
+        use std::io::Read;
+        use std::os::unix::process::CommandExt;
+        use std::process::{Command, Stdio};
+        // idle: no screen blanking or lock, as caffeinate's -d. sleep: no
+        // suspend. Lid switches stay the user's call.
+        let mut child = Command::new("systemd-inhibit")
+            .args([
+                "--what=idle:sleep",
+                "--who=Aditor",
+                "--why=Keep awake is on",
+                "--mode=block",
+                "tail",
+                &format!("--pid={}", std::process::id()),
+                "-f",
+                "/dev/null",
+            ])
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .map_err(|e| format!("could not start systemd-inhibit: {e}"))?;
+        // Without logind -- no systemd, or a container -- it fails at once.
+        // Catch that here rather than report a hold that is not there.
+        std::thread::sleep(Duration::from_millis(150));
+        if let Ok(Some(_)) = child.try_wait() {
+            let mut why = String::new();
+            if let Some(mut err) = child.stderr.take() {
+                let _ = err.read_to_string(&mut why);
+            }
+            return Err(format!("systemd-inhibit could not hold the computer awake: {}", why.trim()));
+        }
+        Ok(Awake(child))
+    }
+
+    #[cfg(windows)]
     pub fn start() -> Result<Self, String> {
         Err("Keeping the computer awake is not available on this platform yet.".to_string())
     }
@@ -177,6 +258,11 @@ impl Awake {
     }
 
     pub fn release(mut self) {
+        #[cfg(all(unix, not(target_os = "macos")))]
+        // SAFETY: a signal to the group this child leads.
+        unsafe {
+            libc::killpg(self.0.id() as libc::pid_t, libc::SIGTERM);
+        }
         let _ = self.0.kill();
         let _ = self.0.wait();
     }

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { patch, settings } from "../settings/store";
-import { COMMANDS, commandById, type CommandId } from "./registry";
+import { COMMANDS, commandById, defaultChord, type CommandId } from "./registry";
 import { eventChord, formatChord, isSystemReserved } from "./keys";
 
 /**
@@ -51,7 +51,7 @@ function sane(raw: Overrides): Overrides {
 
 function buildBindings(): ReadonlyMap<CommandId, string | null> {
   return new Map(
-    COMMANDS.map((c) => [c.id, c.id in overrides ? overrides[c.id]! : c.chord]),
+    COMMANDS.map((c) => [c.id, c.id in overrides ? overrides[c.id]! : defaultChord(c)]),
   );
 }
 
@@ -87,7 +87,7 @@ export function setBinding(id: CommandId, chord: string): CommandId | null {
   const displaced = taken && taken !== id ? taken : null;
   if (displaced) overrides[displaced] = null;
 
-  const fallback = COMMANDS.find((c) => c.id === id)!.chord;
+  const fallback = defaultChord(commandById(id));
   if (chord === fallback) delete overrides[id];
   else overrides[id] = chord;
 
@@ -98,7 +98,7 @@ export function setBinding(id: CommandId, chord: string): CommandId | null {
 export function clearBinding(id: CommandId): void {
   // Clearing a command that ships unbound is a return to its default, not an
   // override of it.
-  if (commandById(id).chord === null) delete overrides[id];
+  if (defaultChord(commandById(id)) === null) delete overrides[id];
   else overrides[id] = null;
   commit();
 }

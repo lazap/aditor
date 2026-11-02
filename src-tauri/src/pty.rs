@@ -30,7 +30,7 @@ use tauri::{State, WebviewWindow};
 
 use crate::fs::{workspace_root, Workspace};
 use crate::mcp::{McpServer, PROMPT_TIMEOUT};
-use crate::platform::{find_executable, home_dir, kill_tree, user_shell};
+use crate::platform::{find_executable, home_dir, kill_tree, user_shell, SYSTEM_BIN_DIRS};
 use crate::run_log::RunLog;
 
 /// Flush pending PTY output at least this often. One event per read syscall
@@ -192,7 +192,6 @@ const HOME_BIN_DIRS: [&str; 6] = [
     ".npm-global/bin",
     ".volta/bin",
 ];
-const SYSTEM_BIN_DIRS: [&str; 2] = ["/opt/homebrew/bin", "/usr/local/bin"];
 
 static SEARCH_DIRS: OnceLock<Vec<PathBuf>> = OnceLock::new();
 
