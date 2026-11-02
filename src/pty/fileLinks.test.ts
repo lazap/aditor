@@ -26,6 +26,14 @@ describe("findCandidates", () => {
     expect(paths("plain words here")).toEqual([]);
   });
 
+  it("finds Windows paths, drive and all, without taking the drive for a line", () => {
+    expect(paths("at src\\a.ts:12 and C:\\proj\\b.rs(4,2) and D:/c.py")).toEqual([
+      ["src\\a.ts", 12],
+      ["C:\\proj\\b.rs", 4],
+      ["D:/c.py", undefined],
+    ]);
+  });
+
   it("reports where each match starts", () => {
     expect(findCandidates("x src/a.ts")[0].start).toBe(2);
   });

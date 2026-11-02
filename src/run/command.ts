@@ -5,8 +5,18 @@
  * and go in as written, so quoting and `$VAR` work the way they do in a
  * terminal. Fields that name one thing -- a script, a binary, a file -- are
  * quoted, so a space in a path stays part of the path.
+ *
+ * The line runs in the user's shell, or in `cmd.exe` on Windows (see
+ * `run_command` in pty.rs), which quotes with double quotes only and runs
+ * nothing from a path written with forward slashes.
  */
+import { isWindows } from "../platform";
 import type { PackageManager, RunConfig } from "./schema";
+
+/** The shell a line is written for. */
+export type Shell = "posix" | "cmd";
+
+const HOST_SHELL: Shell = isWindows ? "cmd" : "posix";
 
 /** What the project looks like, for the configurations left on "auto". */
 export interface ScriptContext {
@@ -23,10 +33,24 @@ export function shQuote(s: string): string {
   return `'${s.replace(/'/g, `'\\''`)}'`;
 }
 
+/**
+ * Quote for `cmd.exe`, unless the word needs no quoting. It has no escape
+ * inside quotes; a doubled `"` reaches the program as one, which is how the C
+ * runtime every program parses its arguments with reads it.
+ */
+export function cmdQuote(s: string): string {
+  if (/^[A-Za-z0-9_@+=:,./\\-]+$/.test(s)) return s;
+  return `"${s.replace(/"/g, '""')}"`;
+}
+
 const join = (...parts: (string | false | null | undefined)[]) =>
   parts.filter((p): p is string => typeof p === "string" && p.trim() !== "").join(" ");
 
-export function toScript(c: RunConfig, ctx: ScriptContext = NO_CONTEXT): string {
+export function toScript(c: RunConfig, ctx: ScriptContext = NO_CONTEXT, shell: Shell = HOST_SHELL): string {
+  const cmd = shell === "cmd";
+  const quote = cmd ? cmdQuote : shQuote;
+  // A program in the project: `cmd.exe` runs `.\x` but not `./x`.
+  const local = (path: string) => (cmd ? path.replace(/\//g, "\\") : path);
   switch (c.type) {
     case "shell":
       return c.command.trim();
@@ -35,7 +59,7 @@ export function toScript(c: RunConfig, ctx: ScriptContext = NO_CONTEXT): string 
       const mgr = c.manager === "auto" ? (ctx.packageManager ?? "npm") : c.manager;
       // npm alone needs `--` to pass arguments through to the script.
       const args = c.args.trim() && (mgr === "npm" ? `-- ${c.args.trim()}` : c.args.trim());
-      return join(mgr, "run", c.script && shQuote(c.script), args);
+      return join(mgr, "run", c.script && quote(c.script), args);
     }
 
     case "cargo":
@@ -43,9 +67,9 @@ export function toScript(c: RunConfig, ctx: ScriptContext = NO_CONTEXT): string 
         "cargo",
         c.subcommand,
         c.release && "--release",
-        c.package && `-p ${shQuote(c.package)}`,
-        c.bin && `--bin ${shQuote(c.bin)}`,
-        c.features && `--features ${shQuote(c.features)}`,
+        c.package && `-p ${quote(c.package)}`,
+        c.bin && `--bin ${quote(c.bin)}`,
+        c.features && `--features ${quote(c.features)}`,
         c.args.trim() && `-- ${c.args.trim()}`,
       );
 
@@ -53,32 +77,35 @@ export function toScript(c: RunConfig, ctx: ScriptContext = NO_CONTEXT): string 
       // The detected virtualenv is relative to the root, and the run starts
       // in `cwd`, so from a subfolder the path has to climb back up. A typed
       // interpreter is shell text like any other free-form field.
-      const interp = c.interpreter.trim() || (ctx.python ? rootRelative(c.cwd, ctx.python) : "python3");
+      // Windows installs `python`, not `python3`.
+      const interp =
+        c.interpreter.trim() ||
+        (ctx.python ? local(rootRelative(c.cwd, ctx.python)) : cmd ? "python" : "python3");
       return join(
-        c.interpreter.trim() ? interp : shQuote(interp),
+        c.interpreter.trim() ? interp : quote(interp),
         c.mode === "module" && "-m",
-        c.target && shQuote(c.target),
+        c.target && quote(c.target),
         c.args,
       );
     }
 
     case "go":
-      return join("go", c.subcommand, c.package && shQuote(c.package), c.args);
+      return join("go", c.subcommand, c.package && quote(c.package), c.args);
 
     case "maven":
-      return join(c.wrapper ? "./mvnw" : "mvn", c.goals, c.args);
+      return join(c.wrapper ? local("./mvnw") : "mvn", c.goals, c.args);
 
     case "gradle":
-      return join(c.wrapper ? "./gradlew" : "gradle", c.tasks, c.args);
+      return join(c.wrapper ? local("./gradlew") : "gradle", c.tasks, c.args);
 
     case "java":
       return c.mode === "jar"
-        ? join("java", c.jvmArgs, "-jar", c.target && shQuote(c.target), c.args)
+        ? join("java", c.jvmArgs, "-jar", c.target && quote(c.target), c.args)
         : join(
             "java",
             c.jvmArgs,
-            c.classpath && `-cp ${shQuote(c.classpath)}`,
-            c.target && shQuote(c.target),
+            c.classpath && `-cp ${quote(c.classpath)}`,
+            c.target && quote(c.target),
             c.args,
           );
   }

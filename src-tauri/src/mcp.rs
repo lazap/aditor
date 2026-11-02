@@ -25,6 +25,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tiny_http::{Header, Method, Request, Response, Server};
 
 use crate::fs::inside_workspace;
+use crate::platform::path_string;
 use crate::pty::PtyRegistry;
 use crate::run::{config_refs, ConfigRef};
 use crate::run_log::{now_ms, RunLog};
@@ -503,7 +504,7 @@ fn open_file(inner: &Inner, pty: &str, args: &Value) -> Result<String, String> {
         return Err(format!("{path} is not a file."));
     }
     let line = args["line"].as_u64().filter(|&l| l > 0);
-    let event = OpenEvent { id: pty, path: Some(abs.to_string_lossy().into()), line, as_: "file" };
+    let event = OpenEvent { id: pty, path: Some(path_string(&abs)), line, as_: "file" };
     inner.app.emit_to(window.as_str(), "mcp://open", event).map_err(|e| e.to_string())?;
     Ok(format!("Opened {path} for the user."))
 }
@@ -512,7 +513,7 @@ fn show_diff(inner: &Inner, pty: &str, args: &Value) -> Result<String, String> {
     let (window, cwd) = owner(inner, pty)?;
     let (path, as_) = match args["path"].as_str() {
         // Not checked for existence: a deleted file still has a diff.
-        Some(p) => (Some(resolve(&cwd, p)?.to_string_lossy().into()), "diff"),
+        Some(p) => (Some(path_string(&resolve(&cwd, p)?)), "diff"),
         None => (None, "changes"),
     };
     let event = OpenEvent { id: pty, path, line: None, as_ };
@@ -533,7 +534,7 @@ fn ask(inner: &Inner, pty: &str, kind: &str, mut prompt: Value) -> Result<Value,
     prompt["requestId"] = json!(request_id);
     prompt["id"] = json!(pty);
     prompt["kind"] = json!(kind);
-    prompt["root"] = json!(cwd.to_string_lossy());
+    prompt["root"] = json!(path_string(&cwd));
     if let Err(e) = inner.app.emit_to(window.as_str(), "mcp://prompt", prompt) {
         inner.pending.lock().unwrap().remove(&request_id);
         return Err(e.to_string());
@@ -611,7 +612,7 @@ fn request_review(inner: &Inner, pty: &str, args: &Value) -> Result<String, Stri
         Some(list) => {
             let mut out = Vec::new();
             for p in list.iter().filter_map(Value::as_str) {
-                out.push(resolve(&cwd, p)?.to_string_lossy().into_owned());
+                out.push(path_string(&resolve(&cwd, p)?));
             }
             Some(out)
         }
@@ -842,7 +843,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("aditor-mcp-{}", std::process::id()));
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(dir.join("src/a.ts"), "x").unwrap();
-        dir.canonicalize().unwrap()
+        crate::platform::canonicalize(&dir).unwrap()
     }
 
     #[test]

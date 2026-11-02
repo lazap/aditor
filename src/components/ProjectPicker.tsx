@@ -66,17 +66,19 @@ function WhereStep({
 function split(path: string): { name: string; parent: string } {
   const parts = path.split("/").filter(Boolean);
   const name = parts[parts.length - 1] ?? path;
-  const parent = "/" + parts.slice(0, -1).join("/");
+  // Sliced rather than rebuilt, so a Windows `C:/…` keeps its drive.
+  const parent = path.slice(0, path.lastIndexOf("/")) || "/";
   return { name, parent: tildify(parent) };
 }
 
 /**
  * Collapse the home directory. The webview has no `os.homedir`, but every
- * recent is an absolute path and `/Users/<name>` is the only shape that
- * matters on the platform Aditor runs on.
+ * recent is an absolute path, and home is `/Users/<name>` on macOS,
+ * `/home/<name>` on Linux, and `C:/Users/<name>` on Windows -- with forward
+ * slashes, as the backend hands paths over.
  */
 function tildify(dir: string): string {
-  const m = /^\/(?:Users|home)\/([^/]+)(\/.*)?$/.exec(dir);
+  const m = /^(?:\/(?:Users|home)|[A-Za-z]:\/Users)\/([^/]+)(\/.*)?$/.exec(dir);
   return m ? `~${m[2] ?? ""}` : dir;
 }
 

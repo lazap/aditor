@@ -25,6 +25,7 @@ import { ptyKill, ptyPaste, ptyWriteActive, SHELL_SESSION, type AgentInfo } from
 import { useRunConfigs } from "../run/useRunConfigs";
 import { RUN_FILE, runOutput } from "../run/api";
 import { toScript } from "../run/command";
+import { isAbsolutePath, pathParts } from "../platform";
 import { launchChain, type RunConfig } from "../run/schema";
 import { createFile, FS_GIT, fsDebounceMs, movePath, type FsChanged, type FsGit } from "../fs/api";
 import {
@@ -179,17 +180,17 @@ const NewFileIcon = () => (
 function newFileError(text: string): string | null {
   const t = text.trim();
   if (t === "") return null;
-  if (t.startsWith("/")) return "Give a path inside the project, not an absolute one.";
-  if (t.split("/").includes("..")) return "Stay inside the project: no `..`.";
-  if (t.endsWith("/")) return "Give the file a name after the folder.";
+  if (isAbsolutePath(t)) return "Give a path inside the project, not an absolute one.";
+  if (pathParts(t).includes("..")) return "Stay inside the project: no `..`.";
+  if (/[\\/]$/.test(t)) return "Give the file a name after the folder.";
   return null;
 }
 
 /** What a move's target folder may not be. `.` is the project root. */
 function moveTargetError(text: string): string | null {
   const t = text.trim();
-  if (t.startsWith("/")) return "Give a folder inside the project, not an absolute path.";
-  if (t.split("/").includes("..")) return "Stay inside the project: no `..`.";
+  if (isAbsolutePath(t)) return "Give a folder inside the project, not an absolute path.";
+  if (pathParts(t).includes("..")) return "Stay inside the project: no `..`.";
   return null;
 }
 

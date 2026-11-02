@@ -288,7 +288,13 @@ fn go(root: &Path, out: &mut Vec<Suggestion>) {
 }
 
 fn python(root: &Path, d: &mut Detected) {
-    d.python = [".venv/bin/python", "venv/bin/python"]
+    // A virtualenv made on Windows keeps its interpreter under Scripts.
+    let venvs: [&str; 2] = if cfg!(windows) {
+        [".venv/Scripts/python.exe", "venv/Scripts/python.exe"]
+    } else {
+        [".venv/bin/python", "venv/bin/python"]
+    };
+    d.python = venvs
         .into_iter()
         .find(|p| root.join(p).exists())
         .map(str::to_string);
@@ -460,14 +466,15 @@ mod tests {
     fn python_entry_points_and_venv() {
         let root = scratch("python");
         put(&root, "main.py", "");
-        put(&root, ".venv/bin/python", "");
+        let venv = if cfg!(windows) { ".venv/Scripts/python.exe" } else { ".venv/bin/python" };
+        put(&root, venv, "");
         put(
             &root,
             "pyproject.toml",
             "[project]\nname = \"x\"\n[project.scripts]\nserve = \"x.cli:main\"\n",
         );
         let d = detect(&root);
-        assert_eq!(d.python.as_deref(), Some(".venv/bin/python"));
+        assert_eq!(d.python.as_deref(), Some(venv));
         let s = by_name(&d);
         assert_eq!(
             s["serve"],

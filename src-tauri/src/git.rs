@@ -253,11 +253,11 @@ pub async fn git_status(ws: State<'_, Workspace>, root: String) -> Result<RepoSt
                     .or_else(|| entry.index_to_workdir())
                     .and_then(|d| d.old_file().path().map(|p| workdir.join(p)))
                     .filter(|p| *p != abs)
-                    .map(|p| p.to_string_lossy().to_string());
+                    .map(|p| crate::platform::path_string(&p));
                 // Only report what is inside the open workspace -- the repo may
                 // extend above it.
                 abs.starts_with(root).then(|| FileStatus {
-                    path: abs.to_string_lossy().to_string(),
+                    path: crate::platform::path_string(&abs),
                     status: kind,
                     staged: classify_index(s),
                     unstaged: classify_worktree(s),
@@ -562,7 +562,8 @@ fn askpass_env() -> Vec<(&'static str, std::ffi::OsString)> {
 
 /// `git <args>` in `root`, through a login shell so the user's real PATH (and
 /// so their git) resolves in a GUI-launched app. Arguments travel as
-/// positional parameters, so nothing is ever quoted into the script.
+/// positional parameters, so nothing is ever quoted into the script. Windows
+/// hands GUI apps the user's whole PATH, so there git runs directly.
 ///
 /// No terminal is attached and git's own prompting is off: a credential
 /// prompt fails fast with git's own message instead of hanging forever.
@@ -576,8 +577,14 @@ fn askpass_env() -> Vec<(&'static str, std::ffi::OsString)> {
 /// on something that never comes, would otherwise hold `GIT_GATE` until the
 /// app restarts, and every later git action would queue behind it.
 pub(crate) fn run_git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String, String> {
-    let mut cmd = Command::new(crate::platform::user_shell());
-    cmd.args(["-l", "-c", "exec git \"$@\"", "git"])
+    let mut cmd = if cfg!(windows) {
+        Command::new(crate::pty::find_program("git").unwrap_or_else(|| "git".into()))
+    } else {
+        let mut cmd = Command::new(crate::platform::user_shell());
+        cmd.args(["-l", "-c", "exec git \"$@\"", "git"]);
+        cmd
+    };
+    crate::platform::hide_console(&mut cmd)
         .args(args)
         .current_dir(root)
         .env("GIT_TERMINAL_PROMPT", "0")
@@ -1154,6 +1161,7 @@ pub async fn git_operation_abort(ws: State<'_, Workspace>, root: String) -> Resu
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn piped(script: &str) -> std::process::Child {
         Command::new("/bin/sh")
             .args(["-c", script])
@@ -1163,6 +1171,7 @@ mod tests {
             .unwrap()
     }
 
+    #[cfg(unix)]
     #[test]
     fn bounded_wait_returns_output() {
         let (status, out, err) = wait_bounded(piped("echo out; echo err >&2"), Duration::from_secs(10))
@@ -1172,6 +1181,7 @@ mod tests {
         assert_eq!(err, b"err\n");
     }
 
+    #[cfg(unix)]
     #[test]
     fn bounded_wait_kills_a_hung_child() {
         let started = Instant::now();
@@ -1189,12 +1199,14 @@ mod tests {
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(&dir).unwrap();
             // Canonical, as `workspace_root` hands it over: /var is /private/var.
-            let s = Scratch(dir.canonicalize().unwrap());
+            let s = Scratch(crate::platform::canonicalize(&dir).unwrap());
             for args in [
                 &["init", "-q", "-b", "main"][..],
                 &["config", "user.name", "Test"],
                 &["config", "user.email", "t@example.com"],
                 &["config", "commit.gpgsign", "false"],
+                // Windows runners turn it on; the tests compare bytes.
+                &["config", "core.autocrlf", "false"],
             ] {
                 s.git(args);
             }
@@ -1203,8 +1215,9 @@ mod tests {
         fn git(&self, args: &[&str]) -> String {
             run_git(&self.0, args, None).unwrap()
         }
+        /// As `git_status` reports it.
         fn path(&self, rel: &str) -> String {
-            self.0.join(rel).to_string_lossy().to_string()
+            crate::platform::path_string(&self.0.join(rel))
         }
         fn write(&self, rel: &str, text: &str) {
             std::fs::write(self.0.join(rel), text).unwrap();

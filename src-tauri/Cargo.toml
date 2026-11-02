@@ -39,6 +39,8 @@ git2 = "0.21"
 dirs = "7"
 # The loopback server's bearer tokens, from the OS's CSPRNG on every platform.
 getrandom = "0.3"
+# Canonical paths without Windows' `\\?\` prefix; plain canonicalize elsewhere.
+dunce = "1"
 # The live limits refresh in `agents.rs` -- its only network call.
 ureq = { version = "3", features = ["json"] }
 # The MCP server in `mcp.rs`: a blocking loopback listener on its own thread.
@@ -56,12 +58,13 @@ tauri-plugin-clipboard-manager = "2"
 
 # `platform.rs`'s halves. Unix: kill(pid, 0) for the agent session registry's
 # liveness probe, and killpg to stop a run configuration with everything it
-# started. Windows: the same liveness probe through a process handle.
+# started. Windows: the same liveness probe through a process handle, and the
+# execution state that keeps the computer awake.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Power", "Win32_System_Threading"] }
 
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration

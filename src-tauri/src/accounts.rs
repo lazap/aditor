@@ -196,9 +196,7 @@ struct Lock {
 /// or a force-quit while we hold it -- would wedge its lock for good. False
 /// once the directory is gone.
 fn touch(dir: &Path) -> bool {
-    fs::File::open(dir)
-        .and_then(|f| f.set_modified(SystemTime::now()))
-        .is_ok()
+    crate::platform::touch_dir(dir)
 }
 
 /// Cheap jitter so two waiters do not retry in lockstep. A lock loop does not

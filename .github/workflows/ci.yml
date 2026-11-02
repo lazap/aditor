@@ -19,18 +19,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Aditor ships on macOS. The frontend is the same everywhere, so it
-          # is linted and tested here only.
+          # The frontend is the same everywhere, so it is linted and tested on
+          # macOS only.
           - os: macos-latest
             frontend: true
-            rust-tests: run
           - os: ubuntu-latest
-            rust-tests: run
-          # The backend compiles on Windows, but agents, runs and git still go
-          # through a Unix shell, so most tests could not pass there yet. Build
-          # them so they keep compiling; run them once Windows is ported.
           - os: windows-latest
-            rust-tests: build
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -63,10 +57,6 @@ jobs:
         with:
           workspaces: src-tauri
       - run: cargo test
-        if: matrix.rust-tests == 'run'
-        working-directory: src-tauri
-      - run: cargo test --no-run
-        if: matrix.rust-tests == 'build'
         working-directory: src-tauri
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
@@ -112,4 +102,35 @@ jobs:
           path: |
             src-tauri/target/release/bundle/appimage/*.AppImage
             src-tauri/target/release/bundle/deb/*.deb
+          if-no-files-found: error
+
+  # The NSIS installer, for trying a build on a real Windows machine until
+  # releases carry it. Unsigned, so SmartScreen will ask first.
+  bundle-windows:
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # As for the Linux bundles: no updater key here, and these are not updates.
+      # Bash, so the JSON is quoted as it is there; PowerShell would mangle it.
+      - run: npx tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+        shell: bash
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: aditor-windows-${{ github.sha }}
+          path: src-tauri/target/release/bundle/nsis/*.exe
           if-no-files-found: error

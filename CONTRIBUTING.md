@@ -7,9 +7,9 @@ especially for anything that adds a pane, a command, or a dependency.
 ## Before you start
 
 **macOS is the only platform Aditor ships on.** Linux and Windows are being
-brought up: CI builds the backend on all three and runs its tests on macOS and
-Linux, but nobody has used the app on either yet, so expect to do some
-discovery. Anything that needs an OS-specific API -- signals, process handles,
+brought up: CI builds and tests the backend on all three, and builds an
+AppImage, a `.deb` and a Windows installer on every push to master, but the
+app has had little use on either yet, so expect to do some discovery. Anything that needs an OS-specific API -- signals, process handles,
 file modes, power assertions -- belongs in `src-tauri/src/platform.rs`, so the
 modules that use it read the same on every platform.
 

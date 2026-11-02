@@ -18,6 +18,7 @@ use serde::Serialize;
 use tauri::State;
 
 use crate::fs::{Workspace, workspace_root};
+use crate::platform::{canonicalize, path_string};
 use crate::git::{check_name, off_thread, run_git};
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -50,7 +51,7 @@ fn worktrees_dir() -> Result<PathBuf, String> {
 /// The main checkout of the repo `repo` belongs to: the parent of the common
 /// git dir, which for a linked worktree is the main one's `.git`.
 fn main_root(repo: &Repository) -> Result<PathBuf, String> {
-    let common = repo.commondir().canonicalize().map_err(|e| e.to_string())?;
+    let common = canonicalize(repo.commondir()).map_err(|e| e.to_string())?;
     common
         .parent()
         .map(Path::to_path_buf)
@@ -85,8 +86,8 @@ fn create(root: &Path, name: &str, base: &Path) -> Result<WorktreeInfo, String> 
 /// rooted exactly at `path`. Anything else -- a plain repo, a worktree the user
 /// made elsewhere -- is just a project.
 fn info(path: &Path, base: &Path) -> Option<WorktreeInfo> {
-    let base = base.canonicalize().ok()?;
-    let path = path.canonicalize().ok()?;
+    let base = canonicalize(base).ok()?;
+    let path = canonicalize(path).ok()?;
     if !path.starts_with(&base) {
         return None;
     }
@@ -101,10 +102,10 @@ fn info(path: &Path, base: &Path) -> Option<WorktreeInfo> {
         .filter(|h| h.is_branch())
         .and_then(|h| h.shorthand().ok().map(str::to_string));
     Some(WorktreeInfo {
-        path: path.to_string_lossy().into(),
+        path: path_string(&path),
         branch,
         repo: main.file_name()?.to_string_lossy().into(),
-        main: main.to_string_lossy().into(),
+        main: path_string(&main),
     })
 }
 
@@ -169,13 +170,15 @@ mod tests {
             let _ = std::fs::remove_dir_all(&dir);
             std::fs::create_dir_all(dir.join("proj")).unwrap();
             std::fs::create_dir_all(dir.join("worktrees")).unwrap();
-            let dir = dir.canonicalize().unwrap();
+            let dir = crate::platform::canonicalize(&dir).unwrap();
             let s = Scratch { repo: dir.join("proj"), base: dir.join("worktrees"), dir };
             for args in [
                 &["init", "-q", "-b", "main"][..],
                 &["config", "user.name", "Test"],
                 &["config", "user.email", "t@example.com"],
                 &["config", "commit.gpgsign", "false"],
+                // Windows runners turn it on; the tests compare bytes.
+                &["config", "core.autocrlf", "false"],
             ] {
                 s.git(args);
             }
@@ -200,9 +203,9 @@ mod tests {
     fn create_then_remove_with_its_merged_branch() {
         let s = Scratch::new("roundtrip");
         let wt = create(&s.repo, "feat/x", &s.base).unwrap();
-        assert_eq!(wt.path, s.base.join("proj/feat-x").to_string_lossy());
+        assert_eq!(wt.path, path_string(&s.base.join("proj").join("feat-x")));
         assert_eq!(wt.branch.as_deref(), Some("feat/x"));
-        assert_eq!(wt.main, s.repo.to_string_lossy());
+        assert_eq!(wt.main, path_string(&s.repo));
         assert_eq!(wt.repo, "proj");
         assert_eq!(info(Path::new(&wt.path), &s.base), Some(wt));
 

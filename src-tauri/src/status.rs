@@ -57,7 +57,38 @@ impl StatusState {
         if let Some(w) = app.webview_windows().values().next() {
             let _ = w.set_badge_count(count);
         }
+        // Windows has no app badge. A dot over each editor window's taskbar
+        // button says the same, if not how many.
+        #[cfg(windows)]
+        {
+            let dot = attention_dot();
+            for (label, w) in app.webview_windows() {
+                if crate::is_editor(&label) {
+                    let icon = count.map(|_| tauri::image::Image::new(&dot, DOT, DOT));
+                    let _ = w.set_overlay_icon(icon);
+                }
+            }
+        }
     }
+}
+
+/// The taskbar overlay's size, the one Windows draws it at.
+#[cfg(windows)]
+const DOT: u32 = 16;
+
+/// A filled orange circle, as RGBA, softened at the edge.
+#[cfg(windows)]
+fn attention_dot() -> Vec<u8> {
+    let centre = (DOT as f32 - 1.0) / 2.0;
+    let radius = DOT as f32 / 2.0 - 1.5;
+    (0..DOT * DOT)
+        .flat_map(|i| {
+            let (x, y) = ((i % DOT) as f32, (i / DOT) as f32);
+            let d = ((x - centre).powi(2) + (y - centre).powi(2)).sqrt();
+            let alpha = (radius + 0.5 - d).clamp(0.0, 1.0);
+            [0xf5, 0x9e, 0x0b, (alpha * 255.0) as u8]
+        })
+        .collect()
 }
 
 /// Watch the registry for the life of the app. A machine where Claude Code has

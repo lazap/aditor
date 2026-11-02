@@ -73,9 +73,7 @@ fn walker(root: &Path) -> WalkBuilder {
 }
 
 fn relative(root: &Path, path: &Path) -> Option<String> {
-    path.strip_prefix(root)
-        .ok()
-        .map(|p| p.to_string_lossy().to_string())
+    path.strip_prefix(root).ok().map(crate::platform::path_string)
 }
 
 #[tauri::command]
@@ -279,7 +277,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("aditor-search-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
-        dir.canonicalize().unwrap()
+        crate::platform::canonicalize(&dir).unwrap()
     }
 
     fn never() -> bool {

@@ -11,6 +11,8 @@ use notify::{EventKind, RecursiveMode, Watcher, recommended_watcher};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
+use crate::platform::{canonicalize, path_string};
+
 /// Refuse anything larger. A stray log or minified bundle would otherwise lock
 /// the UI while CodeMirror tried to lay it out. Shared with `git`, so a diff
 /// and a plain read agree on what is too big.
@@ -39,7 +41,7 @@ fn git_dirs(root: &Path) -> Vec<PathBuf> {
     let mut dirs = vec![root.join(".git")];
     if let Ok(repo) = git2::Repository::discover(root) {
         for dir in [repo.path(), repo.commondir()] {
-            if let Ok(dir) = dir.canonicalize() {
+            if let Ok(dir) = canonicalize(dir) {
                 if !dirs.contains(&dir) {
                     dirs.push(dir);
                 }
@@ -136,13 +138,14 @@ pub fn looks_binary(bytes: &[u8]) -> bool {
 }
 
 /// `root` as an open workspace, or an error. The frontend hands back the
-/// canonical string `open_workspace` returned, so this is an exact lookup.
+/// canonical string `open_workspace` returned, so this is an exact lookup --
+/// by path, so the forward slashes a Windows path travels with still find it.
+/// What comes back is the root as it was opened, in the platform's own form.
 pub fn workspace_root(ws: &Workspace, root: &str) -> Result<PathBuf, String> {
     let root = PathBuf::from(root);
-    if ws.open.lock().unwrap().contains_key(&root) {
-        Ok(root)
-    } else {
-        Err(format!("{} is not an open workspace", root.display()))
+    match ws.open.lock().unwrap().get_key_value(&root) {
+        Some((open, _)) => Ok(open.clone()),
+        None => Err(format!("{} is not an open workspace", root.display())),
     }
 }
 
@@ -157,17 +160,18 @@ pub fn workspace_root(ws: &Workspace, root: &str) -> Result<PathBuf, String> {
 /// directory pointing out of the workspace.
 pub fn inside_workspace(root: &Path, path: &Path) -> bool {
     use std::path::Component;
+    // Prefix: a Windows drive, `C:`.
     if !path.starts_with(root)
         || !path
             .components()
-            .all(|c| matches!(c, Component::RootDir | Component::Normal(_)))
+            .all(|c| matches!(c, Component::Prefix(_) | Component::RootDir | Component::Normal(_)))
     {
         return false;
     }
     path.parent()
         .into_iter()
         .flat_map(Path::ancestors)
-        .find_map(|a| a.canonicalize().ok())
+        .find_map(|a| canonicalize(a).ok())
         .is_some_and(|a| a.starts_with(root))
 }
 
@@ -179,9 +183,7 @@ fn resolve_in_workspace(ws: &Workspace, root: &str, path: &str) -> Result<PathBu
 /// `resolve_in_workspace` for a root already checked, so the filesystem work
 /// can move off the UI thread without taking the `State` with it.
 fn resolve_in(root: &Path, path: &str) -> Result<PathBuf, String> {
-    let candidate = Path::new(path)
-        .canonicalize()
-        .map_err(|e| format!("{path}: {e}"))?;
+    let candidate = canonicalize(Path::new(path)).map_err(|e| format!("{path}: {e}"))?;
     if !candidate.starts_with(root) {
         return Err(format!("{path} is outside the workspace"));
     }
@@ -207,13 +209,11 @@ pub fn open_workspace(
     ws: State<'_, Workspace>,
     path: String,
 ) -> Result<String, String> {
-    let root = Path::new(&path)
-        .canonicalize()
-        .map_err(|e| format!("{path}: {e}"))?;
+    let root = canonicalize(Path::new(&path)).map_err(|e| format!("{path}: {e}"))?;
     if !root.is_dir() {
         return Err(format!("{path} is not a directory"));
     }
-    let root_str = root.to_string_lossy().to_string();
+    let root_str = path_string(&root);
     // Already open -- in another window, or this one before a reload. One
     // watcher serves them all.
     if let Some(open) = ws.open.lock().unwrap().get_mut(&root) {
@@ -242,7 +242,7 @@ pub fn open_workspace(
                 for p in &event.paths {
                     match git.iter().find_map(|d| p.strip_prefix(d).ok()) {
                         Some(rel) => git_moved |= is_git_state(rel),
-                        None if !is_noise(p) => paths.push(p.to_string_lossy().to_string()),
+                        None if !is_noise(p) => paths.push(path_string(p)),
                         None => {}
                     }
                 }
@@ -342,7 +342,7 @@ fn list_dir_in(root: &Path, path: Option<&str>) -> Result<Vec<DirEntry>, String>
         .filter(|e| e.file_name() != ".git")
         .map(|e| DirEntry {
             name: e.file_name().to_string_lossy().to_string(),
-            path: e.path().to_string_lossy().to_string(),
+            path: path_string(e.path()),
             is_dir: e.file_type().is_some_and(|t| t.is_dir()),
             ignored: !kept.contains(e.path()),
         })
@@ -443,7 +443,7 @@ fn write_unless_changed(file: &Path, text: &str, expected: Option<&str>) -> Resu
 #[tauri::command]
 pub fn create_file(ws: State<'_, Workspace>, root: String, rel: String) -> Result<String, String> {
     let root = workspace_root(&ws, &root)?;
-    create_in(&root, &rel).map(|f| f.to_string_lossy().to_string())
+    create_in(&root, &rel).map(|f| path_string(&f))
 }
 
 fn create_in(root: &Path, rel: &str) -> Result<PathBuf, String> {
@@ -461,7 +461,7 @@ fn create_in(root: &Path, rel: &str) -> Result<PathBuf, String> {
     }
     let parent = root.join(rel_path.parent().unwrap_or(Path::new("")));
     std::fs::create_dir_all(&parent).map_err(|e| format!("{}: {e}", parent.display()))?;
-    let parent = parent.canonicalize().map_err(|e| e.to_string())?;
+    let parent = canonicalize(&parent).map_err(|e| e.to_string())?;
     if !parent.starts_with(root) {
         return Err(format!("{rel} is outside the workspace"));
     }
@@ -492,7 +492,7 @@ pub fn move_path(
     into: String,
 ) -> Result<String, String> {
     let root = workspace_root(&ws, &root)?;
-    move_in(&root, &from, &into).map(|p| p.to_string_lossy().to_string())
+    move_in(&root, &from, &into).map(|p| path_string(&p))
 }
 
 fn move_in(root: &Path, from: &str, into: &str) -> Result<PathBuf, String> {
@@ -590,8 +590,8 @@ pub async fn resolve_file_links(
 }
 
 fn resolve_link(root: &Path, candidate: &str) -> Option<String> {
-    let file = root.join(candidate).canonicalize().ok()?;
-    (file.starts_with(root) && file.is_file()).then(|| file.to_string_lossy().to_string())
+    let file = canonicalize(&root.join(candidate)).ok()?;
+    (file.starts_with(root) && file.is_file()).then(|| path_string(&file))
 }
 
 #[cfg(test)]
@@ -603,7 +603,7 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         // Canonical, as `workspace_root` hands it over: /var is /private/var.
-        dir.canonicalize().unwrap()
+        crate::platform::canonicalize(&dir).unwrap()
     }
 
     #[test]

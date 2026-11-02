@@ -212,8 +212,10 @@ fn diff_touches(repo: &Repository, c: &Commit, rel: &Path) -> bool {
     let Ok(tree) = c.tree() else { return false };
     let parent = c.parent(0).ok().and_then(|p| p.tree().ok());
     let mut opts = DiffOptions::new();
-    // A directory pathspec matches everything under it.
-    opts.pathspec(rel);
+    // A directory pathspec matches everything under it. In git's own
+    // spelling: git2 rewrites a Windows `\` for paths, but not in a pathspec,
+    // where libgit2 would read it as an escape.
+    opts.pathspec(crate::platform::path_string(rel));
     repo.diff_tree_to_tree(parent.as_ref(), Some(&tree), Some(&mut opts))
         .is_ok_and(|d| d.deltas().len() > 0)
 }
@@ -334,7 +336,7 @@ pub fn details(repo: &Repository, workdir: &Path, id: &str) -> Result<CommitDeta
     diff.find_similar(Some(DiffFindOptions::new().renames(true)))
         .map_err(|e| e.to_string())?;
 
-    let abs = |p: &Path| workdir.join(p).to_string_lossy().to_string();
+    let abs = |p: &Path| crate::platform::path_string(&workdir.join(p));
     let files = diff
         .deltas()
         .filter_map(|d| {
@@ -559,6 +561,8 @@ mod tests {
             s.git(&["config", "user.name", "Test"]);
             s.git(&["config", "user.email", "t@example.com"]);
             s.git(&["config", "commit.gpgsign", "false"]);
+            // Windows runners turn it on; the tests compare bytes.
+            s.git(&["config", "core.autocrlf", "false"]);
             s
         }
         fn git(&self, args: &[&str]) -> String {

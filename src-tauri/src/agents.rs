@@ -25,7 +25,7 @@ use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::fs::{Workspace, workspace_root};
-use crate::platform::{home_dir, pid_alive};
+use crate::platform::{home_dir, path_string, pid_alive, same_path};
 use crate::pty::PtyRegistry;
 
 // ---------------------------------------------------------------- shapes ---
@@ -654,7 +654,7 @@ fn project_dir(root: &Path, state: &AgentState) -> Option<PathBuf> {
     let want = root.to_string_lossy().to_string();
 
     let guess = projects.join(encode_project_dir(root));
-    let found = if guess.is_dir() && dir_cwd(&guess).as_deref().unwrap_or(&want) == want {
+    let found = if guess.is_dir() && dir_cwd(&guess).is_none_or(|cwd| same_path(&cwd, &want)) {
         Some(guess)
     } else {
         // The full scan opens a transcript in every project directory there
@@ -675,7 +675,7 @@ fn project_dir(root: &Path, state: &AgentState) -> Option<PathBuf> {
             .flatten()
             .map(|e| e.path())
             .filter(|p| p.is_dir())
-            .find(|p| dir_cwd(p).as_deref() == Some(want.as_str()));
+            .find(|p| dir_cwd(p).is_some_and(|cwd| same_path(&cwd, &want)));
         if scanned.is_none() {
             state.misses.lock().unwrap().insert(root.to_path_buf(), Instant::now());
         }
@@ -727,7 +727,7 @@ fn live_sessions(root: &Path, ptys: &PtyRegistry) -> HashMap<String, Live> {
     let want = root.to_string_lossy();
     live_entries()
         .into_iter()
-        .filter(|e| e.cwd == want)
+        .filter(|e| same_path(&e.cwd, &want))
         .map(|e| {
             let live = Live {
                 pid: e.pid,
@@ -1186,7 +1186,7 @@ pub fn agent_watch(
     let awaiting = Arc::new(AtomicBool::new(transcripts.is_none()));
     let emitter = app.clone();
     let tag = Changed {
-        root: root.to_string_lossy().to_string(),
+        root: path_string(&root),
     };
     let (watch_root, watch_projects) = (root.clone(), projects.clone());
     let mut watcher = recommended_watcher(move |res: notify::Result<notify::Event>| {

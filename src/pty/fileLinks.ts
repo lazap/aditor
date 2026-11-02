@@ -21,15 +21,16 @@ export interface Candidate {
 }
 
 /**
- * A path-ish token -- `src/a.ts`, `./a.ts`, `../x/y.rs`, `/abs/p.ts` -- then an
- * optional `:line`, `:line:col` or `(line,col)`. The lookbehind stops matches
- * starting mid-token, as in the `b.ts` of `a/b.ts`.
+ * A path-ish token -- `src/a.ts`, `./a.ts`, `../x/y.rs`, `/abs/p.ts`, and on
+ * Windows `src\a.ts` or `C:\abs\p.ts` -- then an optional `:line`,
+ * `:line:col` or `(line,col)`. The lookbehind stops matches starting
+ * mid-token, as in the `b.ts` of `a/b.ts`.
  */
 const TOKEN =
-  /(?<![\w./@+-])((?:\.{1,2}\/|\/)?(?:[\w@+-][\w.@+-]*\/)*[\w@+-][\w.@+-]*)(?::(\d+)(?::\d+)?|\((\d+)(?:,\s*\d+)?\))?/g;
+  /(?<![\w./\\@+-])((?:[A-Za-z]:[\\/]|\.{1,2}[\\/]|[\\/])?(?:[\w@+-][\w.@+-]*[\\/])*[\w@+-][\w.@+-]*)(?::(\d+)(?::\d+)?|\((\d+)(?:,\s*\d+)?\))?/g;
 
 /** Something has to make it look like a path: a slash, or a file extension. */
-const PATHY = /\/|\.[A-Za-z][\w-]*$/;
+const PATHY = /[\\/]|\.[A-Za-z][\w-]*$/;
 
 export function findCandidates(text: string): Candidate[] {
   const out: Candidate[] = [];

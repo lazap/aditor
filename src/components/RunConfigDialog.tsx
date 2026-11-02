@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Modal } from "./Modal";
 import type { Detected } from "../run/api";
 import { missing, toScript, type ScriptContext } from "../run/command";
+import { isAbsolutePath, pathParts } from "../platform";
 import {
   FIELD_DEFAULTS,
   TYPES,
@@ -50,7 +51,7 @@ function fromDraft({ envRows, ...c }: Draft): RunConfig {
 /** Why a draft cannot be saved, or null. */
 function problem(d: Draft): string | null {
   if (!d.name.trim()) return "Give the configuration a name.";
-  if (d.cwd.split("/").includes("..") || d.cwd.trim().startsWith("/"))
+  if (pathParts(d.cwd).includes("..") || isAbsolutePath(d.cwd.trim()))
     return "The working directory must be a folder inside the project.";
   if (d.envRows.some(([k]) => k.trim() !== "" && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(k.trim())))
     return "Environment variable names are letters, digits and _, not starting with a digit.";

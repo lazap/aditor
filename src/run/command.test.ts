@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { shQuote, toScript } from "./command";
+import { cmdQuote, shQuote, toScript } from "./command";
 import { launchChain, makeConfig, normalize, type RunConfig } from "./schema";
 
 const script = (type: RunConfig["type"], fields: object, ctx?: Parameters<typeof toScript>[1]) =>
@@ -82,5 +82,29 @@ describe("launchChain", () => {
     const b = { ...makeConfig("shell", "b"), id: "b", beforeLaunch: null };
     expect(launchChain([a, b], "a")?.map((c) => c.id)).toEqual(["b", "a"]);
     expect(launchChain([a, { ...b, beforeLaunch: "a" }], "a")).toBeNull();
+  });
+});
+
+describe("toScript for cmd.exe", () => {
+  const cmd = (type: RunConfig["type"], fields: object, ctx?: Parameters<typeof toScript>[1]) =>
+    toScript(makeConfig(type, "x", fields), ctx, "cmd");
+
+  it("quotes with double quotes, doubling any inside", () => {
+    expect(cmdQuote("plain-word")).toBe("plain-word");
+    expect(cmdQuote("my script")).toBe('"my script"');
+    expect(cmdQuote('say "hi"')).toBe('"say ""hi"""');
+    expect(cmd("npm", { script: "dev server" })).toBe('npm run "dev server"');
+  });
+
+  it("runs the project's own wrappers and venv with backslashes", () => {
+    expect(cmd("maven", { wrapper: true, goals: "package" })).toBe(".\\mvnw package");
+    expect(cmd("gradle", { wrapper: true, tasks: "build" })).toBe(".\\gradlew build");
+    expect(
+      cmd("python", { target: "app.py", cwd: "api" }, { packageManager: null, python: ".venv/Scripts/python.exe" }),
+    ).toBe("..\\.venv\\Scripts\\python.exe app.py");
+  });
+
+  it("falls back to python, which is what Windows installs", () => {
+    expect(cmd("python", { target: "app.py" })).toBe("python app.py");
   });
 });

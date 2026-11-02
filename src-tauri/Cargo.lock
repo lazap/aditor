@@ -8,6 +8,7 @@ version = "0.5.3"
 dependencies = [
  "base64 0.23.1",
  "dirs",
+ "dunce",
  "getrandom 0.3.4",
  "git2",
  "ignore",

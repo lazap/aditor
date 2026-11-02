@@ -11,6 +11,10 @@
 //! /opt/homebrew/bin would not resolve if we exec'd it directly. Every PTY gets
 //! the PATH the user's own terminal has (`search_dirs`), and agents are exec'd
 //! by the absolute path the probe found.
+//!
+//! Windows has no login shell to source and nothing to `exec`, so there the
+//! agent is started directly, its arguments handed over as a list, and a run
+//! configuration's line goes to `cmd.exe`.
 
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read, Write};
@@ -30,7 +34,7 @@ use tauri::{State, WebviewWindow};
 
 use crate::fs::{workspace_root, Workspace};
 use crate::mcp::{McpServer, PROMPT_TIMEOUT};
-use crate::platform::{find_executable, home_dir, kill_tree, user_shell, SYSTEM_BIN_DIRS};
+use crate::platform::{find_executable, hide_console, home_dir, install_dirs, kill_tree, launcher, user_shell};
 use crate::run_log::RunLog;
 
 /// Flush pending PTY output at least this often. One event per read syscall
@@ -208,11 +212,17 @@ fn search_dirs() -> &'static [PathBuf] {
         if let Some(home) = home_dir() {
             dirs.extend(HOME_BIN_DIRS.iter().map(|d| home.join(d)));
         }
-        dirs.extend(SYSTEM_BIN_DIRS.iter().map(PathBuf::from));
+        dirs.extend(install_dirs());
         let mut seen = std::collections::HashSet::new();
         dirs.retain(|d| !d.as_os_str().is_empty() && seen.insert(d.clone()));
         dirs
     })
+}
+
+/// `bin` where the agents are looked for: PATH, then the install folders.
+/// Blocks on the user's shell the first time, like `search_dirs`.
+pub(crate) fn find_program(bin: &str) -> Option<PathBuf> {
+    find_executable(bin, search_dirs())
 }
 
 fn resolved_search_dirs() -> Option<&'static [PathBuf]> {
@@ -253,7 +263,7 @@ fn user_path() -> Option<String> {
 /// background (an ssh-agent, a gpg-agent) can hold stdout open long after the
 /// shell itself has exited.
 fn line_within(mut cmd: Command, after: Option<&str>, timeout: Duration) -> Option<String> {
-    let mut child = cmd
+    let mut child = hide_console(&mut cmd)
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -336,7 +346,26 @@ const FOREIGN_TERMINAL_VARS: [&str; 5] = [
 /// Build `$SHELL -l -c '<command>'`, or an interactive login shell when
 /// `command` is None -- a Terminal session. `-l` sources the login profile, so
 /// the agent sees the environment the user exports there.
-fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder {
+///
+/// On Windows: the agent itself, or PowerShell for a Terminal session.
+fn shell_command(command: Option<&str>, args: &[String], cwd: &str) -> Result<CommandBuilder, String> {
+    let mut cmd = if cfg!(windows) {
+        windows_command(command, args)?
+    } else {
+        unix_command(command, args)
+    };
+    cmd.cwd(cwd);
+    terminal_env(&mut cmd);
+    // `ask_user` and `request_review` wait on the user. Claude Code's default
+    // tool timeout would abort them first, so allow as long as the server
+    // waits -- unless the user already chose a timeout of their own.
+    if std::env::var_os("MCP_TOOL_TIMEOUT").is_none() {
+        cmd.env("MCP_TOOL_TIMEOUT", PROMPT_TIMEOUT.as_millis().to_string());
+    }
+    Ok(cmd)
+}
+
+fn unix_command(command: Option<&str>, args: &[String]) -> CommandBuilder {
     let mut cmd = CommandBuilder::new(user_shell());
     match command {
         Some(c) => {
@@ -358,8 +387,8 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
             // `exec` keeps the process tree flat: without it zsh stays as a
             // parent, and the ChildKiller would signal the shell instead of the
             // agent. Commands come from the frontend's registry of bare binary
-            // names; nothing here enforces that. `args` is already
-            // shell-quoted by `agent_args`.
+            // names; nothing here enforces that.
+            let args: String = args.iter().map(|a| format!(" {}", sh_quote(a))).collect();
             cmd.args(["-l", "-c", &format!("stty -echo 2>/dev/null; exec {program}{args}")]);
         }
         None => {
@@ -368,15 +397,30 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
             cmd.args(["-l", "-i"]);
         }
     }
-    cmd.cwd(cwd);
-    terminal_env(&mut cmd);
-    // `ask_user` and `request_review` wait on the user. Claude Code's default
-    // tool timeout would abort them first, so allow as long as the server
-    // waits -- unless the user already chose a timeout of their own.
-    if std::env::var_os("MCP_TOOL_TIMEOUT").is_none() {
-        cmd.env("MCP_TOOL_TIMEOUT", PROMPT_TIMEOUT.as_millis().to_string());
-    }
     cmd
+}
+
+/// The agent as its own process, its arguments as a list: the PTY quotes each
+/// one for the command line, and no shell parses it again. Windows hands GUI
+/// apps the user's whole environment, so there is no profile to source first.
+fn windows_command(command: Option<&str>, args: &[String]) -> Result<CommandBuilder, String> {
+    let dirs = search_dirs();
+    let Some(c) = command else {
+        // PowerShell, as Windows Terminal opens: 7 when it is installed, else
+        // the Windows PowerShell every Windows has.
+        let shell = find_executable("pwsh", dirs)
+            .map(|p| p.into_os_string())
+            .unwrap_or_else(|| "powershell.exe".into());
+        let mut cmd = CommandBuilder::new(shell);
+        cmd.arg("-NoLogo");
+        return Ok(cmd);
+    };
+    let program = find_executable(c, dirs).ok_or_else(|| format!("{c} is not installed, or not on PATH."))?;
+    let (program, before) = launcher(&program, dirs)?;
+    let mut cmd = CommandBuilder::new(program);
+    cmd.args(before);
+    cmd.args(args);
+    Ok(cmd)
 }
 
 /// Build `$SHELL -l -c '<script>'` for a run configuration. Unlike an agent's
@@ -384,15 +428,31 @@ fn shell_command(command: Option<&str>, args: &str, cwd: &str) -> CommandBuilder
 /// there is no `exec`, and the session is killed by process group instead
 /// (see `PtySession::group`). ECHO stays on: a program reading stdin should
 /// show what you type.
-fn run_command(script: &str, cwd: &Path, env: &HashMap<String, String>) -> CommandBuilder {
-    let mut cmd = CommandBuilder::new(user_shell());
-    cmd.args(["-l", "-c", script]);
+///
+/// On Windows the line goes to `cmd.exe` by way of a batch file holding it.
+/// Passed on the command line, it would be quoted the C runtime's way -- every
+/// `"` turned into `\"` -- and `cmd.exe` would run it with the backslashes in.
+/// `id` names the file, so a rerun overwrites its own.
+fn run_command(id: &str, script: &str, cwd: &Path, env: &HashMap<String, String>) -> Result<CommandBuilder, String> {
+    let mut cmd = if cfg!(windows) {
+        let batch = std::env::temp_dir().join(format!("aditor-run-{}-{id}.cmd", std::process::id()));
+        std::fs::write(&batch, format!("@echo off\r\n{script}\r\n"))
+            .map_err(|e| format!("could not write {}: {e}", batch.display()))?;
+        let mut cmd = CommandBuilder::new(user_shell());
+        // /d: no AutoRun commands from the registry, as a script expects.
+        cmd.args(["/d".as_ref(), "/c".as_ref(), batch.as_os_str()]);
+        cmd
+    } else {
+        let mut cmd = CommandBuilder::new(user_shell());
+        cmd.args(["-l", "-c", script]);
+        cmd
+    };
     cmd.cwd(cwd);
     terminal_env(&mut cmd);
     for (key, value) in env {
         cmd.env(key, value);
     }
-    cmd
+    Ok(cmd)
 }
 
 /// What every PTY we spawn gets: our terminal identity, minus whatever the
@@ -480,21 +540,26 @@ fn is_session_id(s: &str) -> bool {
         })
 }
 
-/// Extra arguments for the agent in PTY `id`, leading space included. Only
-/// Claude Code is wired to Aditor's MCP server, and only it can resume.
-fn agent_args(command: Option<&str>, resume: Option<&str>, mcp_config: &str) -> String {
+/// Extra arguments for the agent in PTY `id`, unquoted. Only Claude Code is
+/// wired to Aditor's MCP server, and only it can resume.
+fn agent_args(command: Option<&str>, resume: Option<&str>, mcp_config: &str) -> Vec<String> {
     match command {
         Some("claude") => {
-            let resume = resume.map(|r| format!(" --resume {}", sh_quote(r))).unwrap_or_default();
-            format!(
-                // `--mcp-config` is variadic, so it goes last: anything after it
-                // that is not a flag would be read as one more config.
-                "{resume} --append-system-prompt {} --mcp-config {}",
-                sh_quote(TASKS_NUDGE),
-                sh_quote(mcp_config),
-            )
+            let mut args = Vec::new();
+            if let Some(r) = resume {
+                args.extend(["--resume".to_string(), r.to_string()]);
+            }
+            // `--mcp-config` is variadic, so it goes last: anything after it
+            // that is not a flag would be read as one more config.
+            args.extend([
+                "--append-system-prompt".to_string(),
+                TASKS_NUDGE.to_string(),
+                "--mcp-config".to_string(),
+                mcp_config.to_string(),
+            ]);
+            args
         }
-        _ => String::new(),
+        _ => Vec::new(),
     }
 }
 
@@ -523,7 +588,7 @@ pub fn pty_spawn(
     let args = agent_args(command.as_deref(), resume.as_deref(), &mcp.config_for(&id));
     let child = pair
         .slave
-        .spawn_command(shell_command(command.as_deref(), &args, &cwd))
+        .spawn_command(shell_command(command.as_deref(), &args, &cwd)?)
         .map_err(|e| format!("spawn failed: {e}"))?;
     start_session(
         &window,
@@ -559,9 +624,7 @@ pub fn pty_run(
 ) -> Result<String, String> {
     let root = workspace_root(&ws, &root)?;
     // Canonicalized, so neither `..` nor a symlink can lead out of the project.
-    let dir = root
-        .join(&cwd)
-        .canonicalize()
+    let dir = crate::platform::canonicalize(&root.join(&cwd))
         .map_err(|e| format!("working directory {cwd}: {e}"))?;
     if !dir.starts_with(&root) || !dir.is_dir() {
         return Err(format!("working directory {cwd} is not a folder in the project"));
@@ -570,7 +633,7 @@ pub fn pty_run(
     let id = registry.new_id();
     let child = pair
         .slave
-        .spawn_command(run_command(&script, &dir, &env))
+        .spawn_command(run_command(&id, &script, &dir, &env)?)
         .map_err(|e| format!("spawn failed: {e}"))?;
     let log = Arc::new(Mutex::new(RunLog::new(name, config_id, root)));
     start_session(&window, &registry, id, pair, child, dir, true, Some(log), on_event)
@@ -898,7 +961,8 @@ mod tests {
         // not exec'd away, exactly like a compound run line.
         let script = "sleep 300 & sleep 300 & wait";
         let pair = open_pty(80, 24).unwrap();
-        let mut child = pair.slave.spawn_command(run_command(script, &dir, &env)).unwrap();
+        let cmd = run_command("test", script, &dir, &env).unwrap();
+        let mut child = pair.slave.spawn_command(cmd).unwrap();
         let pid = child.process_id().unwrap();
         std::thread::sleep(Duration::from_millis(500));
         let alive = |pgid: u32| unsafe { libc::killpg(pgid as libc::pid_t, 0) == 0 };
@@ -927,17 +991,16 @@ mod tests {
     fn resume_goes_before_the_variadic_mcp_config() {
         let id = "cbff751a-17a4-496c-970a-b21039d0cd30";
         let args = agent_args(Some("claude"), Some(id), "{}");
-        let resume = args.find("--resume").unwrap();
-        let mcp = args.find("--mcp-config").unwrap();
-        assert!(resume < mcp);
-        assert!(args.contains(&format!("--resume '{id}'")));
-        assert!(args.trim_end().ends_with("'{}'"));
+        let at = |flag: &str| args.iter().position(|a| a == flag).unwrap();
+        assert!(at("--resume") < at("--mcp-config"));
+        assert_eq!(args[at("--resume") + 1], id);
+        assert_eq!(args.last().map(String::as_str), Some("{}"));
     }
 
     #[test]
     fn other_agents_get_no_arguments() {
-        assert_eq!(agent_args(Some("opencode"), None, "{}"), "");
-        assert_eq!(agent_args(None, None, "{}"), "");
+        assert!(agent_args(Some("opencode"), None, "{}").is_empty());
+        assert!(agent_args(None, None, "{}").is_empty());
     }
 
     #[cfg(unix)]
