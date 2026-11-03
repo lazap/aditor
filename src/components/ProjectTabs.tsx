@@ -1,5 +1,6 @@
 import { basename } from "../window";
-import { machineName } from "../platform";
+import { isMac, machineName } from "../platform";
+import { closeWindow, leaveFullscreen, minimizeWindow } from "../titlebar";
 import { chordHint } from "../shortcuts/store";
 import type { UpdateState } from "../update/api";
 
@@ -49,6 +50,7 @@ export function ProjectTabs({
     // The strip is the window's title bar: its empty stretch drags the window
     // and a double-click there zooms it. The tabs inside are not drag regions.
     <div className="project-tabs" role="tablist" aria-label="Projects" data-tauri-drag-region>
+      {isMac && <WindowControls />}
       {tabs.map((root) => (
         <div
           key={root}
@@ -108,6 +110,29 @@ export function ProjectTabs({
         aria-label={`Keep ${machineName} awake`}
       >
         <CupIcon steaming={awake} />
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Close, minimize and leave full screen, where the traffic lights would be.
+ * macOS hides its own in full screen; CSS shows these only then.
+ */
+function WindowControls() {
+  return (
+    <div className="window-controls">
+      <button className="window-control" data-kind="close" aria-label="Close window"
+        title="Close window" onClick={closeWindow}>
+        <svg viewBox="0 0 8 8" aria-hidden="true"><path d="M2 2l4 4M6 2L2 6" /></svg>
+      </button>
+      <button className="window-control" data-kind="minimize" aria-label="Minimize window"
+        title="Minimize window" onClick={() => void minimizeWindow()}>
+        <svg viewBox="0 0 8 8" aria-hidden="true"><path d="M1.5 4h5" /></svg>
+      </button>
+      <button className="window-control" data-kind="zoom" aria-label="Exit full screen"
+        title="Exit full screen" onClick={leaveFullscreen}>
+        <svg viewBox="0 0 8 8" aria-hidden="true"><path d="M4 1v3H1M4 7V4h3" /></svg>
       </button>
     </div>
   );

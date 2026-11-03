@@ -81,8 +81,61 @@ body,
 }
 
 /* The first tab's divider would otherwise float beside the traffic lights. */
-:root[data-titlebar="overlay"] .project-tab:first-child {
+:root[data-titlebar] .window-controls + .project-tab {
   border-left: 1px solid var(--border);
+}
+
+/* Drawn traffic lights, for full screen, where macOS hides its own. Their
+   colours are the system's, not the theme's, as the real ones are. */
+.window-controls {
+  display: none;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  padding: 0 12px;
+}
+
+:root[data-titlebar="fullscreen"] .window-controls {
+  display: flex;
+}
+
+.window-control {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 12px;
+  height: 12px;
+  padding: 0;
+  border: none;
+  border-radius: 50%;
+  cursor: default;
+}
+
+.window-control[data-kind="close"] {
+  background: #ff5f57;
+}
+
+.window-control[data-kind="minimize"] {
+  background: #febc2e;
+}
+
+.window-control[data-kind="zoom"] {
+  background: #28c840;
+}
+
+.window-control svg {
+  width: 8px;
+  height: 8px;
+  fill: none;
+  stroke: rgb(0 0 0 / 0.55);
+  stroke-width: 1.2;
+  stroke-linecap: round;
+  /* The glyphs show only while the pointer is over the group, as on macOS. */
+  visibility: hidden;
+}
+
+.window-controls:hover .window-control svg {
+  visibility: visible;
 }
 
 .project-tab,
