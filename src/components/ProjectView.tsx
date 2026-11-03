@@ -1837,7 +1837,13 @@ export function ProjectView({
           onCloseFile={closeFileTab}
           choices={choices}
           newRequest={newRequest}
-          onSelect={setActiveKey}
+          // Not setActiveKey alone: clicking the session that is already the
+          // active one changes no state, so the effect that hides a shown
+          // file tab never runs and the file stays on screen.
+          onSelect={(key) => {
+            setFileShown(null);
+            setActiveKey(key);
+          }}
           onClose={(key) => void closeSession(key)}
           onNew={startSession}
           onNewWorktree={worktreeAgent ? () => void newWorktreeSession() : undefined}
