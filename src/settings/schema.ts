@@ -84,6 +84,20 @@ export interface Layout {
 
 export type SettingsTab = "general" | "themes" | "templates" | "shortcuts";
 
+/** The dictation models `voice.rs` offers; keep in step with its `MODELS`. */
+export type VoiceModel = "large-v3-turbo-q5_0" | "small.en-q5_1";
+
+/**
+ * Voice dictation. Which model is used among those downloaded -- downloading
+ * is Settings' business and lives on disk, not here -- and what language to
+ * expect, for the models that take more than English.
+ */
+export interface Voice {
+  model: VoiceModel;
+  /** An ISO 639-1 code, or "auto" to let Whisper tell. */
+  language: string;
+}
+
 /** When to tell the user, from outside the tab, that a session wants them. */
 export interface Notifications {
   /** The agent finished its turn. */
@@ -127,6 +141,7 @@ export interface Settings {
   /** Underline file paths in the agent terminal and open them on click. */
   terminalFileLinks: boolean;
   notifications: Notifications;
+  voice: Voice;
   /** Which tab the Settings dialog opens on. */
   settingsTab: SettingsTab;
 }
@@ -169,5 +184,6 @@ export const DEFAULTS: Settings = {
   systemDark: "dark",
   terminalFileLinks: true,
   notifications: { onDone: true, onWaiting: true },
+  voice: { model: "large-v3-turbo-q5_0", language: "auto" },
   settingsTab: "general",
 };

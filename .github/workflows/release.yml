@@ -55,12 +55,13 @@ jobs:
       - uses: actions/checkout@v5
 
       # WebKitGTK for the webview, libxdo for the menu, OpenSSL for libgit2's
-      # https transport, patchelf for the AppImage's library paths.
+      # https transport, patchelf for the AppImage's library paths, ALSA for
+      # the dictation microphone, cmake and libclang for whisper.cpp.
       - name: Install Tauri's Linux dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev patchelf
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libxdo-dev libssl-dev librsvg2-dev patchelf libasound2-dev libclang-dev cmake
 
       - uses: actions/setup-node@v5
         with:

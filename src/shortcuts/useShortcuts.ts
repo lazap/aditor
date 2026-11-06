@@ -3,7 +3,11 @@ import { keymap } from "./store";
 import { eventChord } from "./keys";
 import type { CommandId } from "./registry";
 
-export type Handlers = Partial<Record<CommandId, () => void>>;
+/**
+ * The key event comes along for the handlers that care how long the chord is
+ * held -- Dictate's push-to-talk. Menu items and buttons call without one.
+ */
+export type Handlers = Partial<Record<CommandId, (e?: KeyboardEvent) => void>>;
 
 /**
  * The app's one keyboard listener.
@@ -33,7 +37,7 @@ export function useShortcuts(handlers: Handlers): void {
       if (!run) return;
       e.preventDefault();
       e.stopPropagation();
-      run();
+      run(e);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

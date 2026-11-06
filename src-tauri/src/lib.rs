@@ -14,6 +14,7 @@ mod search;
 mod settings;
 mod status;
 mod themes;
+mod voice;
 mod worktree;
 
 use std::sync::Arc;
@@ -40,6 +41,7 @@ pub fn run() {
         .manage(search::SearchState::default())
         .manage(status::StatusState::default())
         .manage(awake::AwakeState::default())
+        .manage(voice::VoiceState::default())
         .setup(|app| {
             // Elsewhere a menu bar belongs to a window, and the page builds its
             // own: see `src/menu.ts`.
@@ -142,6 +144,13 @@ pub fn run() {
             awake::awake_get,
             awake::awake_set,
             askpass::askpass_answer,
+            voice::voice_models,
+            voice::voice_download,
+            voice::voice_download_cancel,
+            voice::voice_remove,
+            voice::voice_start,
+            voice::voice_stop,
+            voice::voice_cancel,
         ])
         // Agents run in their own process groups, so closing the window does not
         // hang them up -- without this they survive the app that spawned them.

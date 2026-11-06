@@ -72,7 +72,7 @@ export function Settings({ onClose }: Props) {
         </div>
 
         <div className="settings-panel" role="tabpanel">
-          {tab === "general" && <GeneralTab />}
+          {tab === "general" && <GeneralTab onNote={setNote} />}
           {tab === "themes" && <ThemesTab onNote={setNote} />}
           {tab === "templates" && <TemplatesTab onNote={setNote} />}
           {tab === "shortcuts" && (

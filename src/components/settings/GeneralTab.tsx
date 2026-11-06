@@ -1,4 +1,9 @@
 import { patch, patchLayout, useSettings } from "../../settings/store";
+import { VoiceSection } from "./VoiceSection";
+
+interface Props {
+  onNote(text: string): void;
+}
 
 /**
  * The app-level preferences that already existed but had nowhere to live.
@@ -7,7 +12,7 @@ import { patch, patchLayout, useSettings } from "../../settings/store";
  * layout from the viewer's own buttons, the agent panel from the topbar toggle
  * -- and each reads the same field, so they cannot drift apart.
  */
-export function GeneralTab() {
+export function GeneralTab({ onNote }: Props) {
   const { layout, keyboardMode, terminalFileLinks, notifications } = useSettings();
   const notify = (next: Partial<typeof notifications>) =>
     patch({ notifications: { ...notifications, ...next } });
@@ -205,6 +210,8 @@ export function GeneralTab() {
           {layout.insightOpen ? "On" : "Off"}
         </button>
       </div>
+
+      <VoiceSection onNote={onNote} />
 
       <p className="settings-hint">
         Settings live in <code>~/.aditor/settings.json</code>, next to the saved

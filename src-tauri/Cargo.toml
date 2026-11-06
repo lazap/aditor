@@ -55,6 +55,10 @@ tauri-plugin-process = "2"
 # The terminal's Ctrl+Shift+C and Ctrl+Shift+V off macOS, where the webview's
 # own clipboard API is not dependable for reading.
 tauri-plugin-clipboard-manager = "2"
+# Voice dictation in `voice.rs`: the microphone, and the downloaded model's
+# checksum. whisper.cpp itself is per platform below, for Metal on macOS.
+cpal = "0.18"
+sha2 = "0.11"
 
 # `platform.rs`'s halves. Unix: kill(pid, 0) for the agent session registry's
 # liveness probe, and killpg to stop a run configuration with everything it
@@ -62,6 +66,14 @@ tauri-plugin-clipboard-manager = "2"
 # execution state that keeps the computer awake.
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+
+# whisper.cpp, built from source by its -sys crate. Metal only where there is
+# one; elsewhere it runs on the CPU, which a short dictation clip can afford.
+[target.'cfg(target_os = "macos")'.dependencies]
+whisper-rs = { version = "0.16", features = ["metal"] }
+
+[target.'cfg(not(target_os = "macos"))'.dependencies]
+whisper-rs = "0.16"
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_Power", "Win32_System_Threading"] }

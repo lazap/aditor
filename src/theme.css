@@ -2897,6 +2897,120 @@ button.cwd:hover {
   }
 }
 
+/* ---- voice dictation ---- */
+
+/* Where the toasts appear, a step above them: an error toast may follow a
+   dictation, never accompany one. */
+.dictation {
+  position: fixed;
+  z-index: 61;
+  bottom: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 8px 7px 14px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-raised);
+  color: var(--fg);
+  box-shadow: 0 8px 24px var(--shadow);
+  font-size: 12px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.dictation[data-phase="transcribing"] {
+  padding-right: 14px;
+}
+
+.dictation-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  transition: transform 80ms linear;
+}
+
+.dictation[data-phase="transcribing"] .dictation-dot {
+  background: var(--accent);
+  animation: dictation-pulse 900ms ease-in-out infinite alternate;
+}
+
+@keyframes dictation-pulse {
+  from {
+    opacity: 0.35;
+  }
+}
+
+.dictation-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--fg-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.dictation-btn:hover {
+  color: var(--fg);
+}
+
+.dictation-btn kbd {
+  font-family: inherit;
+  font-size: 11px;
+  opacity: 0.7;
+}
+
+.voice-progress {
+  flex: 0 0 96px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--border);
+  overflow: hidden;
+}
+
+.voice-progress-bar {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+}
+
+.voice-progress-text {
+  flex: 0 0 auto;
+  min-width: 32px;
+  color: var(--fg-dim);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.setting-toggle:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.setting-select {
+  flex: 0 0 auto;
+  padding: 4px 8px;
+  background: var(--bg);
+  color: var(--fg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font: inherit;
+  outline: none;
+}
+
+.setting-select:focus {
+  border-color: var(--accent);
+}
+
 /* ---- keyboard shortcuts ---- */
 
 .shortcuts-group {

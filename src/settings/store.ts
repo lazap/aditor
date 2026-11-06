@@ -218,6 +218,7 @@ export function normalize(raw: unknown): { value: Settings; changed: boolean } {
 
   const layout = isObject(src.layout) ? src.layout : {};
   const notifications = isObject(src.notifications) ? src.notifications : {};
+  const voice = isObject(src.voice) ? src.voice : {};
   const value: Settings = {
     version: DEFAULTS.version,
     shortcuts: isObject(src.shortcuts) ? (src.shortcuts as Settings["shortcuts"]) : DEFAULTS.shortcuts,
@@ -299,6 +300,16 @@ export function normalize(raw: unknown): { value: Settings; changed: boolean } {
         typeof notifications.onWaiting === "boolean"
           ? notifications.onWaiting
           : DEFAULTS.notifications.onWaiting,
+    },
+    voice: {
+      model:
+        voice.model === "large-v3-turbo-q5_0" || voice.model === "small.en-q5_1"
+          ? voice.model
+          : DEFAULTS.voice.model,
+      language:
+        typeof voice.language === "string" && /^(auto|[a-z]{2,3})$/.test(voice.language)
+          ? voice.language
+          : DEFAULTS.voice.language,
     },
     settingsTab:
       src.settingsTab === "general" ||

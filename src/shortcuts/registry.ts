@@ -18,6 +18,7 @@ export type CommandId =
   | "focus.agentSubagents"
   | "account.next"
   | "prompt.templates"
+  | "voice.dictate"
   | "project.open"
   | "file.new"
   | "find.files"
@@ -158,6 +159,16 @@ export const COMMANDS: readonly ShortcutCommand[] = [
     group: "Prompt",
     chord: "mod+shift+p",
     label: "Prompt templates…",
+  },
+  // M for microphone. Tap to start and again to stop, or hold it down for
+  // as long as you talk; see `voice/useDictation.ts`. Kept out of the native
+  // menu (menu.ts): a menu item's accelerator takes the chord before the page
+  // sees the keydown, and with it the hold.
+  {
+    id: "voice.dictate",
+    group: "Prompt",
+    chord: "mod+shift+m",
+    label: "Dictate",
   },
   // IntelliJ's Go to File and Find in Files. ⌘O stays Open project…. On
   // Windows and Linux IntelliJ's Go to File is Ctrl+Shift+N.

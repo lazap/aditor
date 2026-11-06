@@ -10,6 +10,8 @@ import { useUpdate } from "./update/api";
 import { ProjectView, type Dragging, type ViewApi } from "./components/ProjectView";
 import { useDialogs } from "./components/Modal";
 import { Toast, type ToastMessage } from "./components/Toast";
+import { DictationIndicator } from "./components/DictationIndicator";
+import { useDictation } from "./voice/useDictation";
 import { useShortcuts, type Handlers } from "./shortcuts/useShortcuts";
 import { useDoubleShift } from "./shortcuts/useDoubleShift";
 import { COMMANDS, type CommandId } from "./shortcuts/registry";
@@ -55,6 +57,7 @@ const SHELL_COMMANDS: readonly CommandId[] = [
   "app.settings",
   "app.keepAwake",
   "app.checkUpdates",
+  "voice.dictate",
 ];
 
 /**
@@ -468,6 +471,12 @@ export default function App() {
       })),
     [ask, running],
   );
+  const dictation = useDictation({
+    root: () => activeTabRef.current,
+    focusAgent: () => views.current.get(activeTabRef.current ?? "")?.handlers["focus.agent"]?.(),
+    onError: showError,
+  });
+
   const update = useUpdate({ onInfo: showToast, onError: showError, confirmInstall, confirmRestart });
   const checkUpdates = () => void update.checkNow();
 
@@ -490,6 +499,7 @@ export default function App() {
     "app.settings": openSettings,
     "app.keepAwake": toggleAwake,
     "app.checkUpdates": checkUpdates,
+    "voice.dictate": dictation.press,
   };
   const commands: Handlers = showPicker
     ? { "project.open": openPicker, "app.checkUpdates": checkUpdates }
@@ -606,6 +616,12 @@ export default function App() {
       )}
 
       {dialogs}
+      <DictationIndicator
+        phase={dictation.phase}
+        level={dictation.level}
+        onFinish={() => void dictation.finish()}
+        onCancel={() => void dictation.cancel()}
+      />
       <Toast message={toast} onDone={hideToast} />
     </>
   );
