@@ -13,7 +13,7 @@ interface Props {
  * -- and each reads the same field, so they cannot drift apart.
  */
 export function GeneralTab({ onNote }: Props) {
-  const { layout, keyboardMode, terminalFileLinks, notifications } = useSettings();
+  const { layout, keyboardMode, terminalFileLinks, compactPackages, notifications } = useSettings();
   const notify = (next: Partial<typeof notifications>) =>
     patch({ notifications: { ...notifications, ...next } });
 
@@ -151,6 +151,27 @@ export function GeneralTab({ onNote }: Props) {
           onClick={() => patch({ terminalFileLinks: !terminalFileLinks })}
         >
           {terminalFileLinks ? "On" : "Off"}
+        </button>
+      </div>
+
+      <div className="picker-section-label">File tree</div>
+      <div className="setting-row">
+        <span className="setting-label">
+          Compact packages
+          <span className="setting-sub">
+            Show directories that only hold the next package as one row, like
+            com.acme.app. Applies under Java, Kotlin, Scala and Groovy source
+            roots.
+          </span>
+        </span>
+        <button
+          className="setting-toggle"
+          role="switch"
+          aria-checked={compactPackages}
+          data-on={compactPackages}
+          onClick={() => patch({ compactPackages: !compactPackages })}
+        >
+          {compactPackages ? "On" : "Off"}
         </button>
       </div>
 

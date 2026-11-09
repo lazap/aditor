@@ -291,6 +291,10 @@ export function normalize(raw: unknown): { value: Settings; changed: boolean } {
       typeof src.terminalFileLinks === "boolean"
         ? src.terminalFileLinks
         : DEFAULTS.terminalFileLinks,
+    compactPackages:
+      typeof src.compactPackages === "boolean"
+        ? src.compactPackages
+        : DEFAULTS.compactPackages,
     notifications: {
       onDone:
         typeof notifications.onDone === "boolean"

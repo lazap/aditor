@@ -140,6 +140,8 @@ export interface Settings {
   systemDark: string;
   /** Underline file paths in the agent terminal and open them on click. */
   terminalFileLinks: boolean;
+  /** Show a chain of JVM packages in the file tree as one `com.acme.app` row. */
+  compactPackages: boolean;
   notifications: Notifications;
   voice: Voice;
   /** Which tab the Settings dialog opens on. */
@@ -183,6 +185,7 @@ export const DEFAULTS: Settings = {
   systemLight: "light",
   systemDark: "dark",
   terminalFileLinks: true,
+  compactPackages: true,
   notifications: { onDone: true, onWaiting: true },
   voice: { model: "large-v3-turbo-q5_0", language: "auto" },
   settingsTab: "general",

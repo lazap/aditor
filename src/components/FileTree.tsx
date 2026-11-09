@@ -10,7 +10,9 @@ import {
   type PointerEvent,
 } from "react";
 import { listDir, type DirEntry } from "../fs/api";
+import { isSourceRoot, packageChain } from "../fs/packages";
 import { BADGE, type ChangeKind } from "../git/api";
+import { useSetting } from "../settings/store";
 import { FileIcon } from "./fileIcons";
 
 interface Props {
@@ -53,7 +55,12 @@ const parentOf = (path: string): string => path.slice(0, path.lastIndexOf("/"));
 type Row =
   | {
       kind: "item";
+      /** The directory a folded package row opens and takes drops: its deepest. */
       entry: DirEntry;
+      /** Its outermost directory, which is what moves. `entry.path` if unfolded. */
+      head: string;
+      /** `com.acme.app` for a folded row, otherwise the name. */
+      label: string;
       depth: number;
       /** Siblings are no longer DOM siblings, so position must be spelled out. */
       pos: number;
@@ -64,6 +71,10 @@ type Row =
 /** How far the pointer travels before a press becomes a drag, in px. */
 const DRAG_SLOP = 4;
 
+/** Where a row's own path ends up once its head has moved to `to`. */
+const landedAt = (head: string, tail: string, to: string | null): string | null =>
+  to && to + tail.slice(head.length);
+
 /**
  * Visible rows in view order, plus the directories still to fetch -- one walk
  * produces both, because they are the same traversal.
@@ -71,19 +82,24 @@ const DRAG_SLOP = 4;
  * `missing` only ever holds directories whose parent is already cached, so a
  * restored deep expansion fills in one level per pass and converges in as many
  * passes as it is deep.
+ *
+ * With `compact`, a chain of directories that are only packages becomes one
+ * row. The chain stays in the cache like any other level, which is what lets
+ * the watcher unfold it the moment one of them gains a sibling.
  */
 function flatten(
   root: string,
   cache: Map<string, DirEntry[]>,
   errors: Map<string, string>,
   expanded: Set<string>,
+  compact: boolean,
 ): { rows: Row[]; missing: string[] } {
   const rows: Row[] = [];
   const missing: string[] = [];
 
   // Inside an ignored directory everything is ignored, though the directory's
   // own pattern does not match its children's names.
-  const walk = (dir: string, depth: number, ignored: boolean) => {
+  const walk = (dir: string, depth: number, ignored: boolean, inPackages: boolean) => {
     const kids = cache.get(dir);
     if (kids === undefined) {
       const message = errors.get(dir);
@@ -93,14 +109,31 @@ function flatten(
       else rows.push({ kind: "error", dir, depth, message });
       return;
     }
+    const packages = compact && (inPackages || isSourceRoot(dir.slice(root.length)));
     kids.forEach((entry, i) => {
-      const item = ignored && !entry.ignored ? { ...entry, ignored } : entry;
-      rows.push({ kind: "item", entry: item, depth, pos: i + 1, size: kids.length });
-      if (entry.isDir && expanded.has(entry.path)) walk(entry.path, depth + 1, item.ignored);
+      const { chain, unlisted } =
+        packages && entry.isDir
+          ? packageChain(entry, cache)
+          : { chain: [entry], unlisted: null };
+      const tail = chain[chain.length - 1];
+      const dimmed = ignored || chain.some((e) => e.ignored);
+      rows.push({
+        kind: "item",
+        entry: dimmed && !tail.ignored ? { ...tail, ignored: dimmed } : tail,
+        head: entry.path,
+        label: chain.map((e) => e.name).join("."),
+        depth,
+        pos: i + 1,
+        size: kids.length,
+      });
+      // An open row's walk asks for the same listing, and asking twice would
+      // fetch it twice: `missing` is not deduplicated.
+      if (tail.isDir && expanded.has(tail.path)) walk(tail.path, depth + 1, dimmed, packages);
+      else if (unlisted !== null && !errors.has(unlisted)) missing.push(unlisted);
     });
   };
 
-  walk(root, 0, false);
+  walk(root, 0, false, false);
   return { rows, missing };
 }
 
@@ -135,10 +168,11 @@ function Tree({
   const [cursor, setCursor] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
   const inflight = useRef(new Set<string>());
+  const compact = useSetting((s) => s.compactPackages);
 
   const { rows, missing } = useMemo(
-    () => flatten(root, cache, errors, expanded),
-    [root, cache, errors, expanded],
+    () => flatten(root, cache, errors, expanded, compact),
+    [root, cache, errors, expanded, compact],
   );
 
   // Fetch whatever just became visible. `inflight` is what stops a re-render
@@ -366,7 +400,8 @@ function Tree({
             onToggle(row.entry.path);
             break;
           }
-          const parent = parentOf(row.entry.path);
+          // From the head: the directories inside a folded row have no row.
+          const parent = parentOf(row.head);
           if (parent === root) return;
           focusRow(parent);
           break;
@@ -380,7 +415,9 @@ function Tree({
         case "F6":
           // IntelliJ's Move. Not ⌘X/⌘V: the Edit menu owns those.
           if (!row) return;
-          void onAskMove(row.entry.path).then((to) => followMoved(to, true));
+          void onAskMove(row.head).then((to) =>
+            followMoved(landedAt(row.head, row.entry.path, to), true),
+          );
           break;
         default: {
           // Typeahead. A lone printable character only, so it never swallows a
@@ -396,7 +433,7 @@ function Tree({
           const from = t.buffer.length > 1 ? at : at + 1;
           for (let i = 0; i < items.length; i++) {
             const r = items[(from + i + items.length) % items.length];
-            if (r?.entry.name.toLowerCase().startsWith(want)) {
+            if (r?.label.toLowerCase().startsWith(want)) {
               focusRow(r.entry.path);
               break;
             }
@@ -414,13 +451,20 @@ function Tree({
   // Tauri webview's own file-drop handling does not reliably let through.
 
   /** A press on a row, which becomes a drag once it travels DRAG_SLOP. */
-  const press = useRef<{ path: string; x: number; y: number } | null>(null);
-  /** The row being dragged, and the folder it would land in (null: nowhere). */
-  const [drag, setDrag] = useState<{ from: string; into: string | null } | null>(null);
+  const press = useRef<{ from: string; tail: string; x: number; y: number } | null>(null);
+  /**
+   * The row being dragged -- `from` is what moves, `tail` identifies the row --
+   * and the folder it would land in (null: nowhere).
+   */
+  const [drag, setDrag] = useState<{
+    from: string;
+    tail: string;
+    into: string | null;
+  } | null>(null);
   /** Set by a drop, so the click that ends it does not also open the row. */
   const dropped = useRef(false);
 
-  const entries = useMemo(() => new Map(items.map((r) => [r.entry.path, r.entry])), [items]);
+  const byPath = useMemo(() => new Map(items.map((r) => [r.entry.path, r])), [items]);
 
   /**
    * The folder a drop at (x, y) lands in: a folder row itself, a file row's
@@ -431,7 +475,7 @@ function Tree({
     const el = document.elementFromPoint(x, y);
     if (!el || !boxRef.current?.contains(el)) return null;
     const path = el.closest<HTMLElement>("[data-path]")?.dataset.path;
-    const entry = path === undefined ? undefined : entries.get(path);
+    const entry = path === undefined ? undefined : byPath.get(path)?.entry;
     // An error row has no data-path; it is no place to drop.
     if (path === undefined && el.closest(".tree-error")) return null;
     const into = entry ? (entry.isDir ? entry.path : parentOf(entry.path)) : root;
@@ -463,9 +507,10 @@ function Tree({
     dropped.current = false;
     if (e.button !== 0 || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
     const path = (e.target as Element).closest<HTMLElement>("[data-path]")?.dataset.path;
-    if (path === undefined) return;
+    const row = path === undefined ? undefined : byPath.get(path);
+    if (!row) return;
     follow.current = null;
-    press.current = { path, x: e.clientX, y: e.clientY };
+    press.current = { from: row.head, tail: row.entry.path, x: e.clientX, y: e.clientY };
   };
 
   const onPointerMove = (e: PointerEvent<HTMLDivElement>) => {
@@ -476,8 +521,8 @@ function Tree({
       // Captured, so the drag keeps tracking when the pointer leaves the tree.
       e.currentTarget.setPointerCapture(e.pointerId);
     }
-    const into = dropTarget(p.path, e.clientX, e.clientY);
-    if (!drag || drag.into !== into) setDrag({ from: p.path, into });
+    const into = dropTarget(p.from, e.clientX, e.clientY);
+    if (!drag || drag.into !== into) setDrag({ from: p.from, tail: p.tail, into });
   };
 
   const onPointerUp = () => {
@@ -487,7 +532,7 @@ function Tree({
     dropped.current = true;
     if (d.into === null) return;
     const focus = boxRef.current?.contains(document.activeElement) ?? false;
-    void onMove(d.from, d.into).then((to) => followMoved(to, focus));
+    void onMove(d.from, d.into).then((to) => followMoved(landedAt(d.from, d.tail, to), focus));
   };
 
   const rootError = errors.get(root);
@@ -528,7 +573,7 @@ function Tree({
             </div>
           );
         }
-        const { entry, depth, pos, size } = row;
+        const { entry, label, depth, pos, size } = row;
         const open = entry.isDir && expanded.has(entry.path);
         const status = statuses.get(entry.path);
         // The whole folder a drop would land in lights up, not just its row.
@@ -557,7 +602,7 @@ function Tree({
               data-status={status}
               data-ignored={entry.ignored}
               data-drop={zone}
-              data-dragged={drag?.from === entry.path}
+              data-dragged={drag?.tail === entry.path}
               style={{ paddingLeft: 8 + depth * 12 }}
               title={entry.path}
               onClick={(e) => {
@@ -586,7 +631,7 @@ function Tree({
               </span>
               <FileIcon name={entry.name} isDir={entry.isDir} open={open} />
               <span className="tree-name" data-dir={entry.isDir}>
-                {entry.name}
+                {label}
               </span>
               {status && (
                 <span className="tree-status" data-status={status} title={status}>
