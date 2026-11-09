@@ -62,6 +62,31 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
         working-directory: src-tauri
 
+  # The check cannot catch what only breaks under `tauri build`, which alone
+  # sets the deployment target from `minimumSystemVersion`: C and Objective-C
+  # compiled for an older macOS need more at link time. Only the build matters,
+  # so nothing is uploaded.
+  bundle-macos:
+    needs: check
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+
+      # As for the Linux bundles: no updater key here, and these are not updates.
+      - run: npx tauri build --bundles app --config '{"bundle":{"createUpdaterArtifacts":false}}'
+
   # The AppImage and .deb, for trying a build on a real Linux desktop until
   # releases carry them. Not after every PR push: a release build is slow, and
   # the check above already says whether it compiles.
