@@ -16,6 +16,7 @@ import { BottomPane } from "./BottomPane";
 import type { LineTarget } from "./FileViewer";
 import { SplitPane } from "./SplitPane";
 import { SessionTabs, type FileTab, type SessionTab } from "./SessionTabs";
+import { moveItem } from "./useTabReorder";
 import { AgentPrompt } from "./AgentPrompt";
 import type { ToastMessage } from "./Toast";
 import type { Handlers } from "../shortcuts/useShortcuts";
@@ -675,6 +676,25 @@ export function ProjectView({
         setFileShown(null);
         setActiveKey(next);
       }
+    },
+    [sessions, activeKey, fileTabs, fileShown],
+  );
+
+  /**
+   * The tab on screen one place over, among its own kind; it stops at either
+   * end, and a file never crosses into the sessions.
+   */
+  const moveSession = useCallback(
+    (step: number) => {
+      if (fileShown !== null) {
+        const at = fileTabs.indexOf(fileShown);
+        const to = at + step;
+        if (at >= 0 && to >= 0 && to < fileTabs.length) setFileTabs(moveItem(fileTabs, at, to));
+        return;
+      }
+      const at = sessions.findIndex((s) => s.key === activeKey);
+      const to = at + step;
+      if (at >= 0 && to >= 0 && to < sessions.length) setSessions(moveItem(sessions, at, to));
     },
     [sessions, activeKey, fileTabs, fileShown],
   );
@@ -1447,6 +1467,8 @@ export function ProjectView({
     },
     "session.next": () => cycleSession(1),
     "session.prev": () => cycleSession(-1),
+    "session.moveLeft": () => moveSession(-1),
+    "session.moveRight": () => moveSession(1),
     "session.goto1": () => gotoSession(1),
     "session.goto2": () => gotoSession(2),
     "session.goto3": () => gotoSession(3),
@@ -1835,6 +1857,11 @@ export function ProjectView({
           activeFile={fileShown}
           onSelectFile={showFileTab}
           onCloseFile={closeFileTab}
+          onReorder={(kind, from, to) =>
+            kind === "files"
+              ? setFileTabs((prev) => moveItem(prev, from, to))
+              : setSessions((prev) => moveItem(prev, from, to))
+          }
           choices={choices}
           newRequest={newRequest}
           // Not setActiveKey alone: clicking the session that is already the

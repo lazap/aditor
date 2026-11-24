@@ -3,6 +3,7 @@ import { isMac, machineName } from "../platform";
 import { closeWindow, leaveFullscreen, minimizeWindow } from "../titlebar";
 import { chordHint } from "../shortcuts/store";
 import type { UpdateState } from "../update/api";
+import { useTabReorder } from "./useTabReorder";
 
 interface Props {
   tabs: string[];
@@ -15,6 +16,8 @@ interface Props {
   labels: Map<string, string>;
   onSelect(root: string): void;
   onClose(root: string): void;
+  /** A tab dragged from one place in the strip to another. */
+  onReorder(from: number, to: number): void;
   onOpen(): void;
   /** Whether the Mac is being kept awake, and the switch for it. */
   awake: boolean;
@@ -38,6 +41,7 @@ export function ProjectTabs({
   labels,
   onSelect,
   onClose,
+  onReorder,
   onOpen,
   awake,
   onToggleAwake,
@@ -46,14 +50,22 @@ export function ProjectTabs({
   onRestartToUpdate,
 }: Props) {
   const label = (root: string) => labels.get(root) ?? basename(root);
+  const reorder = useTabReorder((_, from, to) => onReorder(from, to));
   return (
     // The strip is the window's title bar: its empty stretch drags the window
     // and a double-click there zooms it. The tabs inside are not drag regions.
-    <div className="project-tabs" role="tablist" aria-label="Projects" data-tauri-drag-region>
+    <div
+      className="project-tabs"
+      role="tablist"
+      aria-label="Projects"
+      data-tauri-drag-region
+      {...reorder.strip}
+    >
       {isMac && <WindowControls />}
-      {tabs.map((root) => (
+      {tabs.map((root, i) => (
         <div
           key={root}
+          {...reorder.tab("projects", i)}
           className="project-tab"
           role="tab"
           aria-selected={root === active}

@@ -169,6 +169,35 @@ body,
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
+/* While a tab is dragged its neighbours slide aside to make room; the dragged
+   one rides the pointer, above them and without easing. */
+[data-reordering="true"],
+[data-reordering="true"] .project-tab,
+[data-reordering="true"] .session-tab {
+  cursor: grabbing;
+}
+
+[data-reordering="true"] .project-tab,
+[data-reordering="true"] .session-tab {
+  transition: transform 120ms ease;
+}
+
+.project-tab[data-dragged="true"],
+.session-tab[data-dragged="true"] {
+  position: relative;
+  z-index: 1;
+  color: var(--fg);
+  background: var(--bg-raised);
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-reordering="true"] .project-tab,
+  [data-reordering="true"] .session-tab {
+    transition: none;
+  }
+}
+
 .project-tab-label,
 .session-tab-label {
   overflow: hidden;

@@ -3,6 +3,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
 import { ProjectPicker } from "./components/ProjectPicker";
 import { ProjectTabs } from "./components/ProjectTabs";
+import { moveItem } from "./components/useTabReorder";
 import { setAttentionCount } from "./notify/api";
 import { useAwake } from "./awake/api";
 import { useAskpass } from "./askpass/api";
@@ -54,6 +55,8 @@ const SHELL_COMMANDS: readonly CommandId[] = [
   "project.close",
   "project.next",
   "project.prev",
+  "project.moveLeft",
+  "project.moveRight",
   "app.settings",
   "app.keepAwake",
   "app.checkUpdates",
@@ -439,6 +442,18 @@ export default function App() {
     [tabs, activeTab],
   );
 
+  /** The active tab one place over; it stops at either end. */
+  const moveTab = useCallback(
+    (step: number) => {
+      if (!activeTab) return;
+      const at = tabs.indexOf(activeTab);
+      const to = at + step;
+      if (to < 0 || to >= tabs.length) return;
+      setTabs((prev) => moveItem(prev, at, to));
+    },
+    [tabs, activeTab],
+  );
+
   const openSettings = useCallback(() => {
     void openSettingsWindow().catch(() => showToast("Could not open Settings.", "error"));
   }, [showToast]);
@@ -496,6 +511,8 @@ export default function App() {
     "project.close": () => activeTab && void closeTab(activeTab),
     "project.next": () => cycleTab(1),
     "project.prev": () => cycleTab(-1),
+    "project.moveLeft": () => moveTab(-1),
+    "project.moveRight": () => moveTab(1),
     "app.settings": openSettings,
     "app.keepAwake": toggleAwake,
     "app.checkUpdates": checkUpdates,
@@ -565,6 +582,7 @@ export default function App() {
             labels={tabLabels}
             onSelect={setActiveTab}
             onClose={(root) => void closeTab(root)}
+            onReorder={(from, to) => setTabs((prev) => moveItem(prev, from, to))}
             onOpen={openPicker}
             awake={awake}
             onToggleAwake={toggleAwake}

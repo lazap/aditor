@@ -3,6 +3,7 @@ import type { AgentInfo } from "../pty/api";
 import type { Attention } from "../notify/api";
 import { chordHint } from "../shortcuts/store";
 import { FileIcon } from "./fileIcons";
+import { useTabReorder } from "./useTabReorder";
 
 export interface SessionTab {
   key: number;
@@ -32,6 +33,8 @@ interface Props {
   activeFile: string | null;
   onSelectFile(path: string): void;
   onCloseFile(path: string): void;
+  /** A tab dragged to another place among its own kind, sessions or files. */
+  onReorder(kind: "sessions" | "files", from: number, to: number): void;
   /** What a new session can be: the installed agents, then a plain terminal. */
   choices: AgentInfo[];
   /** Bumped by the new-session shortcut: the menu opens as if + was clicked. */
@@ -56,6 +59,7 @@ export function SessionTabs({
   activeFile,
   onSelectFile,
   onCloseFile,
+  onReorder,
   choices,
   newRequest,
   onSelect,
@@ -70,6 +74,9 @@ export function SessionTabs({
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   const close = useCallback(() => setOpen(false), []);
+  const reorder = useTabReorder((kind, from, to) =>
+    onReorder(kind as "sessions" | "files", from, to),
+  );
 
   const options: { key: string; label: string; meta: string; pick(): void }[] = [
     ...choices.map((c) => ({
@@ -145,10 +152,11 @@ export function SessionTabs({
 
   return (
     <div className="session-tabs">
-      <div className="session-tab-list" role="tablist" aria-label="Sessions">
-        {tabs.map((t) => (
+      <div className="session-tab-list" role="tablist" aria-label="Sessions" {...reorder.strip}>
+        {tabs.map((t, i) => (
           <div
             key={t.key}
+            {...reorder.tab("sessions", i)}
             className="session-tab"
             role="tab"
             aria-selected={activeFile === null && t.key === activeKey}
@@ -189,9 +197,10 @@ export function SessionTabs({
             </button>
           </div>
         ))}
-        {files.map((f) => (
+        {files.map((f, i) => (
           <div
             key={f.path}
+            {...reorder.tab("files", i)}
             className="session-tab file-tab"
             role="tab"
             aria-selected={f.path === activeFile}

@@ -26,10 +26,14 @@ export type CommandId =
   | "project.close"
   | "project.next"
   | "project.prev"
+  | "project.moveLeft"
+  | "project.moveRight"
   | "session.new"
   | "session.close"
   | "session.next"
   | "session.prev"
+  | "session.moveLeft"
+  | "session.moveRight"
   | "session.goto1"
   | "session.goto2"
   | "session.goto3"
@@ -123,6 +127,22 @@ export const COMMANDS: readonly ShortcutCommand[] = [
   { id: "session.close", group: "Tabs", chord: "mod+w", other: "mod+shift+w", label: "Close agent session" },
   { id: "session.next", group: "Tabs", chord: "mod+shift+]", label: "Next agent session" },
   { id: "session.prev", group: "Tabs", chord: "mod+shift+[", label: "Previous agent session" },
+  // Moving a tab is next/previous with ⌥ added; elsewhere a browser's
+  // Ctrl+Shift+PgUp/PgDn, Ctrl+Alt being AltGr.
+  {
+    id: "session.moveLeft",
+    group: "Tabs",
+    chord: "mod+alt+shift+[",
+    other: "mod+shift+pageup",
+    label: "Move tab left",
+  },
+  {
+    id: "session.moveRight",
+    group: "Tabs",
+    chord: "mod+alt+shift+]",
+    other: "mod+shift+pagedown",
+    label: "Move tab right",
+  },
   // As in a browser: ⌘1-⌘8 by position, ⌘9 the last one however many there are.
   { id: "session.goto1", group: "Tabs", chord: "mod+1", label: "Go to tab 1" },
   { id: "session.goto2", group: "Tabs", chord: "mod+2", label: "Go to tab 2" },
@@ -148,6 +168,8 @@ export const COMMANDS: readonly ShortcutCommand[] = [
     label: "Previous project tab",
   },
   { id: "project.close", group: "Tabs", chord: null, label: "Close project tab" },
+  { id: "project.moveLeft", group: "Tabs", chord: null, label: "Move project tab left" },
+  { id: "project.moveRight", group: "Tabs", chord: null, label: "Move project tab right" },
   {
     id: "account.next",
     group: "Account",
