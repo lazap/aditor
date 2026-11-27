@@ -70,6 +70,10 @@ export const createFile = (root: string, rel: string) =>
 export const movePath = (root: string, from: string, into: string) =>
   invoke<string>("move_path", { root, from, into });
 
+/** Move a file or folder, whole, to the system Trash. */
+export const trashPath = (root: string, path: string) =>
+  invoke<void>("trash_path", { root, path });
+
 export const fsDebounceMs =() => invoke<number>("fs_debounce_ms");
 
 /**

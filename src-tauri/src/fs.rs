@@ -535,6 +535,53 @@ fn move_in(root: &Path, from: &str, into: &str) -> Result<PathBuf, String> {
     Ok(dest)
 }
 
+/// Move the file or directory `path` to the system Trash, whole.
+///
+/// Off the UI thread: a large folder takes a while, and unlike saves, two
+/// deletes have no order to keep.
+#[tauri::command]
+pub async fn trash_path(ws: State<'_, Workspace>, root: String, path: String) -> Result<(), String> {
+    let root = workspace_root(&ws, &root)?;
+    off_thread(move || {
+        let target = trashable(&root, &path)?;
+        let rel = target.strip_prefix(&root).unwrap_or(&target).display().to_string();
+        trash_context()
+            .delete(&target)
+            .map_err(|e| format!("{rel} could not be moved to the Trash: {e}"))
+    })
+    .await
+}
+
+/// `path` as it would be trashed: inside the workspace and not the workspace
+/// itself. As in `move_in`, only the parent is canonicalized, so a symlink is
+/// trashed as the link and what it points at is left alone.
+fn trashable(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let path_ref = Path::new(path);
+    let (Some(parent), Some(name)) = (path_ref.parent(), path_ref.file_name()) else {
+        return Err(format!("{path} cannot be moved to the Trash."));
+    };
+    if canonicalize(path_ref).is_ok_and(|p| p == root) {
+        return Err("The project folder itself cannot be moved to the Trash.".into());
+    }
+    let target = resolve_in(root, &parent.to_string_lossy())?.join(name);
+    std::fs::symlink_metadata(&target).map_err(|e| format!("{path}: {e}"))?;
+    Ok(target)
+}
+
+/// The Finder method, the crate's default on macOS, asks for permission to
+/// script Finder the first time. The file manager's needs none, at the cost of
+/// Finder's Put Back.
+fn trash_context() -> trash::TrashContext {
+    #[allow(unused_mut)]
+    let mut ctx = trash::TrashContext::default();
+    #[cfg(target_os = "macos")]
+    {
+        use trash::macos::{DeleteMethod, TrashContextExtMacos};
+        ctx.set_delete_method(DeleteMethod::NsFileManager);
+    }
+    ctx
+}
+
 /// Debounce window the frontend should use when coalescing `fs://changed`.
 /// Exposed so the two sides cannot drift apart.
 #[tauri::command]
@@ -751,6 +798,37 @@ mod tests {
         assert!(move_in(&root, &at("x.txt"), &at("x.txt")).is_err());
         assert!(move_in(&root, &root.to_string_lossy(), &at("b")).is_err());
         assert!(root.join("x.txt").is_file());
+    }
+
+    // Only what would be trashed: a test that really trashed would fill the
+    // Trash of whoever runs it.
+    #[test]
+    fn trashes_only_inside_the_root() {
+        let root = scratch("trash");
+        std::fs::create_dir_all(root.join("src/lib")).unwrap();
+        std::fs::write(root.join("src/a.ts"), "a").unwrap();
+        let at = |p: &str| root.join(p).to_string_lossy().to_string();
+
+        assert_eq!(trashable(&root, &at("src/a.ts")).unwrap(), root.join("src/a.ts"));
+        assert_eq!(trashable(&root, &at("src/lib")).unwrap(), root.join("src/lib"));
+
+        assert!(trashable(&root, &root.to_string_lossy()).is_err());
+        assert!(trashable(&root, &at("")).is_err());
+        assert!(trashable(&root, &at("missing.ts")).is_err());
+        assert!(trashable(&root, &at("src/../../outside")).is_err());
+        assert!(trashable(&root, "/tmp/outside").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn trashes_a_symlink_not_what_it_points_at() {
+        let root = scratch("trash-link");
+        let outside = scratch("trash-link-target");
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+        let link = root.join("link").to_string_lossy().to_string();
+        assert_eq!(trashable(&root, &link).unwrap(), root.join("link"));
+        // Through it, though, is outside the root.
+        assert!(trashable(&root, &format!("{link}/x")).is_err());
     }
 
     #[test]

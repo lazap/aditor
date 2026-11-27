@@ -28,7 +28,15 @@ import { RUN_FILE, runOutput } from "../run/api";
 import { toScript } from "../run/command";
 import { isAbsolutePath, pathParts } from "../platform";
 import { launchChain, type RunConfig } from "../run/schema";
-import { createFile, FS_GIT, fsDebounceMs, movePath, type FsChanged, type FsGit } from "../fs/api";
+import {
+  createFile,
+  FS_GIT,
+  fsDebounceMs,
+  movePath,
+  trashPath,
+  type FsChanged,
+  type FsGit,
+} from "../fs/api";
 import {
   gitBranchCreate,
   gitBranchDelete,
@@ -1783,6 +1791,69 @@ export function ProjectView({
     [root, ask, moveEntry],
   );
 
+  /**
+   * Trash a file or folder from the tree. Whatever pointed at it or into it --
+   * tabs, the pane, the unlocked list, expanded folders -- lets go of it, and a
+   * shown tab hands the screen to its neighbour. Resolves to whether it went.
+   */
+  const trashEntry = useCallback(
+    async (path: string): Promise<boolean> => {
+      try {
+        await trashPath(root, path);
+      } catch (e) {
+        showToast(String(e).replace(/^Error:\s*/, ""), "error");
+        return false;
+      }
+      const gone = (p: string | null) => p === path || !!p?.startsWith(`${path}/`);
+      const tabs = fileTabs.filter((p) => !gone(p));
+      setFileTabs(tabs);
+      if (fileShown !== null && gone(fileShown)) {
+        const next = tabs[Math.min(fileTabs.indexOf(fileShown), tabs.length - 1)] ?? null;
+        setTabLine(null);
+        setFileShown(next);
+        saveProjectState(root, { openFile: next });
+      }
+      if (gone(openFile)) setOpenFile(null);
+      if (gone(diffFile)) setDiffFile(null);
+      const rel = path.slice(root.length + 1);
+      setRecentFiles((prev) => prev.filter((p) => p !== rel && !p.startsWith(`${rel}/`)));
+      const state = loadProjectState(root);
+      saveProjectState(root, {
+        writable: state.writable.filter((p) => !gone(p)),
+        ...(gone(state.openFile) && { openFile: null }),
+      });
+      setExpanded((prev) => {
+        const next = new Set([...prev].filter((p) => !gone(p)));
+        saveProjectState(root, { expandedDirs: [...next] });
+        return next;
+      });
+      // The watcher will report it too, but the row should not linger.
+      setTreeChanges(new Set([path]));
+      setRefreshToken((t) => t + 1);
+      return true;
+    },
+    [root, fileTabs, fileShown, openFile, diffFile, showToast],
+  );
+
+  /** Delete in the tree, or its context menu: confirm, then trash. */
+  const askTrash = useCallback(
+    async (path: string, isDir: boolean): Promise<boolean> => {
+      const r = await ask({
+        title: "Move to Trash",
+        body: (
+          <>
+            Move <code>{path.slice(root.length + 1)}</code>
+            {isDir && " and everything in it"} to the Trash?
+          </>
+        ),
+        confirm: "Move to Trash",
+        danger: true,
+      });
+      return !!r && trashEntry(path);
+    },
+    [root, ask, trashEntry],
+  );
+
   const closeFile = useCallback(() => {
     setOpenFile(null);
     saveProjectState(root, { openFile: null });
@@ -2036,6 +2107,7 @@ export function ProjectView({
                 focusToken={filesFocus}
                 onMove={moveEntry}
                 onAskMove={askMove}
+                onAskTrash={askTrash}
               />
             </div>
             <div hidden={railTab !== "git"}>

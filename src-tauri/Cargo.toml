@@ -59,6 +59,8 @@ tauri-plugin-clipboard-manager = "2"
 # checksum. whisper.cpp itself is per platform below, for Metal on macOS.
 cpal = "0.18"
 sha2 = "0.11"
+# Deleting from the file tree goes to the system Trash, never straight away.
+trash = "5.4.0"
 
 # `platform.rs`'s halves. Unix: kill(pid, 0) for the agent session registry's
 # liveness probe, and killpg to stop a run configuration with everything it

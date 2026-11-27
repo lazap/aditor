@@ -13,6 +13,7 @@ import { listDir, type DirEntry } from "../fs/api";
 import { isSourceRoot, packageChain } from "../fs/packages";
 import { BADGE, type ChangeKind } from "../git/api";
 import { useSetting } from "../settings/store";
+import { ContextMenu, type MenuAt } from "./ContextMenu";
 import { FileIcon } from "./fileIcons";
 
 interface Props {
@@ -38,6 +39,8 @@ interface Props {
   onMove(from: string, into: string): Promise<string | null>;
   /** F6: ask where to move `from`, then move it; resolves as `onMove` does. */
   onAskMove(from: string): Promise<string | null>;
+  /** Delete or the context menu: confirm, then trash `path`; resolves to whether it went. */
+  onAskTrash(path: string, isDir: boolean): Promise<boolean>;
 }
 
 export function FileTree(props: Props) {
@@ -161,6 +164,7 @@ function Tree({
   focusToken,
   onMove,
   onAskMove,
+  onAskTrash,
 }: Props) {
   const [cache, setCache] = useState<Map<string, DirEntry[]>>(new Map());
   const [errors, setErrors] = useState<Map<string, string>>(new Map());
@@ -361,6 +365,29 @@ function Tree({
     takeFocus();
   }, [focusToken]);
 
+  /**
+   * Trash a row -- its head, so a folded package goes whole -- and land the
+   * cursor on the row after it, as Finder does, rather than on its folder.
+   */
+  const trash = useCallback(
+    (row: Extract<Row, { kind: "item" }>) => {
+      // By path: a watcher refresh while the dialog was up rebuilds the rows.
+      const at = items.findIndex((r) => r.entry.path === row.entry.path);
+      let after = at + 1;
+      while (after < items.length && items[after].head.startsWith(`${row.head}/`)) after++;
+      const next = (items[after] ?? items[at - 1])?.entry.path;
+      void onAskTrash(row.head, row.entry.isDir).then((gone) => {
+        if (!gone || !next) return;
+        if (boxRef.current?.contains(document.activeElement)) focusRow(next);
+        else setCursor(next);
+      });
+    },
+    [items, onAskTrash, focusRow],
+  );
+
+  const [menu, setMenu] = useState<MenuAt | null>(null);
+  const closeMenu = useCallback(() => setMenu(null), []);
+
   const typed = useRef({ buffer: "", at: 0 });
 
   const onKeyDown = useCallback(
@@ -419,6 +446,11 @@ function Tree({
             followMoved(landedAt(row.head, row.entry.path, to), true),
           );
           break;
+        case "Delete":
+        case "Backspace":
+          if (!row) return;
+          trash(row);
+          break;
         default: {
           // Typeahead. A lone printable character only, so it never swallows a
           // shortcut, and Space is already spoken for above.
@@ -442,7 +474,7 @@ function Tree({
       }
       e.preventDefault();
     },
-    [items, tabTarget, root, expanded, focusRow, onToggle, onSelect, onAskMove, followMoved],
+    [items, tabTarget, root, expanded, focusRow, onToggle, onSelect, onAskMove, followMoved, trash],
   );
 
   // ------------------------------------------------------- drag and drop ---
@@ -542,109 +574,124 @@ function Tree({
     // A flat list of siblings, so aria-level is what conveys depth and
     // posinset/setsize what conveys order: role="group" applies only when
     // children really are DOM descendants. Every child of role="tree" must be a
-    // treeitem, which is why the error rows are treeitems too.
-    <div
-      className="tree"
-      role="tree"
-      aria-label="Files"
-      tabIndex={-1}
-      ref={boxRef}
-      onKeyDown={onKeyDown}
-      onPointerDown={onPointerDown}
-      onPointerMove={onPointerMove}
-      onPointerUp={onPointerUp}
-      onPointerCancel={endDrag}
-      data-dragging={dragging}
-      data-drop={drag?.into === root}
-    >
-      {rows.map((row) => {
-        if (row.kind === "error") {
-          return (
-            <div
-              key={`!${row.dir}`}
-              className="tree-error"
-              role="treeitem"
-              aria-level={row.depth + 1}
-              aria-disabled
-              tabIndex={-1}
-              style={{ paddingLeft: 8 + row.depth * 12 }}
-            >
-              {row.message}
-            </div>
-          );
-        }
-        const { entry, label, depth, pos, size } = row;
-        const open = entry.isDir && expanded.has(entry.path);
-        const status = statuses.get(entry.path);
-        // The whole folder a drop would land in lights up, not just its row.
-        const into = drag?.into;
-        const zone =
-          !!into && into !== root && (entry.path === into || entry.path.startsWith(`${into}/`));
-        return (
-          <Fragment key={entry.path}>
-            <div
-              className="tree-row"
-              role="treeitem"
-              aria-level={depth + 1}
-              aria-posinset={pos}
-              aria-setsize={size}
-              aria-expanded={entry.isDir ? open : undefined}
-              aria-selected={entry.path === selected}
-              tabIndex={entry.path === tabTarget ? 0 : -1}
-              data-path={entry.path}
-              // The keyboard cursor is styled from this, not from
-              // :focus-visible: WebKit does not reliably match that pseudo-class
-              // on a programmatically focused div[tabindex], which left the
-              // cursor invisible and the arrow keys looking dead.
-              data-cursor={entry.path === tabTarget}
-              data-selected={entry.path === selected}
-              data-recent={recent.has(entry.path)}
-              data-status={status}
-              data-ignored={entry.ignored}
-              data-drop={zone}
-              data-dragged={drag?.tail === entry.path}
-              style={{ paddingLeft: 8 + depth * 12 }}
-              title={entry.path}
-              onClick={(e) => {
-                if (dropped.current) {
-                  dropped.current = false;
-                  return;
-                }
-                // Focusing explicitly: WKWebView does not reliably focus a
-                // div[tabindex="-1"] on mousedown, and without this the
-                // keyboard cursor would not follow the mouse.
-                setCursor(entry.path);
-                e.currentTarget.focus();
-                if (entry.isDir) onToggle(entry.path);
-                else onSelect(entry.path);
-              }}
-            >
-              <span
-                className="tree-twisty"
-                data-dir={entry.isDir}
-                data-open={open}
-                aria-hidden
+    // treeitem, which is why the error rows are treeitems too -- and why the
+    // context menu sits beside the tree, not in it.
+    <>
+      <div
+        className="tree"
+        role="tree"
+        aria-label="Files"
+        tabIndex={-1}
+        ref={boxRef}
+        onKeyDown={onKeyDown}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={endDrag}
+        data-dragging={dragging}
+        data-drop={drag?.into === root}
+      >
+        {rows.map((row) => {
+          if (row.kind === "error") {
+            return (
+              <div
+                key={`!${row.dir}`}
+                className="tree-error"
+                role="treeitem"
+                aria-level={row.depth + 1}
+                aria-disabled
+                tabIndex={-1}
+                style={{ paddingLeft: 8 + row.depth * 12 }}
               >
-                <svg viewBox="0 0 12 12" width="12" height="12" focusable="false">
-                  <path fill="currentColor" d="M4.2 2.6 8.6 6l-4.4 3.4z" />
-                </svg>
-              </span>
-              <FileIcon name={entry.name} isDir={entry.isDir} open={open} />
-              <span className="tree-name" data-dir={entry.isDir}>
-                {label}
-              </span>
-              {status && (
-                <span className="tree-status" data-status={status} title={status}>
-                  {BADGE[status]}
+                {row.message}
+              </div>
+            );
+          }
+          const { entry, label, depth, pos, size } = row;
+          const open = entry.isDir && expanded.has(entry.path);
+          const status = statuses.get(entry.path);
+          // The whole folder a drop would land in lights up, not just its row.
+          const into = drag?.into;
+          const zone =
+            !!into && into !== root && (entry.path === into || entry.path.startsWith(`${into}/`));
+          return (
+            <Fragment key={entry.path}>
+              <div
+                className="tree-row"
+                role="treeitem"
+                aria-level={depth + 1}
+                aria-posinset={pos}
+                aria-setsize={size}
+                aria-expanded={entry.isDir ? open : undefined}
+                aria-selected={entry.path === selected}
+                tabIndex={entry.path === tabTarget ? 0 : -1}
+                data-path={entry.path}
+                // The keyboard cursor is styled from this, not from
+                // :focus-visible: WebKit does not reliably match that pseudo-class
+                // on a programmatically focused div[tabindex], which left the
+                // cursor invisible and the arrow keys looking dead.
+                data-cursor={entry.path === tabTarget}
+                data-selected={entry.path === selected}
+                data-recent={recent.has(entry.path)}
+                data-status={status}
+                data-ignored={entry.ignored}
+                data-drop={zone}
+                data-dragged={drag?.tail === entry.path}
+                style={{ paddingLeft: 8 + depth * 12 }}
+                title={entry.path}
+                onClick={(e) => {
+                  if (dropped.current) {
+                    dropped.current = false;
+                    return;
+                  }
+                  // Focusing explicitly: WKWebView does not reliably focus a
+                  // div[tabindex="-1"] on mousedown, and without this the
+                  // keyboard cursor would not follow the mouse.
+                  setCursor(entry.path);
+                  e.currentTarget.focus();
+                  if (entry.isDir) onToggle(entry.path);
+                  else onSelect(entry.path);
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  // Focused, so the menu hands focus back to this row.
+                  setCursor(entry.path);
+                  e.currentTarget.focus();
+                  setMenu({
+                    x: e.clientX,
+                    y: e.clientY,
+                    items: [{ label: "Move to Trash…", hint: "⌫", danger: true, run: () => trash(row) }],
+                  });
+                }}
+              >
+                <span
+                  className="tree-twisty"
+                  data-dir={entry.isDir}
+                  data-open={open}
+                  aria-hidden
+                >
+                  <svg viewBox="0 0 12 12" width="12" height="12" focusable="false">
+                    <path fill="currentColor" d="M4.2 2.6 8.6 6l-4.4 3.4z" />
+                  </svg>
                 </span>
-              )}
-              {entry.isDir && !open && changedDirs.has(entry.path) && (
-                <span className="tree-dot" aria-hidden />
-              )}
-            </div>
-          </Fragment>
-        );
-      })}
-    </div>
+                <FileIcon name={entry.name} isDir={entry.isDir} open={open} />
+                <span className="tree-name" data-dir={entry.isDir}>
+                  {label}
+                </span>
+                {status && (
+                  <span className="tree-status" data-status={status} title={status}>
+                    {BADGE[status]}
+                  </span>
+                )}
+                {entry.isDir && !open && changedDirs.has(entry.path) && (
+                  <span className="tree-dot" aria-hidden />
+                )}
+              </div>
+            </Fragment>
+          );
+        })}
+      </div>
+      {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
+    </>
   );
 }
